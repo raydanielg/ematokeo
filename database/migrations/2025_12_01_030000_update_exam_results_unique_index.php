@@ -9,10 +9,11 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('exam_results', function (Blueprint $table) {
-            // Drop old unique constraint on exam_id, student_id, subject_id
-            $table->dropUnique('exam_results_exam_id_student_id_subject_id_unique');
-
-            // New unique index also includes school_id so results don't mix between schools
+            // Add a new composite unique index that also includes school_id so
+            // results don't mix between schools. We intentionally do NOT drop
+            // the old unique index here, because on some MySQL setups that
+            // index is referenced by a foreign key constraint, which causes
+            // "Cannot drop index ... needed in a foreign key constraint".
             $table->unique(['exam_id', 'student_id', 'subject_id', 'school_id'], 'exam_results_exam_student_subject_school_unique');
         });
     }
@@ -20,9 +21,10 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('exam_results', function (Blueprint $table) {
-            // Drop new composite unique and restore the original
+            // Drop only the new composite unique index we added in up().
+            // We don't touch the original index to avoid foreign key issues
+            // on MySQL installations where it may be referenced.
             $table->dropUnique('exam_results_exam_student_subject_school_unique');
-            $table->unique(['exam_id', 'student_id', 'subject_id']);
         });
     }
 };
