@@ -1,5 +1,6 @@
 <script setup>
 import { Head, useForm, usePage } from '@inertiajs/vue3';
+import { ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 
 const props = defineProps({
@@ -16,10 +17,9 @@ const props = defineProps({
 		default: false,
 	},
 });
-
 const page = usePage();
 
-const step = $ref(1);
+const step = ref(1);
 
 const envForm = useForm({
 	app_name: 'E-Matokeo',
