@@ -1,18 +1,31 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 
 const email = ref('')
 const subscribeMessage = ref('')
+const visitorCount = ref(0)
 
 const handleSubscribe = () => {
   if (email.value) {
-    subscribeMessage.value = 'Asante! Umesajiliwa kwa updates.'
+    subscribeMessage.value = 'Thank you! You have been subscribed.'
     email.value = ''
     setTimeout(() => {
       subscribeMessage.value = ''
     }, 3000)
   }
 }
+
+onMounted(async () => {
+  try {
+    const response = await fetch('/api/visitors-count')
+    if (response.ok) {
+      const data = await response.json()
+      visitorCount.value = data.count
+    }
+  } catch (error) {
+    console.error('Failed to fetch visitor count:', error)
+  }
+})
 </script>
 
 <template>
@@ -24,11 +37,11 @@ const handleSubscribe = () => {
         <div class="lg:col-span-1">
           <h3 class="text-lg font-bold text-white mb-4">Matokeo</h3>
           <p class="text-sm text-slate-400 leading-relaxed mb-4">
-            Mfumo wa kusimamia matokeo ya mitihani kwa shule za Tanzania. Regional & District examinations management.
+            A complete system for managing exam results in Tanzanian schools. Regional & District examinations management.
           </p>
           <div class="space-y-2 text-sm text-slate-400">
             <p><strong class="text-white">P.O. Box 000</strong>, Dar es Salaam</p>
-            <p><strong class="text-white">Phone:</strong> 0712 000 000</p>
+            <p><strong class="text-white">Phone:</strong> +255 712 000 000</p>
             <p><strong class="text-white">Email:</strong> info@matokeo.tz</p>
           </div>
         </div>
@@ -51,7 +64,7 @@ const handleSubscribe = () => {
                 href="/about"
                 class="text-slate-400 hover:text-emerald-400 transition-colors duration-300 inline-flex items-center gap-2 group"
               >
-                About
+                About Us
                 <span class="group-hover:translate-x-1 transition-transform duration-300">›</span>
               </a>
             </li>
@@ -110,13 +123,13 @@ const handleSubscribe = () => {
         <div>
           <h4 class="text-base font-bold text-white mb-4">Subscribe</h4>
           <p class="text-sm text-slate-400 mb-4">
-            Pata updates za Matokeo kwa email yako.
+            Get Matokeo updates in your email.
           </p>
           <form @submit.prevent="handleSubscribe" class="space-y-2">
             <input
               v-model="email"
               type="email"
-              placeholder="Email yako"
+              placeholder="Your email"
               required
               class="w-full px-4 py-2 rounded-lg bg-slate-800 text-white placeholder-slate-500 border border-slate-700 focus:border-emerald-500 focus:outline-none transition-colors duration-300"
             />
@@ -168,6 +181,28 @@ const handleSubscribe = () => {
               <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.475-2.236-1.986-2.236-1.081 0-1.722.722-2.004 1.418-.103.249-.129.597-.129.946v5.441h-3.554s.05-8.81 0-9.728h3.554v1.375c.427-.659 1.191-1.595 2.897-1.595 2.117 0 3.704 1.385 3.704 4.362v5.586zM5.337 9.433c-1.144 0-1.915-.758-1.915-1.708 0-.951.77-1.708 1.954-1.708 1.185 0 1.915.757 1.915 1.708 0 .95-.73 1.708-1.954 1.708zm1.946 11.019H3.391V9.724h3.892v10.728zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.225 0z"/>
             </svg>
           </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Visitor Counter -->
+    <div class="border-t border-slate-700 bg-slate-950 px-4 py-6 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-7xl flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div class="text-center sm:text-left">
+          <p class="text-sm text-slate-400">
+            © 2025 Matokeo. All rights reserved.
+          </p>
+        </div>
+        <div class="flex items-center gap-6 text-sm">
+          <div class="flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-600/20 border border-emerald-500/30">
+            <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-2a6 6 0 0112 0v2zm0 0h6v-2a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+            </svg>
+            <span class="text-emerald-300 font-semibold">{{ visitorCount.toLocaleString() }}</span>
+            <span class="text-slate-400">visitors</span>
+          </div>
+          <a href="/contact" class="text-slate-400 hover:text-emerald-400 transition-colors">Contact</a>
+          <a href="#" class="text-slate-400 hover:text-emerald-400 transition-colors">Privacy Policy</a>
         </div>
       </div>
     </div>

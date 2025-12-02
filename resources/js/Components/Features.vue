@@ -10,10 +10,10 @@
       <!-- Header -->
       <div class="text-center mb-16">
         <h2 class="text-4xl sm:text-5xl font-bold text-emerald-950 mb-4">
-          Kwa nini Matokeo?
+          Why Choose Matokeo?
         </h2>
         <p class="text-lg text-emerald-800/80 max-w-3xl mx-auto leading-relaxed">
-          Matokeo ni mfumo kamili wa kusimamia matokeo ya mitihani, wanafunzi, na shule kwa njia rahisi na yenye ufanisi.
+          Matokeo is a complete system for managing exam results, students, and schools in a simple and efficient way.
         </p>
       </div>
 
@@ -28,9 +28,9 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
               </svg>
             </div>
-            <h3 class="text-xl font-bold text-emerald-950 mb-3">Rahisi na Haraka</h3>
+            <h3 class="text-xl font-bold text-emerald-950 mb-3">Simple & Fast</h3>
             <p class="text-emerald-800/80 leading-relaxed">
-              Kuingiza na kusimamia matokeo kwa haraka bila matatizo. Interface yenye urahisi kwa wote.
+              Enter and manage results quickly without hassle. User-friendly interface for everyone.
             </p>
           </div>
         </div>
@@ -44,9 +44,9 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/>
               </svg>
             </div>
-            <h3 class="text-xl font-bold text-emerald-950 mb-3">Kuzuia Makosa</h3>
+            <h3 class="text-xl font-bold text-emerald-950 mb-3">Error Prevention</h3>
             <p class="text-emerald-800/80 leading-relaxed">
-              Mfumo unakuza makosa na kuangalia data kwa usahihi kabla ya kukamatia.
+              System prevents errors and validates data accuracy before saving.
             </p>
           </div>
         </div>
@@ -60,9 +60,9 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
               </svg>
             </div>
-            <h3 class="text-xl font-bold text-emerald-950 mb-3">Akaunti Salama</h3>
+            <h3 class="text-xl font-bold text-emerald-950 mb-3">Secure Account</h3>
             <p class="text-emerald-800/80 leading-relaxed">
-              Matokeo yako yalindwa kwa siri na usalama wa juu. Hakuna mtu anayeweza kuona isipokuwa wewe.
+              Your data is protected with high security. Only you can access your information.
             </p>
           </div>
         </div>
@@ -76,9 +76,9 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
               </svg>
             </div>
-            <h3 class="text-xl font-bold text-emerald-950 mb-3">Ripoti Kamili</h3>
+            <h3 class="text-xl font-bold text-emerald-950 mb-3">Complete Reports</h3>
             <p class="text-emerald-800/80 leading-relaxed">
-              Tazama ripoti za kina kuhusu matokeo, takwimu, na mwenendo wa shule kwa muda mrefu.
+              View detailed reports on results, statistics, and school trends over time.
             </p>
           </div>
         </div>
@@ -92,9 +92,9 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
               </svg>
             </div>
-            <h3 class="text-xl font-bold text-emerald-950 mb-3">Msaada 24/7</h3>
+            <h3 class="text-xl font-bold text-emerald-950 mb-3">24/7 Support</h3>
             <p class="text-emerald-800/80 leading-relaxed">
-              Timu yetu iko tayari kusaidia wakati wowote. Maswali? Tutajibu haraka na kwa upole.
+              Our team is ready to help anytime. Questions? We'll respond quickly and professionally.
             </p>
           </div>
         </div>
@@ -108,9 +108,9 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
               </svg>
             </div>
-            <h3 class="text-xl font-bold text-emerald-950 mb-3">Haraka Sana</h3>
+            <h3 class="text-xl font-bold text-emerald-950 mb-3">Lightning Fast</h3>
             <p class="text-emerald-800/80 leading-relaxed">
-              Mfumo unafanya kazi kwa kasi. Hakuna kusubiri. Matokeo yanakuja haraka na salama.
+              System works at high speed. No waiting. Results come quickly and securely.
             </p>
           </div>
         </div>

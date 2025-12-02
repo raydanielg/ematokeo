@@ -12,33 +12,33 @@ const openId = ref<number | null>(null)
 const faqs = ref<FaqItem[]>([
   {
     id: 1,
-    question: 'Mfumo huu unafaa kwa shule gani?',
-    answer: 'Matokeo unafaa kwa shule zote za msingi na sekondari. Mfumo umebunwa kwa mahitaji ya shule za Tanzania, ikiwemo kusimamia classes, streams, exams na matokeo kwa usahihi.'
+    question: 'Which schools can use this system?',
+    answer: 'Matokeo is suitable for all primary and secondary schools. The system is built for the needs of Tanzanian schools, including managing classes, streams, exams and results accurately.'
   },
   {
     id: 2,
-    question: 'Je, data zangu ziko salama?',
-    answer: 'Ndiyo, data yako iko salama kabisa. Tunatumia encryption ya juu, backup otomatiki, na usalama wa kiwango cha enterprise. Hakuna mtu anayeweza kuona matokeo yako isipokuwa wewe.'
+    question: 'Is my data secure?',
+    answer: 'Yes, your data is completely secure. We use high-level encryption, automatic backups, and enterprise-grade security. No one can see your results except you.'
   },
   {
     id: 3,
-    question: 'Ni bei gani ya Matokeo?',
-    answer: 'Matokeo ina bei inayolingana na ukubwa wa shule yako. Tunatoa bei maalum kwa shule za serikali na za kibinafsi. Wasiliana nasi kwa quote halisi.'
+    question: 'What is the price of Matokeo?',
+    answer: 'Matokeo has pricing that matches the size of your school. We offer special rates for government and private schools. Contact us for a real quote.'
   },
   {
     id: 4,
-    question: 'Je, programu ya simu inapatikana?',
-    answer: 'Ndiyo! Matokeo ina programu ya simu kwa iOS na Android. Wanafunzi, wazazi na waliimu wanaweza kuangalia matokeo kwa haraka kutoka kwa simu yao.'
+    question: 'Is there a mobile app?',
+    answer: 'Yes! Matokeo has mobile apps for iOS and Android. Students, parents and teachers can quickly view results from their phones.'
   },
   {
     id: 5,
-    question: 'Kama nina matatizo, nani anasaidia?',
-    answer: 'Timu yetu ya msaada iko tayari kusaidia 24/7. Unaweza kuwasiliana kupitia email, WhatsApp, au simu. Tutajibu haraka na kwa upole.'
+    question: 'If I have problems, who helps?',
+    answer: 'Our support team is ready to help 24/7. You can contact us via email, WhatsApp, or phone. We will respond quickly and professionally.'
   },
   {
     id: 6,
-    question: 'Je, ninaweza kuhamisha data kutoka kwa mfumo mwingine?',
-    answer: 'Ndiyo, tunaweza kusaidia kuhamisha data yako kutoka kwa mfumo mwingine. Timu yetu itakuwa na huduma kamili ya data migration.'
+    question: 'Can I transfer data from another system?',
+    answer: 'Yes, we can help transfer your data from another system. Our team will provide complete data migration service.'
   }
 ])
 
@@ -74,10 +74,10 @@ const toggleFaq = (id: number) => {
           <!-- Header -->
           <div class="mb-8">
             <h2 class="text-4xl sm:text-5xl font-bold text-emerald-950 mb-4">
-              Maswali Yanayoulizwa Mara Kwa Mara
+              Frequently Asked Questions
             </h2>
             <p class="text-lg text-emerald-800/80 leading-relaxed">
-              Tafuta majibu ya maswali muhimu kuhusu Matokeo. Kama huna jibu, wasiliana nasi.
+              Find answers to important questions about Matokeo. If you don't have an answer, contact us.
             </p>
           </div>
 
@@ -144,10 +144,10 @@ const toggleFaq = (id: number) => {
           <!-- CTA Section -->
           <div class="mt-8">
             <p class="text-emerald-800/80 mb-4">
-              Huna jibu la swali lako?
+              Don't have an answer to your question?
             </p>
             <button class="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-8 py-3 text-base font-semibold text-white shadow-lg shadow-emerald-600/40 hover:bg-emerald-700 transition-all duration-300 transform hover:scale-105">
-              Wasiliana Nasi
+              Contact Us
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/>
               </svg>
