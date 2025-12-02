@@ -13,6 +13,7 @@ class SchoolClass extends Model
 
     protected $fillable = [
         'school_id',
+        'parent_class_id',
         'name',
         'level',
         'stream',

@@ -14,21 +14,26 @@ const props = defineProps({
     },
 });
 
-const groupedByLevel = computed(() => {
-    const groups = {};
-    for (const c of props.classes) {
-        const key = c.level || 'Other';
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(c);
+// Base classes are rows without a parent_class_id. Streams are rows with parent_class_id.
+const baseClasses = computed(() =>
+    (props.classes || []).filter((c) => !c.parent_class_id),
+);
+
+const streamsPerClass = computed(() => {
+    const map = {};
+    for (const c of props.classes || []) {
+        if (!c.parent_class_id) continue;
+        if (!map[c.parent_class_id]) map[c.parent_class_id] = [];
+        map[c.parent_class_id].push(c);
     }
-    return groups;
+    return map;
 });
 
 const showForm = ref(false);
 const isEditing = ref(false);
 const editingId = ref(null);
 const form = reactive({
-    level: '',
+    class_id: '',
     stream: '',
     description: '',
     subject_ids: [],
@@ -38,7 +43,7 @@ const openForm = () => {
     showForm.value = true;
     isEditing.value = false;
     editingId.value = null;
-    form.level = '';
+    form.class_id = '';
     form.stream = '';
     form.description = '';
 
@@ -64,7 +69,7 @@ const editStream = (stream) => {
     showForm.value = true;
     isEditing.value = true;
     editingId.value = stream.id;
-    form.level = stream.level ?? '';
+    form.class_id = stream.parent_class_id ?? '';
     form.stream = stream.stream ?? '';
     form.description = stream.description ?? '';
     form.subject_ids = Array.isArray(stream.subject_ids) ? [...stream.subject_ids] : [];
@@ -79,13 +84,13 @@ const deleteStream = (stream) => {
 };
 
 const saveStream = () => {
-    if (!form.level || !form.stream || form.subject_ids.length < 7) {
-        alert('Please select level, stream and at least 7 subjects.');
+    if (!form.class_id || !form.stream || form.subject_ids.length < 7) {
+        alert('Please select class, stream and at least 7 subjects.');
         return;
     }
 
     const payload = {
-        level: Number(form.level),
+        class_id: Number(form.class_id),
         stream: form.stream,
         description: form.description,
         subject_ids: form.subject_ids,
@@ -110,7 +115,7 @@ const saveStream = () => {
                         Streams
                     </h2>
                     <p class="mt-1 text-sm text-gray-500">
-                        Overview of streams inside each class level (e.g. Form I A, Form I B) with their subjects.
+                        Streams inside each base class (e.g. Form I with streams A, B, C) and their subjects.
                     </p>
                 </div>
                 <div>
@@ -134,7 +139,7 @@ const saveStream = () => {
                             {{ isEditing ? 'Edit Stream' : 'Add New Stream' }}
                         </h3>
                         <p class="mt-0.5 text-[11px] text-gray-500">
-                            Define level, stream name and assign subjects. At least 7 subjects are required.
+                            Define class, stream name and assign subjects. At least 7 subjects are required.
                         </p>
                     </div>
                     <button type="button" class="text-[11px] text-gray-500 hover:text-gray-700" @click="closeForm">Close</button>
@@ -142,16 +147,15 @@ const saveStream = () => {
 
                 <div class="grid gap-3 md:grid-cols-3">
                     <div>
-                        <label class="mb-1 block text-[11px] font-medium">Level (Form)</label>
+                        <label class="mb-1 block text-[11px] font-medium">Class</label>
                         <select
-                            v-model="form.level"
+                            v-model="form.class_id"
                             class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
                         >
-                            <option value="">Select level</option>
-                            <option value="1">Form I</option>
-                            <option value="2">Form II</option>
-                            <option value="3">Form III</option>
-                            <option value="4">Form IV</option>
+                            <option value="">Select class</option>
+                            <option v-for="c in baseClasses" :key="c.id" :value="c.id">
+                                {{ c.name }}
+                            </option>
                         </select>
                     </div>
                     <div>
@@ -233,7 +237,7 @@ const saveStream = () => {
                     </div>
                 </div>
 
-                <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                <div v-if="items.length" class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
                     <div
                         v-for="c in items"
                         :key="c.id"
@@ -290,10 +294,13 @@ const saveStream = () => {
                         </div>
                     </div>
                 </div>
+                <div v-else class="rounded-lg border border-dashed border-gray-200 bg-gray-50 p-3 text-[11px] text-gray-500">
+                    No streams have been created for this class yet. Use the Add Stream button above.
+                </div>
             </div>
 
-            <div v-if="Object.keys(groupedByLevel).length === 0" class="rounded-xl bg-white p-6 text-center text-xs text-gray-500 shadow-sm ring-1 ring-gray-100">
-                No streams/classes defined yet. Use the Add Stream button above to create one.
+            <div v-if="!baseClasses.length" class="rounded-xl bg-white p-6 text-center text-xs text-gray-500 shadow-sm ring-1 ring-gray-100">
+                No base classes defined yet. Create classes first, then come here to add streams.
             </div>
         </div>
     </AuthenticatedLayout>

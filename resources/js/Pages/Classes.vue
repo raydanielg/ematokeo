@@ -55,7 +55,6 @@ const showForm = ref(false);
 const editingId = ref(null);
 const form = reactive({
     name: '',
-    level: '',
     description: '',
 });
 const formSubjectIds = ref([]);
@@ -66,8 +65,6 @@ const showConfirmModal = ref(false);
 const confirmMessage = ref('');
 const confirmActionType = ref(null); // 'delete-single' | 'delete-bulk'
 const confirmPayload = ref(null);
-
-const levelOptions = ['Form I', 'Form II', 'Form III', 'Form IV'];
 
 // Core subjects (same list as SchoolClassSeeder::$coreSubjectCodes)
 const coreSubjectCodes = [
@@ -91,7 +88,6 @@ const coreSubjectIds = computed(() =>
 const openCreate = () => {
     editingId.value = null;
     form.name = '';
-    form.level = '';
     form.description = '';
     formSubjectIds.value = [];
     classSaveError.value = null;
@@ -127,7 +123,6 @@ watch(
 const openEdit = (row) => {
     editingId.value = row.id;
     form.name = row.name;
-    form.level = row.level || '';
     form.description = row.description || '';
     formSubjectIds.value = [...row.subject_ids];
     classSaveError.value = null;
@@ -182,7 +177,7 @@ const saveClass = () => {
             route('classes.update', editingId.value),
             {
                 name: form.name,
-                level: form.level,
+                // level is now derived from the school's level on the backend
                 description: form.description,
                 subject_ids: formSubjectIds.value,
             },
@@ -205,7 +200,7 @@ const saveClass = () => {
             route('classes.store'),
             {
                 name: form.name,
-                level: form.level,
+                // level is now derived from the school's level on the backend
                 description: form.description,
                 subject_ids: formSubjectIds.value,
             },

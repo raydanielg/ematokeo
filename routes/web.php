@@ -45,6 +45,13 @@ Route::get('/', function () {
     ]);
 });
 
+Route::get('/about', function () {
+    return Inertia::render('About', [
+        'canLogin' => Route::has('login'),
+        'canRegister' => Route::has('register'),
+    ]);
+});
+
 Route::get('/dashboard', function () {
     $today = now()->toDateString();
     $user = request()->user();
@@ -3768,7 +3775,8 @@ Route::middleware('auth')->group(function () {
         $class = SchoolClass::create([
             'school_id' => $request->user()?->school_id,
             'name' => $validated['name'],
-            'level' => $validated['level'],
+            // Always use the school's level instead of the request payload
+            'level' => optional($request->user()?->school)->level,
             'description' => $validated['description'] ?? null,
         ]);
 
@@ -3792,7 +3800,8 @@ Route::middleware('auth')->group(function () {
 
         $class->update([
             'name' => $validated['name'],
-            'level' => $validated['level'],
+            // Keep level in sync with the school's level
+            'level' => optional($request->user()?->school)->level,
             'description' => $validated['description'] ?? null,
         ]);
 
@@ -3895,7 +3904,7 @@ Route::middleware('auth')->group(function () {
 
     Route::get('/streams', function () {
         $classes = SchoolClass::with('subjects:id,subject_code')
-            ->orderBy('level')
+            ->orderBy('parent_class_id')
             ->orderBy('name')
             ->get()
             ->map(function (SchoolClass $class) {
@@ -3904,6 +3913,7 @@ Route::middleware('auth')->group(function () {
                     'name' => $class->name,
                     'level' => $class->level,
                     'stream' => $class->stream,
+                    'parent_class_id' => $class->parent_class_id,
                     'description' => $class->description,
                     'subject_codes' => $class->subjects->pluck('subject_code')->all(),
                     'subject_ids' => $class->subjects->pluck('id')->all(),
@@ -3925,18 +3935,22 @@ Route::middleware('auth')->group(function () {
 
     Route::post('/streams', function (\Illuminate\Http\Request $request) {
         $data = $request->validate([
-            'level' => ['required', 'integer'],
+            'class_id' => ['required', 'integer', 'exists:school_classes,id'],
             'stream' => ['required', 'string', 'max:10'],
             'description' => ['nullable', 'string', 'max:255'],
             'subject_ids' => ['required', 'array', 'min:7'],
             'subject_ids.*' => ['integer', 'exists:subjects,id'],
         ]);
 
-        $name = 'Form ' . $data['level'] . ' ' . strtoupper($data['stream']);
+        $baseClass = SchoolClass::findOrFail($data['class_id']);
+
+        $name = trim(($baseClass->name ?: '') . ' ' . strtoupper($data['stream']));
 
         $class = SchoolClass::create([
+            'school_id' => $baseClass->school_id,
+            'parent_class_id' => $baseClass->id,
             'name' => $name,
-            'level' => $data['level'],
+            'level' => $baseClass->level ?? optional($baseClass->school)->level,
             'stream' => strtoupper($data['stream']),
             'description' => $data['description'] ?? null,
         ]);
@@ -3948,18 +3962,22 @@ Route::middleware('auth')->group(function () {
 
     Route::post('/streams/{class}', function (\Illuminate\Http\Request $request, SchoolClass $class) {
         $data = $request->validate([
-            'level' => ['required', 'integer'],
+            'class_id' => ['required', 'integer', 'exists:school_classes,id'],
             'stream' => ['required', 'string', 'max:10'],
             'description' => ['nullable', 'string', 'max:255'],
             'subject_ids' => ['required', 'array', 'min:7'],
             'subject_ids.*' => ['integer', 'exists:subjects,id'],
         ]);
 
-        $name = 'Form ' . $data['level'] . ' ' . strtoupper($data['stream']);
+        $baseClass = SchoolClass::findOrFail($data['class_id']);
+
+        $name = trim(($baseClass->name ?: '') . ' ' . strtoupper($data['stream']));
 
         $class->update([
+            'school_id' => $baseClass->school_id,
+            'parent_class_id' => $baseClass->id,
             'name' => $name,
-            'level' => $data['level'],
+            'level' => $baseClass->level ?? optional($baseClass->school)->level,
             'stream' => strtoupper($data['stream']),
             'description' => $data['description'] ?? null,
         ]);
