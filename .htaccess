@@ -1,0 +1,7 @@
+RewriteEngine On
+
+# Kama tayari uko ndani ya /public usifanye redirect tena
+RewriteCond %{REQUEST_URI} !^/public/
+
+# Elekeza kila kitu kwenda kwenye public/
+RewriteRule ^(.*)$ public/$1 [L,QSA]
