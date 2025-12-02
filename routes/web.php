@@ -3757,7 +3757,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/classes', function (\Illuminate\Http\Request $request) {
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'level' => ['required', 'string', 'max:255'],
+            'level' => ['nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'subject_ids' => ['sometimes', 'array'],
             'subject_ids.*' => ['integer', 'exists:subjects,id'],
@@ -3782,7 +3782,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/classes/{class}', function (\Illuminate\Http\Request $request, SchoolClass $class) {
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'level' => ['required', 'string', 'max:255'],
+            'level' => ['nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'subject_ids' => ['sometimes', 'array'],
             'subject_ids.*' => ['integer', 'exists:subjects,id'],
