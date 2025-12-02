@@ -45,7 +45,7 @@ onMounted(() => {
 });
 
 const saveField = (field) => {
-    if (typeof form[field] === 'string') {
+    if (typeof form[field] === 'string' && !['level', 'ownership'].includes(field)) {
         form[field] = form[field].toUpperCase();
     }
 
@@ -69,7 +69,7 @@ const saveAll = () => {
     const payload = { ...form };
 
     Object.keys(payload).forEach((key) => {
-        if (typeof payload[key] === 'string') {
+        if (typeof payload[key] === 'string' && !['level', 'ownership'].includes(key)) {
             payload[key] = payload[key].toUpperCase();
         }
     });
