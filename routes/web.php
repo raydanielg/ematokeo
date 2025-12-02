@@ -52,6 +52,34 @@ Route::get('/about', function () {
     ]);
 });
 
+Route::get('/blog', function () {
+    return Inertia::render('Blog', [
+        'canLogin' => Route::has('login'),
+        'canRegister' => Route::has('register'),
+    ]);
+});
+
+Route::get('/blog/{id}', function () {
+    return Inertia::render('BlogDetail', [
+        'canLogin' => Route::has('login'),
+        'canRegister' => Route::has('register'),
+    ]);
+});
+
+Route::get('/publications', function () {
+    return Inertia::render('Publications', [
+        'canLogin' => Route::has('login'),
+        'canRegister' => Route::has('register'),
+    ]);
+});
+
+Route::get('/contact', function () {
+    return Inertia::render('Contact', [
+        'canLogin' => Route::has('login'),
+        'canRegister' => Route::has('register'),
+    ]);
+});
+
 Route::get('/dashboard', function () {
     $today = now()->toDateString();
     $user = request()->user();

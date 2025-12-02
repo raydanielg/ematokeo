@@ -33,14 +33,46 @@ const handleSubscribe = () => {
           </div>
         </div>
 
-        <!-- Column 2: Useful Links -->
+        <!-- Column 2: Navigation Links -->
         <div>
-          <h4 class="text-base font-bold text-white mb-4">Useful Links</h4>
+          <h4 class="text-base font-bold text-white mb-4">Navigation</h4>
           <ul class="space-y-2 text-sm">
-            <li><a href="#" class="text-slate-400 hover:text-emerald-400 transition-colors duration-300 inline-flex items-center gap-2 group">MoEST <span class="group-hover:translate-x-1 transition-transform duration-300">›</span></a></li>
-            <li><a href="#" class="text-slate-400 hover:text-emerald-400 transition-colors duration-300 inline-flex items-center gap-2 group">MoE-Zanzibar <span class="group-hover:translate-x-1 transition-transform duration-300">›</span></a></li>
-            <li><a href="#" class="text-slate-400 hover:text-emerald-400 transition-colors duration-300 inline-flex items-center gap-2 group">PO-RALG <span class="group-hover:translate-x-1 transition-transform duration-300">›</span></a></li>
-            <li><a href="#" class="text-slate-400 hover:text-emerald-400 transition-colors duration-300 inline-flex items-center gap-2 group">National Website <span class="group-hover:translate-x-1 transition-transform duration-300">›</span></a></li>
+            <li>
+              <a
+                href="/"
+                class="text-slate-400 hover:text-emerald-400 transition-colors duration-300 inline-flex items-center gap-2 group"
+              >
+                Home
+                <span class="group-hover:translate-x-1 transition-transform duration-300">›</span>
+              </a>
+            </li>
+            <li>
+              <a
+                href="/about"
+                class="text-slate-400 hover:text-emerald-400 transition-colors duration-300 inline-flex items-center gap-2 group"
+              >
+                About
+                <span class="group-hover:translate-x-1 transition-transform duration-300">›</span>
+              </a>
+            </li>
+            <li>
+              <a
+                href="/blog"
+                class="text-slate-400 hover:text-emerald-400 transition-colors duration-300 inline-flex items-center gap-2 group"
+              >
+                Blog
+                <span class="group-hover:translate-x-1 transition-transform duration-300">›</span>
+              </a>
+            </li>
+            <li>
+              <a
+                href="/contact"
+                class="text-slate-400 hover:text-emerald-400 transition-colors duration-300 inline-flex items-center gap-2 group"
+              >
+                Contact
+                <span class="group-hover:translate-x-1 transition-transform duration-300">›</span>
+              </a>
+            </li>
           </ul>
         </div>
 

@@ -14,8 +14,8 @@ const mobileMenuOpen = ref(false)
 const navItems = computed<NavItem[]>(() => [
   { label: 'Home', href: '/' },
   { label: 'About Us', href: '/about' },
-  { label: 'Publications', href: '/publications' },
   { label: 'Blog', href: '/blog' },
+  { label: 'Publications', href: '/publications' },
   { label: 'Contact', href: '/contact' },
   {
     label: 'Resources',
