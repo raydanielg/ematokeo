@@ -92,11 +92,17 @@ const submit = () => {
                 </Link>
 
                 <PrimaryButton
-                    class="ms-4"
+                    class="ms-4 flex items-center gap-2"
                     :class="{ 'opacity-25': form.processing }"
                     :disabled="form.processing"
                 >
-                    Sign in
+                    <span v-if="form.processing" class="flex items-center gap-2">
+                        <span class="loader"></span>
+                        <span>Signing in</span>
+                    </span>
+                    <span v-else>
+                        Sign in
+                    </span>
                 </PrimaryButton>
             </div>
         </form>
