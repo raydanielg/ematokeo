@@ -522,15 +522,33 @@ const saveSelectedClassAssignments = () => {
                         :message="classSaveError"
                     />
 
-                    <div>
-                        <label class="mb-1 block font-medium">Class Name</label>
-                        <input
-                            v-model="form.name"
-                            type="text"
-                            class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            placeholder="e.g. Form I A"
-                            required
-                        />
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="mb-1 block font-medium">Class Name</label>
+                            <input
+                                v-model="form.name"
+                                type="text"
+                                class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                placeholder="e.g. Form I A"
+                                required
+                            />
+                        </div>
+                        <div>
+                            <label class="mb-1 block font-medium">Level (optional)</label>
+                            <select
+                                v-model="form.level"
+                                class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                            >
+                                <option value="">Select level...</option>
+                                <option
+                                    v-for="level in levelOptions"
+                                    :key="level"
+                                    :value="level"
+                                >
+                                    {{ level }}
+                                </option>
+                            </select>
+                        </div>
                     </div>
                     <div>
                         <label class="mb-1 block font-medium">Assign Subjects</label>
