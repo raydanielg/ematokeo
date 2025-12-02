@@ -194,13 +194,18 @@ const deleteSubject = (id) => {
                                     Ownership
                                 </td>
                                 <td class="px-2 py-2">
-                                    <input
+                                    <select
                                         v-model="form.ownership"
-                                        @blur="saveField('ownership')"
-                                        type="text"
+                                        @change="saveField('ownership')"
                                         class="w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                                        placeholder="e.g. Government, Private"
-                                    />
+                                    >
+                                        <option value="" disabled>Select ownership</option>
+                                        <option value="Government">Government</option>
+                                        <option value="Private">Private</option>
+                                        <option value="Faith-Based">Faith-Based</option>
+                                        <option value="Community">Community</option>
+                                        <option value="Other">Other</option>
+                                    </select>
                                 </td>
                             </tr>
                         </tbody>
