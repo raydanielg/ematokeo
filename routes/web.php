@@ -84,6 +84,18 @@ Route::get('/success', function () {
     return Inertia::render('Auth/Success');
 });
 
+// Allow GET /logout to avoid MethodNotAllowed when URL is opened directly
+Route::get('/logout', function (\Illuminate\Http\Request $request) {
+    if (\Illuminate\Support\Facades\Auth::check()) {
+        \Illuminate\Support\Facades\Auth::guard('web')->logout();
+
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+    }
+
+    return redirect('/');
+});
+
 Route::get('/dashboard', function () {
     $today = now()->toDateString();
     $user = request()->user();
@@ -225,23 +237,99 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
     Route::get('/dashboard', function () {
         $totalSchools = School::count();
         $activeSchools = School::whereNotNull('name')->count();
+        $pendingSchools = $totalSchools - $activeSchools;
+
         $totalUsers = User::count();
         $adminUsers = User::where('role', 'admin')->count();
+
+        $totalStudents = Student::count();
+        $schoolsWithStudents = Student::distinct('school_id')->count('school_id');
+
+        // Guard teachers count in case the table does not exist on this installation
+        $totalTeachers = \Illuminate\Support\Facades\Schema::hasTable('teachers')
+            ? \Illuminate\Support\Facades\DB::table('teachers')->count()
+            : 0;
+
+        $schoolsByLevel = School::select('level', \Illuminate\Support\Facades\DB::raw('count(*) as count'))
+            ->groupBy('level')
+            ->orderBy('level')
+            ->get();
+
         $recentSchools = School::latest('created_at')->limit(10)->get();
 
         return Inertia::render('Admin/Dashboard', [
             'totalSchools' => $totalSchools,
             'activeSchools' => $activeSchools,
+            'pendingSchools' => $pendingSchools,
             'totalUsers' => $totalUsers,
             'adminUsers' => $adminUsers,
+            'totalStudents' => $totalStudents,
+            'totalTeachers' => $totalTeachers,
+            'schoolsWithStudents' => $schoolsWithStudents,
+            'schoolsByLevel' => $schoolsByLevel,
             'recentSchools' => $recentSchools,
         ]);
     })->name('dashboard');
 
     Route::get('/statistics', function () {
-        return Inertia::render('Admin/Statistics');
+        $laravelVersion = \Illuminate\Foundation\Application::VERSION;
+        $phpVersion = PHP_VERSION;
+        $dbDriver = config('database.default');
+        $dbConnection = config("database.connections.{$dbDriver}");
+
+        // Get database info
+        $dbName = $dbConnection['database'] ?? 'N/A';
+        $dbHost = $dbConnection['host'] ?? 'N/A';
+
+        // Count tables and records
+        $tables = [];
+        try {
+            $tableNames = \Illuminate\Support\Facades\DB::select("SELECT name FROM sqlite_master WHERE type='table'");
+            foreach ($tableNames as $table) {
+                $tableName = $table->name;
+                $count = \Illuminate\Support\Facades\DB::table($tableName)->count();
+                $tables[] = [
+                    'name' => $tableName,
+                    'count' => $count,
+                ];
+            }
+        } catch (\Exception $e) {
+            // Fallback for non-sqlite databases
+            $tables = [];
+        }
+
+        // Cache info
+        $cacheDriver = config('cache.default');
+        $cacheEnabled = $cacheDriver !== 'null';
+
+        // Get file size of database
+        $dbSize = 0;
+        if (file_exists($dbName)) {
+            $dbSize = filesize($dbName);
+        }
+
+        return Inertia::render('Admin/Statistics', [
+            'laravelVersion' => $laravelVersion,
+            'phpVersion' => $phpVersion,
+            'dbDriver' => $dbDriver,
+            'dbName' => $dbName,
+            'dbHost' => $dbHost,
+            'dbSize' => $dbSize,
+            'tables' => $tables,
+            'cacheDriver' => $cacheDriver,
+            'cacheEnabled' => $cacheEnabled,
+        ]);
     })->name('statistics');
 
+    Route::post('/cache-clear', function () {
+        \Illuminate\Support\Facades\Artisan::call('cache:clear');
+        \Illuminate\Support\Facades\Artisan::call('config:clear');
+        \Illuminate\Support\Facades\Artisan::call('view:clear');
+
+        return back()->with('success', 'Cache cleared successfully!');
+    })->name('cache-clear');
+
+    // Schools Management
     Route::get('/schools', function () {
         $schools = School::with('users')->paginate(20);
         return Inertia::render('Admin/Schools/Index', [
@@ -263,6 +351,11 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
         ]);
     })->name('schools.active');
 
+    Route::get('/schools/details', function () {
+        return Inertia::render('Admin/Schools/Details');
+    })->name('schools.details');
+
+    // Users Management
     Route::get('/users', function () {
         $users = User::paginate(20);
         return Inertia::render('Admin/Users/Index', [
@@ -277,13 +370,45 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
         ]);
     })->name('users.admins');
 
-    Route::get('/settings', function () {
-        return Inertia::render('Admin/Settings');
-    })->name('settings');
+    Route::get('/users/school-admins', function () {
+        $users = User::where('role', '!=', 'admin')->paginate(20);
+        return Inertia::render('Admin/Users/SchoolAdmins', [
+            'users' => $users,
+        ]);
+    })->name('users.school-admins');
 
+    Route::get('/users/active', function () {
+        $users = User::where('is_active', true)->paginate(20);
+        return Inertia::render('Admin/Users/Active', [
+            'users' => $users,
+        ]);
+    })->name('users.active');
+
+    // System Settings
+    Route::get('/settings/general', function () {
+        return Inertia::render('Admin/Settings/General');
+    })->name('settings.general');
+
+    Route::get('/settings/email', function () {
+        return Inertia::render('Admin/Settings/Email');
+    })->name('settings.email');
+
+    Route::get('/settings/sms', function () {
+        return Inertia::render('Admin/Settings/SMS');
+    })->name('settings.sms');
+
+    Route::get('/settings/backup', function () {
+        return Inertia::render('Admin/Settings/Backup');
+    })->name('settings.backup');
+
+    // System Reports
     Route::get('/reports/schools', function () {
         return Inertia::render('Admin/Reports/Schools');
     })->name('reports.schools');
+
+    Route::get('/reports/users', function () {
+        return Inertia::render('Admin/Reports/Users');
+    })->name('reports.users');
 
     Route::get('/reports/logs', function () {
         $logs = RecentActivity::latest('occurred_at')->paginate(50);
@@ -291,6 +416,71 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
             'logs' => $logs,
         ]);
     })->name('reports.logs');
+
+    Route::get('/reports/health', function () {
+        return Inertia::render('Admin/Reports/Health');
+    })->name('reports.health');
+
+    // Blog Management
+    Route::get('/blog', function () {
+        return Inertia::render('Admin/Blog/Index');
+    })->name('blog.index');
+    Route::get('/blog/create', function () {
+        return Inertia::render('Admin/Blog/Create');
+    })->name('blog.create');
+    Route::get('/blog/categories', function () {
+        return Inertia::render('Admin/Blog/Categories');
+    })->name('blog.categories');
+    Route::get('/blog/comments', function () {
+        return Inertia::render('Admin/Blog/Comments');
+    })->name('blog.comments');
+
+    // Subscribers
+    Route::get('/subscribers', function () {
+        return Inertia::render('Admin/Subscribers/Index');
+    })->name('subscribers.index');
+    Route::get('/subscribers/lists', function () {
+        return Inertia::render('Admin/Subscribers/Lists');
+    })->name('subscribers.lists');
+    Route::get('/subscribers/campaigns', function () {
+        return Inertia::render('Admin/Subscribers/Campaigns');
+    })->name('subscribers.campaigns');
+
+    // Help Desk
+    Route::get('/helpdesk/tickets', function () {
+        return Inertia::render('Admin/HelpDesk/Tickets');
+    })->name('helpdesk.tickets');
+    Route::get('/helpdesk/categories', function () {
+        return Inertia::render('Admin/HelpDesk/Categories');
+    })->name('helpdesk.categories');
+    Route::get('/helpdesk/faq', function () {
+        return Inertia::render('Admin/HelpDesk/FAQ');
+    })->name('helpdesk.faq');
+    Route::get('/helpdesk/team', function () {
+        return Inertia::render('Admin/HelpDesk/Team');
+    })->name('helpdesk.team');
+
+    // Notifications
+    Route::get('/notifications/send', function () {
+        return Inertia::render('Admin/Notifications/Send');
+    })->name('notifications.send');
+    Route::get('/notifications/history', function () {
+        return Inertia::render('Admin/Notifications/History');
+    })->name('notifications.history');
+    Route::get('/notifications/templates', function () {
+        return Inertia::render('Admin/Notifications/Templates');
+    })->name('notifications.templates');
+
+    // Announcements
+    Route::get('/announcements', function () {
+        return Inertia::render('Admin/Announcements/Index');
+    })->name('announcements.index');
+    Route::get('/announcements/create', function () {
+        return Inertia::render('Admin/Announcements/Create');
+    })->name('announcements.create');
+    Route::get('/announcements/scheduled', function () {
+        return Inertia::render('Admin/Announcements/Scheduled');
+    })->name('announcements.scheduled');
 });
 
 Route::middleware('auth')->group(function () {

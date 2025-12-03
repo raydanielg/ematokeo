@@ -42,7 +42,13 @@ class AuthenticatedSessionController extends Controller
             'occurred_at' => now(),
         ]);
 
-        return redirect()->intended(route('dashboard', absolute: false));
+        $user = $request->user();
+
+        $targetRoute = ($user && $user->role === 'admin')
+            ? 'admin.dashboard'
+            : 'dashboard';
+
+        return redirect()->intended(route($targetRoute, absolute: false));
     }
 
     /**

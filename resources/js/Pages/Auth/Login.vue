@@ -29,10 +29,8 @@ const benefits = [
 const submit = () => {
   form.post(route('login'), {
     onSuccess: () => {
+      // Show a brief success state; actual redirect is handled by backend
       showSuccess.value = true
-      setTimeout(() => {
-        window.location.href = '/dashboard'
-      }, 3000)
     },
     onFinish: () => form.reset('password'),
   })

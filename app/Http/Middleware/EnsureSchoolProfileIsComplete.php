@@ -17,6 +17,13 @@ class EnsureSchoolProfileIsComplete
     {
         if ($request->user()) {
             $user = $request->user();
+
+            // System admins do not belong to a specific school and
+            // should not be forced through the school/class setup flow.
+            if ($user->role === 'admin') {
+                return $next($request);
+            }
+
             $school = $user->school;
 
             $schoolIncomplete = ! $school || empty($school->name) || empty($school->school_code);

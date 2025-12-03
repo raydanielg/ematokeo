@@ -116,6 +116,31 @@ const adminSidebarSections = [
         items: ['Schools Report', 'Users Report', 'Activity Logs', 'System Health'],
     },
     {
+        key: 'admin-blog',
+        title: 'Blog Management',
+        items: ['All Posts', 'Create Post', 'Categories', 'Comments'],
+    },
+    {
+        key: 'admin-subscribers',
+        title: 'Subscribers',
+        items: ['All Subscribers', 'Mailing Lists', 'Email Campaigns'],
+    },
+    {
+        key: 'admin-helpdesk',
+        title: 'Help Desk',
+        items: ['Tickets', 'Categories', 'FAQ', 'Support Team'],
+    },
+    {
+        key: 'admin-notifications',
+        title: 'Notifications',
+        items: ['Send Notification', 'Notification History', 'Templates'],
+    },
+    {
+        key: 'admin-announcements',
+        title: 'Announcements',
+        items: ['All Announcements', 'Create Announcement', 'Scheduled'],
+    },
+    {
         key: 'profile',
         title: 'Profile',
         items: ['My Account', 'Change Password', 'Logout'],
@@ -138,14 +163,57 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
     // Admin routes
     if (sectionKey === 'admin-dashboard' && itemName === 'Overview') return route('admin.dashboard');
     if (sectionKey === 'admin-dashboard' && itemName === 'System Statistics') return route('admin.statistics');
+    
+    // Schools Management
     if (sectionKey === 'admin-schools' && itemName === 'All Schools') return route('admin.schools.index');
     if (sectionKey === 'admin-schools' && itemName === 'Pending Schools') return route('admin.schools.pending');
     if (sectionKey === 'admin-schools' && itemName === 'Active Schools') return route('admin.schools.active');
+    if (sectionKey === 'admin-schools' && itemName === 'School Details') return route('admin.schools.details');
+    
+    // Users Management
     if (sectionKey === 'admin-users' && itemName === 'All Users') return route('admin.users.index');
     if (sectionKey === 'admin-users' && itemName === 'Admins') return route('admin.users.admins');
-    if (sectionKey === 'admin-system' && itemName === 'General Settings') return route('admin.settings');
+    if (sectionKey === 'admin-users' && itemName === 'School Administrators') return route('admin.users.school-admins');
+    if (sectionKey === 'admin-users' && itemName === 'Active Users') return route('admin.users.active');
+    
+    // System Settings
+    if (sectionKey === 'admin-system' && itemName === 'General Settings') return route('admin.settings.general');
+    if (sectionKey === 'admin-system' && itemName === 'Email Configuration') return route('admin.settings.email');
+    if (sectionKey === 'admin-system' && itemName === 'SMS Configuration') return route('admin.settings.sms');
+    if (sectionKey === 'admin-system' && itemName === 'Backup & Restore') return route('admin.settings.backup');
+    
+    // System Reports
     if (sectionKey === 'admin-reports' && itemName === 'Schools Report') return route('admin.reports.schools');
+    if (sectionKey === 'admin-reports' && itemName === 'Users Report') return route('admin.reports.users');
     if (sectionKey === 'admin-reports' && itemName === 'Activity Logs') return route('admin.reports.logs');
+    if (sectionKey === 'admin-reports' && itemName === 'System Health') return route('admin.reports.health');
+    
+    // Blog Management
+    if (sectionKey === 'admin-blog' && itemName === 'All Posts') return route('admin.blog.index');
+    if (sectionKey === 'admin-blog' && itemName === 'Create Post') return route('admin.blog.create');
+    if (sectionKey === 'admin-blog' && itemName === 'Categories') return route('admin.blog.categories');
+    if (sectionKey === 'admin-blog' && itemName === 'Comments') return route('admin.blog.comments');
+    
+    // Subscribers
+    if (sectionKey === 'admin-subscribers' && itemName === 'All Subscribers') return route('admin.subscribers.index');
+    if (sectionKey === 'admin-subscribers' && itemName === 'Mailing Lists') return route('admin.subscribers.lists');
+    if (sectionKey === 'admin-subscribers' && itemName === 'Email Campaigns') return route('admin.subscribers.campaigns');
+    
+    // Help Desk
+    if (sectionKey === 'admin-helpdesk' && itemName === 'Tickets') return route('admin.helpdesk.tickets');
+    if (sectionKey === 'admin-helpdesk' && itemName === 'Categories') return route('admin.helpdesk.categories');
+    if (sectionKey === 'admin-helpdesk' && itemName === 'FAQ') return route('admin.helpdesk.faq');
+    if (sectionKey === 'admin-helpdesk' && itemName === 'Support Team') return route('admin.helpdesk.team');
+    
+    // Notifications
+    if (sectionKey === 'admin-notifications' && itemName === 'Send Notification') return route('admin.notifications.send');
+    if (sectionKey === 'admin-notifications' && itemName === 'Notification History') return route('admin.notifications.history');
+    if (sectionKey === 'admin-notifications' && itemName === 'Templates') return route('admin.notifications.templates');
+    
+    // Announcements
+    if (sectionKey === 'admin-announcements' && itemName === 'All Announcements') return route('admin.announcements.index');
+    if (sectionKey === 'admin-announcements' && itemName === 'Create Announcement') return route('admin.announcements.create');
+    if (sectionKey === 'admin-announcements' && itemName === 'Scheduled') return route('admin.announcements.scheduled');
     
     // User routes (existing)
     if (sectionKey === 'dashboard' && itemName === 'Overview') return route('dashboard');
@@ -481,7 +549,9 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
                                     v-for="item in section.items"
                                     :key="item"
                                 >
+                                    <!-- Special handling for Logout so it uses POST /logout -->
                                     <Link
+                                        v-if="!(section.key === 'profile' && item === 'Logout')"
                                         :href="getRouteForMenuItem(section.key, item)"
                                         class="flex items-center justify-between rounded px-2 py-1 text-emerald-50 transition hover:bg-emerald-700 hover:text-white"
                                         :class="{
@@ -534,6 +604,17 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
                                         }"
                                     >
                                         <span>{{ item }}</span>
+                                    </Link>
+
+                                    <!-- Sidebar Logout uses POST like top-right menu -->
+                                    <Link
+                                        v-else
+                                        :href="route('logout')"
+                                        method="post"
+                                        as="button"
+                                        class="flex w-full items-center justify-between rounded px-2 py-1 text-left text-emerald-50 transition hover:bg-emerald-700 hover:text-white"
+                                    >
+                                        <span>Logout</span>
                                     </Link>
                                 </li>
                             </ul>

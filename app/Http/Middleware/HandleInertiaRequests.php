@@ -30,11 +30,16 @@ class HandleInertiaRequests extends Middleware
     public function share(Request $request): array
     {
         $schoolIncomplete = false;
-        
+
         if ($request->user()) {
             $user = $request->user();
-            $school = $user->school;
-            $schoolIncomplete = ! $school || empty($school->name) || empty($school->school_code);
+
+            // Admin users do not manage a specific school profile,
+            // so they should never be blocked by the schoolIncomplete flag.
+            if ($user->role !== 'admin') {
+                $school = $user->school;
+                $schoolIncomplete = ! $school || empty($school->name) || empty($school->school_code);
+            }
         }
 
         return [
