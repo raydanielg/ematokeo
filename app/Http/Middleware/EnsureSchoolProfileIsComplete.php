@@ -16,9 +16,13 @@ class EnsureSchoolProfileIsComplete
     public function handle(Request $request, Closure $next): Response
     {
         if ($request->user()) {
-            $school = School::query()->first();
+            $user = $request->user();
+            $school = $user->school;
 
             $schoolIncomplete = ! $school || empty($school->name) || empty($school->school_code);
+
+            // Pass flag to view
+            $request->session()->put('schoolIncomplete', $schoolIncomplete);
 
             if ($schoolIncomplete && ! $request->routeIs('settings.school-information')) {
                 return redirect()->route('settings.school-information');
@@ -26,7 +30,7 @@ class EnsureSchoolProfileIsComplete
 
             // If school is complete, require at least one class before allowing other pages
             if (! $schoolIncomplete) {
-                $hasAnyClass = SchoolClass::query()->exists();
+                $hasAnyClass = SchoolClass::where('school_id', $school->id)->exists();
 
                 if (! $hasAnyClass && ! $request->routeIs('classes.index') && ! $request->routeIs('settings.school-information')) {
                     return redirect()->route('classes.index');

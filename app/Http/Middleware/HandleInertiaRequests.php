@@ -29,11 +29,20 @@ class HandleInertiaRequests extends Middleware
      */
     public function share(Request $request): array
     {
+        $schoolIncomplete = false;
+        
+        if ($request->user()) {
+            $user = $request->user();
+            $school = $user->school;
+            $schoolIncomplete = ! $school || empty($school->name) || empty($school->school_code);
+        }
+
         return [
             ...parent::share($request),
             'auth' => [
                 'user' => $request->user(),
             ],
+            'schoolIncomplete' => $schoolIncomplete,
         ];
     }
 }

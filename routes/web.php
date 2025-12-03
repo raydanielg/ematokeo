@@ -220,6 +220,79 @@ Route::get('/dashboard', function () {
     ]);
 })->middleware(['auth', 'verified'])->name('dashboard');
 
+// Admin Routes
+Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.')->group(function () {
+    Route::get('/dashboard', function () {
+        $totalSchools = School::count();
+        $activeSchools = School::whereNotNull('name')->count();
+        $totalUsers = User::count();
+        $adminUsers = User::where('role', 'admin')->count();
+        $recentSchools = School::latest('created_at')->limit(10)->get();
+
+        return Inertia::render('Admin/Dashboard', [
+            'totalSchools' => $totalSchools,
+            'activeSchools' => $activeSchools,
+            'totalUsers' => $totalUsers,
+            'adminUsers' => $adminUsers,
+            'recentSchools' => $recentSchools,
+        ]);
+    })->name('dashboard');
+
+    Route::get('/statistics', function () {
+        return Inertia::render('Admin/Statistics');
+    })->name('statistics');
+
+    Route::get('/schools', function () {
+        $schools = School::with('users')->paginate(20);
+        return Inertia::render('Admin/Schools/Index', [
+            'schools' => $schools,
+        ]);
+    })->name('schools.index');
+
+    Route::get('/schools/pending', function () {
+        $schools = School::whereNull('name')->orWhere('name', '')->paginate(20);
+        return Inertia::render('Admin/Schools/Pending', [
+            'schools' => $schools,
+        ]);
+    })->name('schools.pending');
+
+    Route::get('/schools/active', function () {
+        $schools = School::whereNotNull('name')->where('name', '!=', '')->paginate(20);
+        return Inertia::render('Admin/Schools/Active', [
+            'schools' => $schools,
+        ]);
+    })->name('schools.active');
+
+    Route::get('/users', function () {
+        $users = User::paginate(20);
+        return Inertia::render('Admin/Users/Index', [
+            'users' => $users,
+        ]);
+    })->name('users.index');
+
+    Route::get('/users/admins', function () {
+        $users = User::where('role', 'admin')->paginate(20);
+        return Inertia::render('Admin/Users/Admins', [
+            'users' => $users,
+        ]);
+    })->name('users.admins');
+
+    Route::get('/settings', function () {
+        return Inertia::render('Admin/Settings');
+    })->name('settings');
+
+    Route::get('/reports/schools', function () {
+        return Inertia::render('Admin/Reports/Schools');
+    })->name('reports.schools');
+
+    Route::get('/reports/logs', function () {
+        $logs = RecentActivity::latest('occurred_at')->paginate(50);
+        return Inertia::render('Admin/Reports/Logs', [
+            'logs' => $logs,
+        ]);
+    })->name('reports.logs');
+});
+
 Route::middleware('auth')->group(function () {
     Route::get('/statistics', function () {
         $user = request()->user();
@@ -4516,10 +4589,12 @@ Route::middleware('auth')->group(function () {
     })->name('students.marks.show');
 
     Route::get('/settings/school-information', function () {
-        $school = School::query()->first();
+        $user = request()->user();
+        $school = $user->school;
 
         if (! $school) {
             $school = School::create([]);
+            $user->update(['school_id' => $school->id]);
         }
 
         return Inertia::render('SchoolInformation', [
@@ -4528,11 +4603,19 @@ Route::middleware('auth')->group(function () {
     })->name('settings.school-information');
 
     Route::put('/settings/school-information', function (\Illuminate\Http\Request $request) {
-        $school = School::query()->first();
+        $user = $request->user();
+        $school = $user->school;
 
         if (! $school) {
             $school = School::create([]);
+            $user->update(['school_id' => $school->id]);
         }
+
+        // Validate school name uniqueness (excluding current school)
+        $request->validate([
+            'name' => 'nullable|string|max:255|unique:schools,name,' . $school->id,
+            'school_code' => 'nullable|string|max:50',
+        ]);
 
         $data = $request->only([
             'name',
@@ -4556,34 +4639,34 @@ Route::middleware('auth')->group(function () {
     })->name('settings.school-information.update');
 
     Route::get('/settings/user-management', function () {
+        $user = request()->user();
+        $schoolId = $user->school_id;
+
         $users = User::query()
+            ->where('school_id', $schoolId)
             ->orderBy('name')
             ->get(['id', 'school_id', 'name', 'email', 'username', 'role', 'is_active']);
 
-        $schools = School::orderBy('name')
-            ->get([
-                'id',
-                'name',
-            ]);
-
         return Inertia::render('UserManagement', [
             'users' => $users,
-            'schools' => $schools,
+            'schoolId' => $schoolId,
         ]);
     })->name('settings.user-management');
 
     Route::post('/settings/user-management', function (Illuminate\Http\Request $request) {
+        $currentUser = $request->user();
+        $schoolId = $currentUser->school_id;
+
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
             'role' => ['nullable', 'string', 'max:50'],
-            'school_id' => ['nullable', 'integer', 'exists:schools,id'],
         ]);
 
         $password = 'changeme123';
 
         User::create([
-            'school_id' => $data['school_id'] ?? null,
+            'school_id' => $schoolId,
             'name' => $data['name'],
             'email' => $data['email'],
             'role' => $data['role'] ?? null,

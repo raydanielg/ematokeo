@@ -33,7 +33,9 @@ const form = reactive({
 const saving = reactive({});
 const savingAll = ref(false);
 const saveStatus = ref(null); // 'success' | 'error' | null
+const saveError = ref(null);
 const showRegistrationSuccess = ref(false);
+const errors = ref({});
 
 const page = usePage();
 
@@ -50,11 +52,15 @@ const saveField = (field) => {
     }
 
     saving[field] = true;
+    errors.value = {};
     router.put(
         route('settings.school-information.update'),
         { [field]: form[field] },
         {
             preserveScroll: true,
+            onError: (err) => {
+                errors.value = err;
+            },
             onFinish: () => {
                 saving[field] = false;
             },
@@ -65,6 +71,8 @@ const saveField = (field) => {
 const saveAll = () => {
     savingAll.value = true;
     saveStatus.value = null;
+    saveError.value = null;
+    errors.value = {};
 
     const payload = { ...form };
 
@@ -81,9 +89,14 @@ const saveAll = () => {
             preserveScroll: true,
             onSuccess: () => {
                 saveStatus.value = 'success';
+                saveError.value = null;
             },
-            onError: () => {
+            onError: (err) => {
                 saveStatus.value = 'error';
+                errors.value = err;
+                if (err.name) {
+                    saveError.value = err.name[0];
+                }
             },
             onFinish: () => {
                 savingAll.value = false;
@@ -135,13 +148,19 @@ const deleteSubject = (id) => {
                                     School Name
                                 </td>
                                 <td class="px-2 py-2">
-                                    <input
-                                        v-model="form.name"
-                                        @blur="saveField('name')"
-                                        type="text"
-                                        class="w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                                        placeholder="e.g. Mlimani Secondary School"
-                                    />
+                                    <div>
+                                        <input
+                                            v-model="form.name"
+                                            @blur="saveField('name')"
+                                            type="text"
+                                            class="w-full rounded-md border px-2 py-1.5 text-xs focus:outline-none focus:ring-emerald-500"
+                                            :class="errors.name ? 'border-red-400 focus:border-red-500' : 'border-gray-200 focus:border-emerald-500'"
+                                            placeholder="e.g. Mlimani Secondary School"
+                                        />
+                                        <p v-if="errors.name" class="mt-1 text-[10px] text-red-600">
+                                            {{ errors.name[0] }}
+                                        </p>
+                                    </div>
                                 </td>
                             </tr>
                             <tr class="border-b border-gray-100">
@@ -371,7 +390,7 @@ const deleteSubject = (id) => {
                         v-else-if="saveStatus === 'error'"
                         variant="danger"
                         title="Save failed"
-                        message="Something went wrong while saving. Please check the fields and try again."
+                        :message="saveError || 'Something went wrong while saving. Please check the fields and try again.'"
                     />
                 </div>
             </div>

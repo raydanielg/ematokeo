@@ -1,16 +1,19 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import ApplicationLogo from '@/Components/ApplicationLogo.vue';
 import Dropdown from '@/Components/Dropdown.vue';
 import DropdownLink from '@/Components/DropdownLink.vue';
 import NavLink from '@/Components/NavLink.vue';
 import ResponsiveNavLink from '@/Components/ResponsiveNavLink.vue';
-import { Link } from '@inertiajs/vue3';
+import { Link, usePage } from '@inertiajs/vue3';
 
 const showingNavigationDropdown = ref(false);
 const isSidebarOpen = ref(true);
+const page = usePage();
 
-const sidebarSections = [
+const isAdmin = computed(() => page.props.auth.user?.role === 'admin');
+
+const userSidebarSections = [
     {
         key: 'dashboard',
         title: 'Dashboard',
@@ -86,6 +89,41 @@ const sidebarSections = [
     },
 ];
 
+const adminSidebarSections = [
+    {
+        key: 'admin-dashboard',
+        title: 'Admin Dashboard',
+        items: ['Overview', 'System Statistics'],
+    },
+    {
+        key: 'admin-schools',
+        title: 'Schools Management',
+        items: ['All Schools', 'Pending Schools', 'Active Schools', 'School Details'],
+    },
+    {
+        key: 'admin-users',
+        title: 'Users Management',
+        items: ['All Users', 'Admins', 'School Administrators', 'Active Users'],
+    },
+    {
+        key: 'admin-system',
+        title: 'System Settings',
+        items: ['General Settings', 'Email Configuration', 'SMS Configuration', 'Backup & Restore'],
+    },
+    {
+        key: 'admin-reports',
+        title: 'System Reports',
+        items: ['Schools Report', 'Users Report', 'Activity Logs', 'System Health'],
+    },
+    {
+        key: 'profile',
+        title: 'Profile',
+        items: ['My Account', 'Change Password', 'Logout'],
+    },
+];
+
+const sidebarSections = computed(() => isAdmin.value ? adminSidebarSections : userSidebarSections);
+
 const openSections = ref([]);
 
 const toggleSection = (key) => {
@@ -94,6 +132,71 @@ const toggleSection = (key) => {
     } else {
         openSections.value.push(key);
     }
+};
+
+const getRouteForMenuItem = (sectionKey, itemName) => {
+    // Admin routes
+    if (sectionKey === 'admin-dashboard' && itemName === 'Overview') return route('admin.dashboard');
+    if (sectionKey === 'admin-dashboard' && itemName === 'System Statistics') return route('admin.statistics');
+    if (sectionKey === 'admin-schools' && itemName === 'All Schools') return route('admin.schools.index');
+    if (sectionKey === 'admin-schools' && itemName === 'Pending Schools') return route('admin.schools.pending');
+    if (sectionKey === 'admin-schools' && itemName === 'Active Schools') return route('admin.schools.active');
+    if (sectionKey === 'admin-users' && itemName === 'All Users') return route('admin.users.index');
+    if (sectionKey === 'admin-users' && itemName === 'Admins') return route('admin.users.admins');
+    if (sectionKey === 'admin-system' && itemName === 'General Settings') return route('admin.settings');
+    if (sectionKey === 'admin-reports' && itemName === 'Schools Report') return route('admin.reports.schools');
+    if (sectionKey === 'admin-reports' && itemName === 'Activity Logs') return route('admin.reports.logs');
+    
+    // User routes (existing)
+    if (sectionKey === 'dashboard' && itemName === 'Overview') return route('dashboard');
+    if (sectionKey === 'dashboard' && itemName === 'Statistics') return route('statistics');
+    if (sectionKey === 'dashboard' && itemName === 'Recent Activities') return route('recent-activities');
+    if (sectionKey === 'teachers' && itemName === 'View Teachers') return route('teachers.index');
+    if (sectionKey === 'teachers' && itemName === 'Add Teacher') return route('teachers.create');
+    if (sectionKey === 'students' && (itemName === 'View Students' || itemName === 'Add Student')) return route('students.index');
+    if (sectionKey === 'students' && itemName === 'Promote Students') return route('students.promote');
+    if (sectionKey === 'classes' && itemName === 'Manage Classes') return route('classes.index');
+    if (sectionKey === 'classes' && itemName === 'Manage Streams') return route('streams.index');
+    if (sectionKey === 'classes' && itemName === 'Class Teachers') return route('classes.teachers.index');
+    if (sectionKey === 'subjects' && itemName === 'View Subjects') return route('subjects.index');
+    if (sectionKey === 'subjects' && itemName === 'Add Subject') return route('subjects.create');
+    if (sectionKey === 'subjects' && itemName === 'Assign Teachers') return route('subjects.assign-teachers');
+    if (sectionKey === 'exams' && itemName === 'Create Exam') return route('exams.create');
+    if (sectionKey === 'exams' && itemName === 'Enter Marks') return route('exams.marks');
+    if (sectionKey === 'results' && itemName === 'Process Results') return route('results.process');
+    if (sectionKey === 'results' && itemName === 'Class Performance') return route('results.class');
+    if (sectionKey === 'results' && itemName === 'Subject Performance') return route('results.subject');
+    if (sectionKey === 'results' && itemName === 'Ranking') return route('results.ranking');
+    if (sectionKey === 'results' && itemName === 'Publish Results') return route('results.publish');
+    if (sectionKey === 'reports' && itemName === 'Student Report Card') return route('reports.students.index');
+    if (sectionKey === 'reports' && itemName === 'Class Report') return route('reports.classes.index');
+    if (sectionKey === 'reports' && itemName === 'School Report') return route('reports.school');
+    if (sectionKey === 'timetables' && (itemName === 'Class Timetables' || itemName === 'All Timetables')) return route('timetables.index');
+    if (sectionKey === 'timetables' && itemName === 'Create Timetable') return route('timetables.create');
+    if (sectionKey === 'timetables' && itemName === 'Invigilation Timetable') return route('timetables.invigilation');
+    if (sectionKey === 'timetables' && itemName === 'Sitting Plan') return route('sitting-plans.index');
+    if (sectionKey === 'timetables' && itemName === 'Resources') return route('resources.index');
+    if (sectionKey === 'timetables' && itemName === 'Topics') return route('topics.index');
+    if (sectionKey === 'notifications' && itemName === 'Announcements') return route('announcements.index');
+    if (sectionKey === 'notifications' && itemName === 'Results Alerts (SMS/Email)') return route('notifications.sms');
+    if (sectionKey === 'notifications' && itemName === 'Calendar') return route('calendar');
+    if (sectionKey === 'settings' && itemName === 'School Information') return route('settings.school-information');
+    if (sectionKey === 'settings' && itemName === 'Academic Year') return route('settings.academic-year');
+    if (sectionKey === 'settings' && itemName === 'Grading System') return route('settings.grading-system');
+    if (sectionKey === 'settings' && itemName === 'Logo & Branding') return route('settings.logo-branding');
+    if (sectionKey === 'settings' && itemName === 'SMS/Email Settings') return route('settings.email-sms');
+    if (sectionKey === 'settings' && itemName === 'User Management') return route('settings.user-management');
+    if (sectionKey === 'hostels' && itemName === 'All Hostel Students') return route('hostel-students.index');
+    if (sectionKey === 'hostels' && itemName === 'Parents & Guardians') return route('hostel-guardians.index');
+    if (sectionKey === 'hostels' && itemName === 'Payments') return route('hostel-payments.index');
+    if (sectionKey === 'hostels' && itemName === 'Matron & Patron') return route('hostel-matron-patron.index');
+    if (sectionKey === 'hostels' && itemName === 'Rooms & Beds') return route('hostel-rooms-beds.index');
+    if (sectionKey === 'hostels' && itemName === 'Allocation') return route('hostel-allocations.index');
+    if (sectionKey === 'hostels' && itemName === 'Hostel Reports') return route('hostel-reports.index');
+    if (sectionKey === 'profile' && itemName === 'My Account') return route('profile.edit');
+    if (sectionKey === 'profile' && itemName === 'Logout') return route('logout');
+    
+    return '#';
 };
 </script>
 
@@ -379,99 +482,7 @@ const toggleSection = (key) => {
                                     :key="item"
                                 >
                                     <Link
-                                        :href="
-                                                section.key === 'dashboard' && item === 'Overview'
-                                                    ? route('dashboard')
-                                            : section.key === 'dashboard' && item === 'Statistics'
-                                                ? route('statistics')
-                                            : section.key === 'dashboard' && item === 'Recent Activities'
-                                                ? route('recent-activities')
-                                            : section.key === 'teachers' && item === 'View Teachers'
-                                                ? route('teachers.index')
-                                            : section.key === 'teachers' && item === 'Add Teacher'
-                                                ? route('teachers.create')
-                                            : section.key === 'students' && (item === 'View Students' || item === 'Add Student')
-                                                ? route('students.index')
-                                            : section.key === 'students' && item === 'Promote Students'
-                                                ? route('students.promote')
-                                            : section.key === 'classes' && item === 'Manage Classes'
-                                                ? route('classes.index')
-                                            : section.key === 'classes' && item === 'Manage Streams'
-                                                ? route('streams.index')
-                                            : section.key === 'classes' && item === 'Class Teachers'
-                                                ? route('classes.teachers.index')
-                                            : section.key === 'subjects' && item === 'View Subjects'
-                                                ? route('subjects.index')
-                                            : section.key === 'subjects' && item === 'Add Subject'
-                                                ? route('subjects.create')
-                                            : section.key === 'subjects' && item === 'Assign Teachers'
-                                                ? route('subjects.assign-teachers')
-                                            : section.key === 'exams' && item === 'Create Exam'
-                                                ? route('exams.create')
-                                            : section.key === 'exams' && item === 'Enter Marks'
-                                                ? route('exams.marks')
-                                            : section.key === 'results' && item === 'Process Results'
-                                                ? route('results.process')
-                                            : section.key === 'results' && item === 'Class Performance'
-                                                ? route('results.class')
-                                            : section.key === 'results' && item === 'Subject Performance'
-                                                ? route('results.subject')
-                                            : section.key === 'results' && item === 'Ranking'
-                                                ? route('results.ranking')
-                                            : section.key === 'results' && item === 'Publish Results'
-                                                ? route('results.publish')
-                                            : section.key === 'reports' && item === 'Student Report Card'
-                                                ? route('reports.students.index')
-                                            : section.key === 'reports' && item === 'Class Report'
-                                                ? route('reports.classes.index')
-                                            : section.key === 'reports' && item === 'School Report'
-                                                ? route('reports.school')
-                                            : section.key === 'timetables' && (item === 'Class Timetables' || item === 'All Timetables')
-                                                ? route('timetables.index')
-                                            : section.key === 'timetables' && item === 'Create Timetable'
-                                                ? route('timetables.create')
-                                            : section.key === 'timetables' && item === 'Invigilation Timetable'
-                                                ? route('timetables.invigilation')
-                                            : section.key === 'timetables' && item === 'Sitting Plan'
-                                                ? route('sitting-plans.index')
-                                            : section.key === 'timetables' && item === 'Resources'
-                                                ? route('resources.index')
-                                            : section.key === 'timetables' && item === 'Topics'
-                                                ? route('topics.index')
-                                            : section.key === 'notifications' && item === 'Announcements'
-                                                ? route('announcements.index')
-                                            : section.key === 'notifications' && item === 'Results Alerts (SMS/Email)'
-                                                ? route('notifications.sms')
-                                            : section.key === 'notifications' && item === 'Calendar'
-                                                ? route('calendar')
-                                            : section.key === 'settings' && item === 'School Information'
-                                                ? route('settings.school-information')
-                                            : section.key === 'settings' && item === 'Academic Year'
-                                                ? route('settings.academic-year')
-                                            : section.key === 'settings' && item === 'Grading System'
-                                                ? route('settings.grading-system')
-                                            : section.key === 'settings' && item === 'Logo & Branding'
-                                                ? route('settings.logo-branding')
-                                            : section.key === 'settings' && item === 'SMS/Email Settings'
-                                                ? route('settings.email-sms')
-                                            : section.key === 'settings' && item === 'User Management'
-                                                ? route('settings.user-management')
-                                            : section.key === 'hostels' && item === 'All Hostel Students'
-                                                ? route('hostel-students.index')
-                                            : section.key === 'hostels' && item === 'Parents & Guardians'
-                                                ? route('hostel-guardians.index')
-                                            : section.key === 'hostels' && item === 'Payments'
-                                                ? route('hostel-payments.index')
-                                            : section.key === 'hostels' && item === 'Matron & Patron'
-                                                ? route('hostel-matron-patron.index')
-                                            : section.key === 'hostels' && item === 'Rooms & Beds'
-                                                ? route('hostel-rooms-beds.index')
-                                            : section.key === 'hostels' && item === 'Allocation'
-                                                ? route('hostel-allocations.index')
-                                            : section.key === 'hostels' && item === 'Hostel Reports'
-                                                ? route('hostel-reports.index')
-                                                : '#'
-                                        "
+                                        :href="getRouteForMenuItem(section.key, item)"
                                         class="flex items-center justify-between rounded px-2 py-1 text-emerald-50 transition hover:bg-emerald-700 hover:text-white"
                                         :class="{
                                             'bg-emerald-800 text-white':
