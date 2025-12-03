@@ -11,9 +11,10 @@ defineProps({
 
 const showPassword = ref(false)
 const showDetails = ref(false)
+const showSuccess = ref(false)
 
 const form = useForm({
-  email: '',
+  login: '',
   password: '',
   remember: false,
 })
@@ -21,12 +22,18 @@ const form = useForm({
 const benefits = [
   { icon: 'flash_on', title: 'Fast Access', desc: 'Quick login to your dashboard' },
   { icon: 'lock', title: 'Secure', desc: 'Protected with encryption' },
-  { icon: 'smartphone', title: 'Mobile Ready', desc: 'Access from any device' },
-  { icon: 'public', title: 'Global', desc: 'Available 24/7' },
+  { icon: 'assessment', title: 'Real-time Results', desc: 'View exam results instantly' },
+  { icon: 'trending_up', title: 'Analytics', desc: 'Track performance trends' },
 ]
 
 const submit = () => {
   form.post(route('login'), {
+    onSuccess: () => {
+      showSuccess.value = true
+      setTimeout(() => {
+        window.location.href = '/dashboard'
+      }, 3000)
+    },
     onFinish: () => form.reset('password'),
   })
 }
@@ -44,9 +51,9 @@ const submit = () => {
       </template>
     </Header>
 
-    <main class="flex-1 w-full flex items-center justify-center px-4 py-12">
+    <main class="flex-1 w-full flex items-center justify-center px-3 sm:px-4 py-8 sm:py-12">
       <div class="w-full max-w-6xl">
-        <div class="grid md:grid-cols-2 gap-12 items-center">
+        <div class="grid md:grid-cols-2 gap-6 md:gap-12 items-center">
           <!-- Left: Benefits -->
           <div class="hidden md:block">
             <h1 class="text-4xl font-bold text-emerald-950 mb-6">Welcome Back</h1>
@@ -67,9 +74,9 @@ const submit = () => {
 
           <!-- Right: Login Card -->
           <div class="w-full">
-            <div class="rounded-3xl bg-white/80 backdrop-blur-xl border border-emerald-200/60 shadow-2xl p-8 sm:p-12 hover:shadow-3xl transition-all duration-300">
-              <h2 class="text-3xl font-bold text-emerald-950 mb-2">Sign In</h2>
-              <p class="text-emerald-800/70 mb-8">Enter your credentials to access your account</p>
+            <div class="rounded-2xl sm:rounded-3xl bg-white/80 backdrop-blur-xl border border-emerald-200/60 shadow-2xl p-5 sm:p-8 md:p-12 hover:shadow-3xl transition-all duration-300">
+              <h2 class="text-2xl sm:text-3xl font-bold text-emerald-950 mb-2">Sign In</h2>
+              <p class="text-sm sm:text-base text-emerald-800/70 mb-6 sm:mb-8">Enter your credentials to access your account</p>
 
               <!-- Status Message -->
               <div v-if="status" class="mb-6 p-4 rounded-xl bg-emerald-50 border border-emerald-200">
@@ -77,21 +84,21 @@ const submit = () => {
               </div>
 
               <form @submit.prevent="submit" class="space-y-6">
-                <!-- Email -->
+                <!-- Login (Username or Email) -->
                 <div>
-                  <label class="block text-sm font-semibold text-emerald-950 mb-2">Email Address</label>
+                  <label class="block text-sm font-semibold text-emerald-950 mb-2">Username or Email</label>
                   <div class="relative">
-                    <i class="material-icons absolute left-4 top-3.5 text-emerald-600">email</i>
+                    <i class="material-icons absolute left-4 top-3.5 text-emerald-600">account_circle</i>
                     <input
-                      v-model="form.email"
-                      type="email"
+                      v-model="form.login"
+                      type="text"
                       required
                       autofocus
                       class="w-full pl-12 pr-4 py-3 rounded-xl border border-emerald-200 bg-emerald-50/50 text-emerald-950 placeholder-emerald-600 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200 transition-all"
-                      placeholder="your@email.com"
+                      placeholder="username or email@example.com"
                     />
                   </div>
-                  <span v-if="form.errors.email" class="text-red-500 text-sm mt-1">{{ form.errors.email }}</span>
+                  <span v-if="form.errors.login" class="text-red-500 text-sm mt-1">{{ form.errors.login }}</span>
                 </div>
 
                 <!-- Password -->
@@ -227,6 +234,45 @@ const submit = () => {
               <span class="font-semibold">Tip:</span> Check "Remember me" to stay logged in on this device.
             </p>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Success Modal -->
+    <div v-if="showSuccess" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div class="bg-white rounded-3xl shadow-2xl max-w-md w-full p-8 sm:p-12 text-center animate-in fade-in zoom-in-95 duration-300">
+        <!-- Success Animation Container -->
+        <div class="mb-8 flex justify-center">
+          <div class="relative w-32 h-32">
+            <!-- Animated Circle -->
+            <div class="absolute inset-0 rounded-full border-4 border-emerald-200 animate-pulse"></div>
+            
+            <!-- Checkmark -->
+            <div class="absolute inset-0 flex items-center justify-center">
+              <svg class="w-20 h-20 text-emerald-600 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        <!-- Success Message -->
+        <h2 class="text-3xl font-bold text-emerald-950 mb-2">Welcome Back!</h2>
+        <p class="text-emerald-800/70 mb-8">You have successfully logged in to your account.</p>
+
+        <!-- Redirect Info -->
+        <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-6">
+          <p class="text-sm text-emerald-800">
+            <span class="font-semibold">Redirecting to dashboard...</span><br>
+            You will be redirected in a few seconds.
+          </p>
+        </div>
+
+        <!-- Loading Animation -->
+        <div class="flex justify-center gap-2">
+          <div class="w-2 h-2 rounded-full bg-emerald-600 animate-bounce" style="animation-delay: 0s;"></div>
+          <div class="w-2 h-2 rounded-full bg-emerald-600 animate-bounce" style="animation-delay: 0.2s;"></div>
+          <div class="w-2 h-2 rounded-full bg-emerald-600 animate-bounce" style="animation-delay: 0.4s;"></div>
         </div>
       </div>
     </div>

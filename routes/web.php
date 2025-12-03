@@ -80,6 +80,10 @@ Route::get('/contact', function () {
     ]);
 });
 
+Route::get('/success', function () {
+    return Inertia::render('Auth/Success');
+});
+
 Route::get('/dashboard', function () {
     $today = now()->toDateString();
     $user = request()->user();
@@ -218,7 +222,101 @@ Route::get('/dashboard', function () {
 
 Route::middleware('auth')->group(function () {
     Route::get('/statistics', function () {
-        return Inertia::render('Statistics');
+        $user = request()->user();
+        $schoolId = $user?->school_id;
+
+        // Get form-wise statistics
+        $formStats = [];
+        for ($form = 1; $form <= 4; $form++) {
+            $query = \App\Models\Student::where('class_level', "Form $form");
+            if ($schoolId) {
+                $query->where('school_id', $schoolId);
+            }
+            
+            $totalStudents = $query->count();
+            
+            // Get students with passing marks (>= 40)
+            $passStudents = 0;
+            if ($totalStudents > 0) {
+                $passStudents = \App\Models\ExamResult::whereIn('student_id', 
+                    \App\Models\Student::where('class_level', "Form $form")
+                        ->when($schoolId, function ($q) use ($schoolId) {
+                            return $q->where('school_id', $schoolId);
+                        })->pluck('id')
+                )->where('marks', '>=', 40)->distinct('student_id')->count();
+            }
+            
+            $formStats["form$form"] = [
+                'students' => $totalStudents,
+                'pass' => $totalStudents > 0 ? round(($passStudents / $totalStudents) * 100) : 0,
+                'fail' => $totalStudents > 0 ? round((($totalStudents - $passStudents) / $totalStudents) * 100) : 0,
+            ];
+        }
+
+        // Get gender statistics
+        $totalStudents = \App\Models\Student::when($schoolId, function ($q) use ($schoolId) {
+            return $q->where('school_id', $schoolId);
+        })->count();
+
+        $maleTotal = \App\Models\Student::where('gender', 'M')
+            ->when($schoolId, function ($q) use ($schoolId) {
+                return $q->where('school_id', $schoolId);
+            })->count();
+
+        $malePass = 0;
+        if ($maleTotal > 0) {
+            $malePass = \App\Models\ExamResult::whereIn('student_id',
+                \App\Models\Student::where('gender', 'M')
+                    ->when($schoolId, function ($q) use ($schoolId) {
+                        return $q->where('school_id', $schoolId);
+                    })->pluck('id')
+            )->where('marks', '>=', 40)->distinct('student_id')->count();
+        }
+
+        $femaleTotal = \App\Models\Student::where('gender', 'F')
+            ->when($schoolId, function ($q) use ($schoolId) {
+                return $q->where('school_id', $schoolId);
+            })->count();
+
+        $femalePass = 0;
+        if ($femaleTotal > 0) {
+            $femalePass = \App\Models\ExamResult::whereIn('student_id',
+                \App\Models\Student::where('gender', 'F')
+                    ->when($schoolId, function ($q) use ($schoolId) {
+                        return $q->where('school_id', $schoolId);
+                    })->pluck('id')
+            )->where('marks', '>=', 40)->distinct('student_id')->count();
+        }
+
+        $genderStats = [
+            'male' => [
+                'pass' => $maleTotal > 0 ? round(($malePass / $maleTotal) * 100) : 0,
+                'fail' => $maleTotal > 0 ? round((($maleTotal - $malePass) / $maleTotal) * 100) : 0,
+            ],
+            'female' => [
+                'pass' => $femaleTotal > 0 ? round(($femalePass / $femaleTotal) * 100) : 0,
+                'fail' => $femaleTotal > 0 ? round((($femaleTotal - $femalePass) / $femaleTotal) * 100) : 0,
+            ],
+        ];
+
+        // Get division statistics
+        $divisionStats = [];
+        $divisions = ['I', 'II', 'III', 'IV'];
+        foreach ($divisions as $index => $div) {
+            $divCount = \App\Models\Student::where('division', $div)
+                ->when($schoolId, function ($q) use ($schoolId) {
+                    return $q->where('school_id', $schoolId);
+                })->count();
+            
+            $divisionStats["div" . ($index + 1)] = $totalStudents > 0 ? round(($divCount / $totalStudents) * 100) : 0;
+        }
+
+        return Inertia::render('Statistics', [
+            'formStats' => $formStats,
+            'genderStats' => $genderStats,
+            'divisionStats' => $divisionStats,
+            'totalStudents' => $totalStudents,
+        ]);
     })->name('statistics');
 
     Route::get('/hostel-students', function () {

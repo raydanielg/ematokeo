@@ -18,5 +18,11 @@ class Student extends Model
         'date_of_birth',
         'school_id',
         'academic_year',
+        'division',
     ];
+
+    public function results()
+    {
+        return $this->hasMany(\App\Models\ExamResult::class);
+    }
 }

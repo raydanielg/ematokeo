@@ -11,9 +11,11 @@ defineProps({
 const showPassword = ref(false)
 const showConfirmPassword = ref(false)
 const showDetails = ref(false)
+const showSuccess = ref(false)
 
 const form = useForm({
   name: '',
+  username: '',
   email: '',
   password: '',
   password_confirmation: '',
@@ -28,6 +30,12 @@ const features = [
 
 const submit = () => {
   form.post(route('register'), {
+    onSuccess: () => {
+      showSuccess.value = true
+      setTimeout(() => {
+        window.location.href = '/dashboard'
+      }, 3000)
+    },
     onFinish: () => form.reset('password', 'password_confirmation'),
   })
 }
@@ -45,13 +53,13 @@ const submit = () => {
       </template>
     </Header>
 
-    <main class="flex-1 w-full flex items-center justify-center px-4 py-12">
+    <main class="flex-1 w-full flex items-center justify-center px-3 sm:px-4 py-8 sm:py-12">
       <div class="w-full max-w-6xl">
-        <div class="grid md:grid-cols-2 gap-12 items-center">
+        <div class="grid md:grid-cols-2 gap-6 md:gap-12 items-center">
           <!-- Left: Features -->
           <div class="hidden md:block">
-            <h1 class="text-4xl font-bold text-emerald-950 mb-6">Join Matokeo</h1>
-            <p class="text-lg text-emerald-800/80 mb-8">Start managing exam results with our powerful platform</p>
+            <h1 class="text-3xl md:text-4xl font-bold text-emerald-950 mb-6">Join Matokeo</h1>
+            <p class="text-base md:text-lg text-emerald-800/80 mb-8">Start managing exam results with our powerful platform</p>
             
             <div class="space-y-4">
               <div v-for="feature in features" :key="feature.title" class="flex gap-4 p-4 rounded-xl bg-white/60 backdrop-blur-sm border border-emerald-200/50 hover:border-emerald-400 transition-all duration-300 hover:scale-105">
@@ -71,9 +79,9 @@ const submit = () => {
 
           <!-- Right: Register Card -->
           <div class="w-full">
-            <div class="rounded-3xl bg-white/80 backdrop-blur-xl border border-emerald-200/60 shadow-2xl p-8 sm:p-12 hover:shadow-3xl transition-all duration-300">
-              <h2 class="text-3xl font-bold text-emerald-950 mb-2">Create Account</h2>
-              <p class="text-emerald-800/70 mb-8">Sign up to get started with Matokeo</p>
+            <div class="rounded-2xl sm:rounded-3xl bg-white/80 backdrop-blur-xl border border-emerald-200/60 shadow-2xl p-5 sm:p-8 md:p-12 hover:shadow-3xl transition-all duration-300">
+              <h2 class="text-2xl sm:text-3xl font-bold text-emerald-950 mb-2">Create Account</h2>
+              <p class="text-sm sm:text-base text-emerald-800/70 mb-6 sm:mb-8">Sign up to get started with Matokeo</p>
 
               <form @submit.prevent="submit" class="space-y-6">
                 <!-- Name -->
@@ -90,6 +98,22 @@ const submit = () => {
                     />
                   </div>
                   <span v-if="form.errors.name" class="text-red-500 text-sm mt-1">{{ form.errors.name }}</span>
+                </div>
+
+                <!-- Username -->
+                <div>
+                  <label class="block text-sm font-semibold text-emerald-950 mb-2">Username</label>
+                  <div class="relative">
+                    <i class="material-icons absolute left-4 top-3.5 text-emerald-600">account_circle</i>
+                    <input
+                      v-model="form.username"
+                      type="text"
+                      required
+                      class="w-full pl-12 pr-4 py-3 rounded-xl border border-emerald-200 bg-emerald-50/50 text-emerald-950 placeholder-emerald-600 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200 transition-all"
+                      placeholder="Choose a username"
+                    />
+                  </div>
+                  <span v-if="form.errors.username" class="text-red-500 text-sm mt-1">{{ form.errors.username }}</span>
                 </div>
 
                 <!-- Email -->
@@ -260,6 +284,45 @@ const submit = () => {
               <span class="font-semibold">Privacy:</span> Your data is encrypted and secure. We never share your information with third parties.
             </p>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Success Modal -->
+    <div v-if="showSuccess" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div class="bg-white rounded-3xl shadow-2xl max-w-md w-full p-8 sm:p-12 text-center animate-in fade-in zoom-in-95 duration-300">
+        <!-- Success Animation Container -->
+        <div class="mb-8 flex justify-center">
+          <div class="relative w-32 h-32">
+            <!-- Animated Circle -->
+            <div class="absolute inset-0 rounded-full border-4 border-emerald-200 animate-pulse"></div>
+            
+            <!-- Checkmark -->
+            <div class="absolute inset-0 flex items-center justify-center">
+              <svg class="w-20 h-20 text-emerald-600 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        <!-- Success Message -->
+        <h2 class="text-3xl font-bold text-emerald-950 mb-2">Account Created!</h2>
+        <p class="text-emerald-800/70 mb-8">Welcome to Matokeo! Your account has been successfully created.</p>
+
+        <!-- Redirect Info -->
+        <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-6">
+          <p class="text-sm text-emerald-800">
+            <span class="font-semibold">Redirecting to dashboard...</span><br>
+            You will be redirected in a few seconds.
+          </p>
+        </div>
+
+        <!-- Loading Animation -->
+        <div class="flex justify-center gap-2">
+          <div class="w-2 h-2 rounded-full bg-emerald-600 animate-bounce" style="animation-delay: 0s;"></div>
+          <div class="w-2 h-2 rounded-full bg-emerald-600 animate-bounce" style="animation-delay: 0.2s;"></div>
+          <div class="w-2 h-2 rounded-full bg-emerald-600 animate-bounce" style="animation-delay: 0.4s;"></div>
         </div>
       </div>
     </div>

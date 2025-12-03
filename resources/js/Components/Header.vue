@@ -10,16 +10,6 @@ interface NavItem {
 
 const openDropdown = ref<string | null>(null)
 const mobileMenuOpen = ref(false)
-const showEmsPopup = ref(false)
-
-const examFeatures = [
-  { icon: '📊', title: 'Results Management', desc: 'Manage exam results efficiently and securely' },
-  { icon: '👥', title: 'Student Tracking', desc: 'Track student performance across exams' },
-  { icon: '📈', title: 'Analytics & Reports', desc: 'Generate detailed performance reports' },
-  { icon: '📱', title: 'Mobile App', desc: 'Access results on iOS and Android' },
-  { icon: '🔒', title: 'Secure Data', desc: 'Enterprise-grade security for all data' },
-  { icon: '⚡', title: 'Fast & Reliable', desc: 'Lightning-fast system with 99.9% uptime' },
-]
 
 const navItems = computed<NavItem[]>(() => [
   { label: 'Home', href: '/' },
@@ -42,10 +32,6 @@ const toggleDropdown = (label: string) => {
 
 const toggleMobileMenu = () => {
   mobileMenuOpen.value = !mobileMenuOpen.value
-}
-
-const toggleEmsPopup = () => {
-  showEmsPopup.value = !showEmsPopup.value
 }
 </script>
 
@@ -119,21 +105,6 @@ const toggleEmsPopup = () => {
           </div>
         </template>
       </nav>
-
-      <!-- Exam Management System Button -->
-      <button
-        @click="toggleEmsPopup"
-        class="sm:hidden flex items-center justify-center w-10 h-10 rounded-lg hover:bg-emerald-100 transition-colors"
-      >
-        <svg
-          class="w-6 h-6 text-emerald-900 transition-transform duration-300"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0h2a2 2 0 012 2v2a2 2 0 01-2 2H9a2 2 0 01-2-2v-2a2 2 0 012-2zm0 0h2a2 2 0 012 2v2a2 2 0 01-2 2H9a2 2 0 01-2-2v-2a2 2 0 012-2z" />
-        </svg>
-      </button>
 
       <!-- Mobile Menu Button -->
       <button
@@ -220,29 +191,5 @@ const toggleEmsPopup = () => {
       </div>
     </div>
 
-    <!-- Exam Management System Popup Modal -->
-    <div
-      v-if="showEmsPopup"
-      class="fixed inset-0 z-50 bg-emerald-900/50 flex items-center justify-center"
-    >
-      <div class="bg-white rounded-lg shadow-lg p-4 w-96">
-        <h2 class="text-lg font-bold text-emerald-900 mb-2">Exam Management System</h2>
-        <ul class="space-y-2">
-          <li v-for="feature in examFeatures" :key="feature.title" class="flex items-center gap-2">
-            <span class="text-emerald-900">{{ feature.icon }}</span>
-            <div>
-              <h3 class="text-sm font-bold text-emerald-900">{{ feature.title }}</h3>
-              <p class="text-sm text-emerald-700">{{ feature.desc }}</p>
-            </div>
-          </li>
-        </ul>
-        <button
-          @click="toggleEmsPopup"
-          class="mt-4 w-full text-sm font-medium text-emerald-900 hover:bg-emerald-50 rounded-lg transition"
-        >
-          Close
-        </button>
-      </div>
-    </div>
   </header>
 </template>
