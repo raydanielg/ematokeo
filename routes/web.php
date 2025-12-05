@@ -117,34 +117,24 @@ Route::get('/dashboard', function () {
         'classes' => $classQuery->count(),
     ];
 
-    $upcomingEventsQuery = Event::whereDate('date', '>=', $today)
+    $upcomingEvents = Event::whereDate('date', '>=', $today)
         ->orderBy('date')
-        ->limit(6);
+        ->limit(6)
+        ->get([
+            'id',
+            'date',
+            'title',
+            'description',
+        ]);
 
-    if ($schoolId) {
-        $upcomingEventsQuery->where('school_id', $schoolId);
-    }
-
-    $upcomingEvents = $upcomingEventsQuery->get([
-        'id',
-        'date',
-        'title',
-        'description',
-    ]);
-
-    $recentAnnouncementsQuery = Announcement::orderByDesc('created_at')
-        ->limit(4);
-
-    if ($schoolId) {
-        $recentAnnouncementsQuery->where('school_id', $schoolId);
-    }
-
-    $recentAnnouncements = $recentAnnouncementsQuery->get([
-        'id',
-        'title',
-        'body',
-        'created_at',
-    ]);
+    $recentAnnouncements = Announcement::orderByDesc('created_at')
+        ->limit(4)
+        ->get([
+            'id',
+            'title',
+            'body',
+            'created_at',
+        ]);
 
     // Results summary (basic dashboard analytics)
     $currentResultsYear = ExamResult::max('academic_year');
@@ -1972,30 +1962,20 @@ Route::middleware('auth')->group(function () {
     })->name('results.publish.toggle');
 
     Route::get('/reports/students', function (\Illuminate\Http\Request $request) {
-        $user = $request->user();
-        $schoolId = $user?->school_id;
         $yearFilter = $request->query('year');
         $examFilter = $request->query('exam');
         $testExamFilter = $request->query('test_exam');
         $classFilter = $request->query('class');
 
-        $yearsQuery = Exam::select('academic_year')
+        $years = Exam::select('academic_year')
             ->whereNotNull('academic_year')
             ->distinct()
-            ->orderBy('academic_year', 'desc');
-
-        if ($schoolId) {
-            $yearsQuery->where('school_id', $schoolId);
-        }
-
-        $years = $yearsQuery->pluck('academic_year');
+            ->orderBy('academic_year', 'desc')
+            ->pluck('academic_year');
 
         $examListQuery = Exam::orderByDesc('created_at');
         if ($yearFilter) {
             $examListQuery->where('academic_year', $yearFilter);
-        }
-        if ($schoolId) {
-            $examListQuery->where('school_id', $schoolId);
         }
 
         $examList = $examListQuery->get([
@@ -2008,9 +1988,6 @@ Route::middleware('auth')->group(function () {
         $studentsQuery = Student::query();
         if ($classFilter) {
             $studentsQuery->where('class_level', $classFilter);
-        }
-        if ($schoolId) {
-            $studentsQuery->where('school_id', $schoolId);
         }
 
         $students = $studentsQuery
@@ -2026,15 +2003,10 @@ Route::middleware('auth')->group(function () {
                 'gender',
             ]);
 
-        $classesQuery = Student::select('class_level')
+        $classes = Student::select('class_level')
             ->distinct()
-            ->orderBy('class_level');
-
-        if ($schoolId) {
-            $classesQuery->where('school_id', $schoolId);
-        }
-
-        $classes = $classesQuery->pluck('class_level');
+            ->orderBy('class_level')
+            ->pluck('class_level');
 
         return Inertia::render('StudentReportsIndex', [
             'years' => $years,
@@ -2377,28 +2349,18 @@ Route::middleware('auth')->group(function () {
     })->name('reports.students.show');
 
     Route::get('/reports/classes', function (\Illuminate\Http\Request $request) {
-        $user = $request->user();
-        $schoolId = $user?->school_id;
         $yearFilter = $request->query('year');
         $examFilter = $request->query('exam');
 
-        $yearsQuery = Exam::select('academic_year')
+        $years = Exam::select('academic_year')
             ->whereNotNull('academic_year')
             ->distinct()
-            ->orderBy('academic_year', 'desc');
-
-        if ($schoolId) {
-            $yearsQuery->where('school_id', $schoolId);
-        }
-
-        $years = $yearsQuery->pluck('academic_year');
+            ->orderBy('academic_year', 'desc')
+            ->pluck('academic_year');
 
         $examListQuery = Exam::orderByDesc('created_at');
         if ($yearFilter) {
             $examListQuery->where('academic_year', $yearFilter);
-        }
-        if ($schoolId) {
-            $examListQuery->where('school_id', $schoolId);
         }
 
         $examList = $examListQuery->get([
@@ -2408,18 +2370,13 @@ Route::middleware('auth')->group(function () {
             'academic_year',
         ]);
 
-        $classesQuery = SchoolClass::orderBy('level')
-            ->orderBy('stream');
-
-        if ($schoolId) {
-            $classesQuery->where('school_id', $schoolId);
-        }
-
-        $classes = $classesQuery->get([
-            'id',
-            'level',
-            'stream',
-        ]);
+        $classes = SchoolClass::orderBy('level')
+            ->orderBy('stream')
+            ->get([
+                'id',
+                'level',
+                'stream',
+            ]);
 
         return Inertia::render('ClassReportsIndex', [
             'years' => $years,
@@ -2563,30 +2520,20 @@ Route::middleware('auth')->group(function () {
     })->name('reports.classes.show');
 
     Route::get('/reports/school', function (\Illuminate\Http\Request $request) {
-        $user = $request->user();
-        $schoolId = $user?->school_id;
         $yearFilter = $request->query('year');
         $examFilter = $request->query('exam');
 
-        $school = $schoolId ? School::find($schoolId) : School::query()->first();
+        $school = School::query()->first();
 
-        $yearsQuery = Exam::select('academic_year')
+        $years = Exam::select('academic_year')
             ->whereNotNull('academic_year')
             ->distinct()
-            ->orderBy('academic_year', 'desc');
-
-        if ($schoolId) {
-            $yearsQuery->where('school_id', $schoolId);
-        }
-
-        $years = $yearsQuery->pluck('academic_year');
+            ->orderBy('academic_year', 'desc')
+            ->pluck('academic_year');
 
         $examListQuery = Exam::orderByDesc('created_at');
         if ($yearFilter) {
             $examListQuery->where('academic_year', $yearFilter);
-        }
-        if ($schoolId) {
-            $examListQuery->where('school_id', $schoolId);
         }
 
         $examList = $examListQuery->get([
@@ -2609,16 +2556,9 @@ Route::middleware('auth')->group(function () {
             $exam = Exam::find($examFilter);
 
             if ($exam) {
-                $allResultsQuery = ExamResult::where('exam_id', $exam->id)
-                    ->with(['student:id,exam_number,full_name,gender,class_level,stream']);
-
-                if ($schoolId) {
-                    $allResultsQuery->whereHas('student', function($q) use ($schoolId) {
-                        $q->where('school_id', $schoolId);
-                    });
-                }
-
-                $allResults = $allResultsQuery->get();
+                $allResults = ExamResult::where('exam_id', $exam->id)
+                    ->with(['student:id,exam_number,full_name,gender,class_level,stream'])
+                    ->get();
 
                 if ($allResults->isNotEmpty()) {
                     $schemes = GradingScheme::all();
@@ -2966,13 +2906,8 @@ Route::middleware('auth')->group(function () {
             ->get();
 
         // Map class_level -> subject details (code + name) from SchoolClass
-        $classSubjectsQuery = SchoolClass::with('subjects:id,subject_code,name');
-        
-        if ($user && $user->school_id) {
-            $classSubjectsQuery->where('school_id', $user->school_id);
-        }
-
-        $classSubjects = $classSubjectsQuery->get()
+        $classSubjects = SchoolClass::with('subjects:id,subject_code,name')
+            ->get()
             ->mapWithKeys(function (SchoolClass $class) {
                 $key = trim($class->level ?? '');
 
@@ -3008,19 +2943,14 @@ Route::middleware('auth')->group(function () {
 
         $classes = $classLevelsQuery->pluck('level');
 
-        $examsQuery = Exam::orderByDesc('created_at')
-            ->limit(10);
-
-        if ($user && $user->school_id) {
-            $examsQuery->where('school_id', $user->school_id);
-        }
-
-        $exams = $examsQuery->get([
-            'id',
-            'name',
-            'type',
-            'academic_year',
-        ]);
+        $exams = Exam::orderByDesc('created_at')
+            ->limit(10)
+            ->get([
+                'id',
+                'name',
+                'type',
+                'academic_year',
+            ]);
 
         return Inertia::render('Students', [
             'students' => $students,
@@ -3037,7 +2967,6 @@ Route::middleware('auth')->group(function () {
             'full_name' => ['required', 'string', 'max:255'],
             'class_level' => ['required', 'string', 'max:255'],
             'gender' => ['nullable', 'in:M,F'],
-            'division' => ['nullable', 'in:I,II,III,IV'],
             'date_of_birth' => ['nullable', 'date'],
         ]);
 
@@ -3058,7 +2987,6 @@ Route::middleware('auth')->group(function () {
             'full_name' => $data['full_name'],
             'class_level' => $data['class_level'],
             'gender' => $data['gender'] ?? null,
-            'division' => $data['division'] ?? null,
             'date_of_birth' => $data['date_of_birth'] ?? null,
             'school_id' => $school?->id,
             'academic_year' => $academicYear,
@@ -4444,15 +4372,6 @@ Route::middleware('auth')->group(function () {
 
         $baseClass = SchoolClass::findOrFail($data['class_id']);
 
-        // Check if stream already exists for this class
-        $existingStream = SchoolClass::where('parent_class_id', $baseClass->id)
-            ->where('stream', strtoupper($data['stream']))
-            ->exists();
-
-        if ($existingStream) {
-            return back()->withErrors(['stream' => 'Stream ' . strtoupper($data['stream']) . ' already exists for this class.']);
-        }
-
         $name = trim(($baseClass->name ?: '') . ' ' . strtoupper($data['stream']));
 
         $class = SchoolClass::create([
@@ -4479,16 +4398,6 @@ Route::middleware('auth')->group(function () {
         ]);
 
         $baseClass = SchoolClass::findOrFail($data['class_id']);
-
-        // Check if stream already exists for this class (excluding current stream)
-        $existingStream = SchoolClass::where('parent_class_id', $baseClass->id)
-            ->where('stream', strtoupper($data['stream']))
-            ->where('id', '!=', $class->id)
-            ->exists();
-
-        if ($existingStream) {
-            return back()->withErrors(['stream' => 'Stream ' . strtoupper($data['stream']) . ' already exists for this class.']);
-        }
 
         $name = trim(($baseClass->name ?: '') . ' ' . strtoupper($data['stream']));
 
@@ -4650,19 +4559,9 @@ Route::middleware('auth')->group(function () {
     })->name('exams.destroy');
 
     Route::get('/exams/{exam}/results', function (Exam $exam) {
-        $user = request()->user();
-        $schoolId = $user?->school_id;
-
-        $allResultsQuery = ExamResult::where('exam_id', $exam->id)
-            ->with(['student:id,exam_number,full_name,gender', 'subject:id,subject_code']);
-
-        if ($schoolId) {
-            $allResultsQuery->whereHas('student', function($q) use ($schoolId) {
-                $q->where('school_id', $schoolId);
-            });
-        }
-
-        $allResults = $allResultsQuery->get();
+        $allResults = ExamResult::where('exam_id', $exam->id)
+            ->with(['student:id,exam_number,full_name,gender', 'subject:id,subject_code'])
+            ->get();
 
         if ($allResults->isEmpty()) {
             return Inertia::render('ExamResultsPreview', [
