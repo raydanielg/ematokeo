@@ -21,7 +21,9 @@ const navItems = computed<NavItem[]>(() => [
     label: 'Resources',
     children: [
       { label: 'Teaching Resources', href: '/resources/teaching' },
-      { label: 'Student Resources', href: '/resources/student' }
+      { label: 'Student Resources', href: '/resources/student' },
+      { label: 'Documents', href: '/resources/documents' },
+      { label: 'Results', href: '/resources/results' }
     ]
   }
 ])
