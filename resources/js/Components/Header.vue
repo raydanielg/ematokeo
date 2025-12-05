@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { BookOpen, Users, FileText, Download, BarChart3 } from 'lucide-vue-next'
 
 interface NavItem {
   label: string
   href?: string
   target?: string
-  icon?: any
   children?: NavItem[]
 }
 
@@ -22,11 +20,8 @@ const navItems = computed<NavItem[]>(() => [
   {
     label: 'Resources',
     children: [
-      { label: 'Teaching Resources', href: '/resources/teaching', icon: BookOpen },
-      { label: 'Student Resources', href: '/resources/student', icon: Users },
-      { label: 'Documents', href: '/resources/documents', icon: FileText },
-      { label: 'Downloads', href: '/resources/downloads', icon: Download },
-      { label: 'Results', href: '/resources/results', icon: BarChart3 }
+      { label: 'Teaching Resources', href: '/resources/teaching' },
+      { label: 'Student Resources', href: '/resources/student' }
     ]
   }
 ])
@@ -66,6 +61,17 @@ const toggleMobileMenu = () => {
             {{ item.label }}
           </a>
 
+          <!-- Nav item with badge -->
+          <a
+            v-else-if="!item.children && item.badge"
+            :href="item.href"
+            :target="item.target"
+            class="text-sm font-medium text-emerald-900 transition hover:text-emerald-600 relative"
+          >
+            {{ item.label }}
+            <span class="absolute top-0 right-0 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-red-100 transform translate-x-1/2 -translate-y-1/2 bg-red-600 rounded-full">{{ item.badge }}</span>
+          </a>
+
           <!-- Dropdown nav item -->
           <div v-else class="relative group">
             <button
@@ -85,15 +91,14 @@ const toggleMobileMenu = () => {
 
             <!-- Dropdown menu -->
             <div
-              class="absolute left-0 mt-0 w-56 bg-white border border-emerald-200 rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50"
+              class="absolute left-0 mt-0 w-48 bg-white border border-emerald-200 rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50"
             >
               <a
                 v-for="child in item.children"
                 :key="child.label"
                 :href="child.href"
-                class="flex items-center gap-3 px-4 py-2 text-sm text-emerald-900 hover:bg-emerald-50 hover:text-emerald-700 first:rounded-t-lg last:rounded-b-lg transition"
+                class="block px-4 py-2 text-sm text-emerald-900 hover:bg-emerald-50 hover:text-emerald-700 first:rounded-t-lg last:rounded-b-lg transition"
               >
-                <component v-if="child.icon" :is="child.icon" class="w-4 h-4 flex-shrink-0" />
                 {{ child.label }}
               </a>
             </div>
@@ -170,10 +175,9 @@ const toggleMobileMenu = () => {
                 v-for="child in item.children"
                 :key="child.label"
                 :href="child.href"
-                class="flex items-center gap-3 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-50 rounded-lg transition"
+                class="block px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-50 rounded-lg transition"
                 @click="mobileMenuOpen = false"
               >
-                <component v-if="child.icon" :is="child.icon" class="w-4 h-4 flex-shrink-0" />
                 {{ child.label }}
               </a>
             </div>
