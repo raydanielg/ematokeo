@@ -40,6 +40,7 @@ const newStudent = ref({
     full_name: '',
     class_level: '',
     gender: '',
+    division: '',
     date_of_birth: '',
 });
 
@@ -144,6 +145,7 @@ const resetNewStudent = () => {
         full_name: '',
         class_level: '',
         gender: '',
+        division: '',
         date_of_birth: '',
     };
 };
@@ -164,6 +166,7 @@ const saveStudent = () => {
             full_name: newStudent.value.full_name,
             class_level: newStudent.value.class_level,
             gender: newStudent.value.gender || null,
+            division: newStudent.value.division || null,
             date_of_birth: newStudent.value.date_of_birth || null,
         },
         {
@@ -509,7 +512,7 @@ const selectedExamId = ref('');
                             placeholder="e.g. John Doe"
                         />
                     </div>
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-3 gap-3">
                         <div>
                             <label class="mb-1 block font-medium">Class</label>
                             <select
@@ -524,6 +527,19 @@ const selectedExamId = ref('');
                                 >
                                     {{ cls }}
                                 </option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="mb-1 block font-medium">Division</label>
+                            <select
+                                v-model="newStudent.division"
+                                class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                            >
+                                <option value="">Select division</option>
+                                <option value="I">I</option>
+                                <option value="II">II</option>
+                                <option value="III">III</option>
+                                <option value="IV">IV</option>
                             </select>
                         </div>
                         <div>

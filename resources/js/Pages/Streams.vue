@@ -29,6 +29,17 @@ const streamsPerClass = computed(() => {
     return map;
 });
 
+const groupedByLevel = computed(() => {
+    const map = {};
+    for (const c of props.classes || []) {
+        if (c.parent_class_id) continue; // Skip streams, only base classes
+        const level = c.level || 'Other';
+        if (!map[level]) map[level] = [];
+        map[level].push(c);
+    }
+    return map;
+});
+
 const showForm = ref(false);
 const isEditing = ref(false);
 const editingId = ref(null);

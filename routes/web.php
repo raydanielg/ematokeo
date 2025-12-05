@@ -3037,6 +3037,7 @@ Route::middleware('auth')->group(function () {
             'full_name' => ['required', 'string', 'max:255'],
             'class_level' => ['required', 'string', 'max:255'],
             'gender' => ['nullable', 'in:M,F'],
+            'division' => ['nullable', 'in:I,II,III,IV'],
             'date_of_birth' => ['nullable', 'date'],
         ]);
 
@@ -3057,6 +3058,7 @@ Route::middleware('auth')->group(function () {
             'full_name' => $data['full_name'],
             'class_level' => $data['class_level'],
             'gender' => $data['gender'] ?? null,
+            'division' => $data['division'] ?? null,
             'date_of_birth' => $data['date_of_birth'] ?? null,
             'school_id' => $school?->id,
             'academic_year' => $academicYear,
@@ -4442,6 +4444,15 @@ Route::middleware('auth')->group(function () {
 
         $baseClass = SchoolClass::findOrFail($data['class_id']);
 
+        // Check if stream already exists for this class
+        $existingStream = SchoolClass::where('parent_class_id', $baseClass->id)
+            ->where('stream', strtoupper($data['stream']))
+            ->exists();
+
+        if ($existingStream) {
+            return back()->withErrors(['stream' => 'Stream ' . strtoupper($data['stream']) . ' already exists for this class.']);
+        }
+
         $name = trim(($baseClass->name ?: '') . ' ' . strtoupper($data['stream']));
 
         $class = SchoolClass::create([
@@ -4468,6 +4479,16 @@ Route::middleware('auth')->group(function () {
         ]);
 
         $baseClass = SchoolClass::findOrFail($data['class_id']);
+
+        // Check if stream already exists for this class (excluding current stream)
+        $existingStream = SchoolClass::where('parent_class_id', $baseClass->id)
+            ->where('stream', strtoupper($data['stream']))
+            ->where('id', '!=', $class->id)
+            ->exists();
+
+        if ($existingStream) {
+            return back()->withErrors(['stream' => 'Stream ' . strtoupper($data['stream']) . ' already exists for this class.']);
+        }
 
         $name = trim(($baseClass->name ?: '') . ' ' . strtoupper($data['stream']));
 
