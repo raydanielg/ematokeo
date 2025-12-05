@@ -117,24 +117,34 @@ Route::get('/dashboard', function () {
         'classes' => $classQuery->count(),
     ];
 
-    $upcomingEvents = Event::whereDate('date', '>=', $today)
+    $upcomingEventsQuery = Event::whereDate('date', '>=', $today)
         ->orderBy('date')
-        ->limit(6)
-        ->get([
-            'id',
-            'date',
-            'title',
-            'description',
-        ]);
+        ->limit(6);
 
-    $recentAnnouncements = Announcement::orderByDesc('created_at')
-        ->limit(4)
-        ->get([
-            'id',
-            'title',
-            'body',
-            'created_at',
-        ]);
+    if ($schoolId) {
+        $upcomingEventsQuery->where('school_id', $schoolId);
+    }
+
+    $upcomingEvents = $upcomingEventsQuery->get([
+        'id',
+        'date',
+        'title',
+        'description',
+    ]);
+
+    $recentAnnouncementsQuery = Announcement::orderByDesc('created_at')
+        ->limit(4);
+
+    if ($schoolId) {
+        $recentAnnouncementsQuery->where('school_id', $schoolId);
+    }
+
+    $recentAnnouncements = $recentAnnouncementsQuery->get([
+        'id',
+        'title',
+        'body',
+        'created_at',
+    ]);
 
     // Results summary (basic dashboard analytics)
     $currentResultsYear = ExamResult::max('academic_year');
@@ -159,7 +169,12 @@ Route::get('/dashboard', function () {
     $bottomStudents = collect();
 
     if ($currentResultsYear) {
-        $baseQuery = ExamResult::where('academic_year', $currentResultsYear);
+        $baseQuery = ExamResult::where('academic_year', $currentResultsYear)
+            ->whereHas('student', function($q) use ($schoolId) {
+                if ($schoolId) {
+                    $q->where('school_id', $schoolId);
+                }
+            });
 
         $totalResults = (clone $baseQuery)->count();
 
@@ -501,12 +516,12 @@ Route::middleware('auth')->group(function () {
             // Get students with passing marks (>= 40)
             $passStudents = 0;
             if ($totalStudents > 0) {
-                $passStudents = \App\Models\ExamResult::whereIn('student_id', 
-                    \App\Models\Student::where('class_level', "Form $form")
-                        ->when($schoolId, function ($q) use ($schoolId) {
-                            return $q->where('school_id', $schoolId);
-                        })->pluck('id')
-                )->where('marks', '>=', 40)->distinct('student_id')->count();
+                $passStudents = \App\Models\ExamResult::whereHas('student', function($q) use ($schoolId) {
+                    $q->where('class_level', "Form $form");
+                    if ($schoolId) {
+                        $q->where('school_id', $schoolId);
+                    }
+                })->where('marks', '>=', 40)->distinct('student_id')->count();
             }
             
             $formStats["form$form"] = [
@@ -528,12 +543,12 @@ Route::middleware('auth')->group(function () {
 
         $malePass = 0;
         if ($maleTotal > 0) {
-            $malePass = \App\Models\ExamResult::whereIn('student_id',
-                \App\Models\Student::where('gender', 'M')
-                    ->when($schoolId, function ($q) use ($schoolId) {
-                        return $q->where('school_id', $schoolId);
-                    })->pluck('id')
-            )->where('marks', '>=', 40)->distinct('student_id')->count();
+            $malePass = \App\Models\ExamResult::whereHas('student', function($q) use ($schoolId) {
+                $q->where('gender', 'M');
+                if ($schoolId) {
+                    $q->where('school_id', $schoolId);
+                }
+            })->where('marks', '>=', 40)->distinct('student_id')->count();
         }
 
         $femaleTotal = \App\Models\Student::where('gender', 'F')
@@ -543,12 +558,12 @@ Route::middleware('auth')->group(function () {
 
         $femalePass = 0;
         if ($femaleTotal > 0) {
-            $femalePass = \App\Models\ExamResult::whereIn('student_id',
-                \App\Models\Student::where('gender', 'F')
-                    ->when($schoolId, function ($q) use ($schoolId) {
-                        return $q->where('school_id', $schoolId);
-                    })->pluck('id')
-            )->where('marks', '>=', 40)->distinct('student_id')->count();
+            $femalePass = \App\Models\ExamResult::whereHas('student', function($q) use ($schoolId) {
+                $q->where('gender', 'F');
+                if ($schoolId) {
+                    $q->where('school_id', $schoolId);
+                }
+            })->where('marks', '>=', 40)->distinct('student_id')->count();
         }
 
         $genderStats = [
@@ -1957,20 +1972,30 @@ Route::middleware('auth')->group(function () {
     })->name('results.publish.toggle');
 
     Route::get('/reports/students', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
         $yearFilter = $request->query('year');
         $examFilter = $request->query('exam');
         $testExamFilter = $request->query('test_exam');
         $classFilter = $request->query('class');
 
-        $years = Exam::select('academic_year')
+        $yearsQuery = Exam::select('academic_year')
             ->whereNotNull('academic_year')
             ->distinct()
-            ->orderBy('academic_year', 'desc')
-            ->pluck('academic_year');
+            ->orderBy('academic_year', 'desc');
+
+        if ($schoolId) {
+            $yearsQuery->where('school_id', $schoolId);
+        }
+
+        $years = $yearsQuery->pluck('academic_year');
 
         $examListQuery = Exam::orderByDesc('created_at');
         if ($yearFilter) {
             $examListQuery->where('academic_year', $yearFilter);
+        }
+        if ($schoolId) {
+            $examListQuery->where('school_id', $schoolId);
         }
 
         $examList = $examListQuery->get([
@@ -1983,6 +2008,9 @@ Route::middleware('auth')->group(function () {
         $studentsQuery = Student::query();
         if ($classFilter) {
             $studentsQuery->where('class_level', $classFilter);
+        }
+        if ($schoolId) {
+            $studentsQuery->where('school_id', $schoolId);
         }
 
         $students = $studentsQuery
@@ -1998,10 +2026,15 @@ Route::middleware('auth')->group(function () {
                 'gender',
             ]);
 
-        $classes = Student::select('class_level')
+        $classesQuery = Student::select('class_level')
             ->distinct()
-            ->orderBy('class_level')
-            ->pluck('class_level');
+            ->orderBy('class_level');
+
+        if ($schoolId) {
+            $classesQuery->where('school_id', $schoolId);
+        }
+
+        $classes = $classesQuery->pluck('class_level');
 
         return Inertia::render('StudentReportsIndex', [
             'years' => $years,
@@ -2344,18 +2377,28 @@ Route::middleware('auth')->group(function () {
     })->name('reports.students.show');
 
     Route::get('/reports/classes', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
         $yearFilter = $request->query('year');
         $examFilter = $request->query('exam');
 
-        $years = Exam::select('academic_year')
+        $yearsQuery = Exam::select('academic_year')
             ->whereNotNull('academic_year')
             ->distinct()
-            ->orderBy('academic_year', 'desc')
-            ->pluck('academic_year');
+            ->orderBy('academic_year', 'desc');
+
+        if ($schoolId) {
+            $yearsQuery->where('school_id', $schoolId);
+        }
+
+        $years = $yearsQuery->pluck('academic_year');
 
         $examListQuery = Exam::orderByDesc('created_at');
         if ($yearFilter) {
             $examListQuery->where('academic_year', $yearFilter);
+        }
+        if ($schoolId) {
+            $examListQuery->where('school_id', $schoolId);
         }
 
         $examList = $examListQuery->get([
@@ -2365,13 +2408,18 @@ Route::middleware('auth')->group(function () {
             'academic_year',
         ]);
 
-        $classes = SchoolClass::orderBy('level')
-            ->orderBy('stream')
-            ->get([
-                'id',
-                'level',
-                'stream',
-            ]);
+        $classesQuery = SchoolClass::orderBy('level')
+            ->orderBy('stream');
+
+        if ($schoolId) {
+            $classesQuery->where('school_id', $schoolId);
+        }
+
+        $classes = $classesQuery->get([
+            'id',
+            'level',
+            'stream',
+        ]);
 
         return Inertia::render('ClassReportsIndex', [
             'years' => $years,
@@ -2515,20 +2563,30 @@ Route::middleware('auth')->group(function () {
     })->name('reports.classes.show');
 
     Route::get('/reports/school', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
         $yearFilter = $request->query('year');
         $examFilter = $request->query('exam');
 
-        $school = School::query()->first();
+        $school = $schoolId ? School::find($schoolId) : School::query()->first();
 
-        $years = Exam::select('academic_year')
+        $yearsQuery = Exam::select('academic_year')
             ->whereNotNull('academic_year')
             ->distinct()
-            ->orderBy('academic_year', 'desc')
-            ->pluck('academic_year');
+            ->orderBy('academic_year', 'desc');
+
+        if ($schoolId) {
+            $yearsQuery->where('school_id', $schoolId);
+        }
+
+        $years = $yearsQuery->pluck('academic_year');
 
         $examListQuery = Exam::orderByDesc('created_at');
         if ($yearFilter) {
             $examListQuery->where('academic_year', $yearFilter);
+        }
+        if ($schoolId) {
+            $examListQuery->where('school_id', $schoolId);
         }
 
         $examList = $examListQuery->get([
@@ -2551,9 +2609,16 @@ Route::middleware('auth')->group(function () {
             $exam = Exam::find($examFilter);
 
             if ($exam) {
-                $allResults = ExamResult::where('exam_id', $exam->id)
-                    ->with(['student:id,exam_number,full_name,gender,class_level,stream'])
-                    ->get();
+                $allResultsQuery = ExamResult::where('exam_id', $exam->id)
+                    ->with(['student:id,exam_number,full_name,gender,class_level,stream']);
+
+                if ($schoolId) {
+                    $allResultsQuery->whereHas('student', function($q) use ($schoolId) {
+                        $q->where('school_id', $schoolId);
+                    });
+                }
+
+                $allResults = $allResultsQuery->get();
 
                 if ($allResults->isNotEmpty()) {
                     $schemes = GradingScheme::all();
@@ -2901,8 +2966,13 @@ Route::middleware('auth')->group(function () {
             ->get();
 
         // Map class_level -> subject details (code + name) from SchoolClass
-        $classSubjects = SchoolClass::with('subjects:id,subject_code,name')
-            ->get()
+        $classSubjectsQuery = SchoolClass::with('subjects:id,subject_code,name');
+        
+        if ($user && $user->school_id) {
+            $classSubjectsQuery->where('school_id', $user->school_id);
+        }
+
+        $classSubjects = $classSubjectsQuery->get()
             ->mapWithKeys(function (SchoolClass $class) {
                 $key = trim($class->level ?? '');
 
@@ -2938,14 +3008,19 @@ Route::middleware('auth')->group(function () {
 
         $classes = $classLevelsQuery->pluck('level');
 
-        $exams = Exam::orderByDesc('created_at')
-            ->limit(10)
-            ->get([
-                'id',
-                'name',
-                'type',
-                'academic_year',
-            ]);
+        $examsQuery = Exam::orderByDesc('created_at')
+            ->limit(10);
+
+        if ($user && $user->school_id) {
+            $examsQuery->where('school_id', $user->school_id);
+        }
+
+        $exams = $examsQuery->get([
+            'id',
+            'name',
+            'type',
+            'academic_year',
+        ]);
 
         return Inertia::render('Students', [
             'students' => $students,
@@ -4117,7 +4192,9 @@ Route::middleware('auth')->group(function () {
     })->name('teachers.import-samples');
 
     Route::get('/classes', function () {
-        $schoolId = request()->user()?->school_id;
+        $user = request()->user();
+        $schoolId = $user?->school_id;
+        $school = $user?->school;
 
         $classesQuery = SchoolClass::with('subjects:id')
             ->orderBy('name');
@@ -4147,6 +4224,7 @@ Route::middleware('auth')->group(function () {
         return Inertia::render('Classes', [
             'classes' => $classes,
             'subjects' => $subjects,
+            'schoolLevel' => $school?->level ?? '',
         ]);
     })->name('classes.index');
 
@@ -4218,17 +4296,48 @@ Route::middleware('auth')->group(function () {
         return redirect()->route('classes.index')->with('success', 'Selected classes deleted successfully.');
     })->name('classes.bulk-delete');
 
-    Route::post('/classes/bulk-create-standard', function () {
-        $forms = ['Form I', 'Form II', 'Form III', 'Form IV'];
+    Route::post('/classes/bulk-create-standard', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+        
+        // Get level from request, or use school level as fallback
+        $selectedLevel = $request->input('level');
+        $schoolLevel = $selectedLevel ?: $user?->school?->level;
 
-        foreach ($forms as $form) {
-            SchoolClass::firstOrCreate(
-                ['level' => $form],
-                ['name' => $form, 'description' => null],
-            );
+        // Define classes based on selected level
+        $classesToCreate = [];
+        
+        if ($schoolLevel === 'Primary') {
+            $classesToCreate = ['Class I', 'Class II', 'Class III', 'Class IV', 'Class V', 'Class VI', 'Class VII'];
+        } elseif ($schoolLevel === 'O-Level') {
+            $classesToCreate = ['Form I', 'Form II', 'Form III', 'Form IV'];
+        } elseif ($schoolLevel === 'A-Level') {
+            $classesToCreate = ['Form V', 'Form VI'];
         }
 
-        return redirect()->route('classes.index')->with('success', 'Standard Forms I–IV created successfully.');
+        if (empty($classesToCreate)) {
+            return redirect()->route('classes.index')->with('error', 'Invalid school level. Please select a valid level.');
+        }
+
+        $createdCount = 0;
+        foreach ($classesToCreate as $className) {
+            $created = SchoolClass::firstOrCreate(
+                ['school_id' => $schoolId, 'name' => $className],
+                [
+                    'level' => $schoolLevel,
+                    'description' => null,
+                ],
+            );
+            if ($created->wasRecentlyCreated) {
+                $createdCount++;
+            }
+        }
+
+        $message = $createdCount > 0 
+            ? "Successfully created $createdCount classes for $schoolLevel."
+            : 'All classes already exist.';
+
+        return redirect()->route('classes.index')->with('success', $message);
     })->name('classes.bulk-create-standard');
 
     Route::post('/classes/assign-subjects', function (\Illuminate\Http\Request $request) {
@@ -4520,9 +4629,19 @@ Route::middleware('auth')->group(function () {
     })->name('exams.destroy');
 
     Route::get('/exams/{exam}/results', function (Exam $exam) {
-        $allResults = ExamResult::where('exam_id', $exam->id)
-            ->with(['student:id,exam_number,full_name,gender', 'subject:id,subject_code'])
-            ->get();
+        $user = request()->user();
+        $schoolId = $user?->school_id;
+
+        $allResultsQuery = ExamResult::where('exam_id', $exam->id)
+            ->with(['student:id,exam_number,full_name,gender', 'subject:id,subject_code']);
+
+        if ($schoolId) {
+            $allResultsQuery->whereHas('student', function($q) use ($schoolId) {
+                $q->where('school_id', $schoolId);
+            });
+        }
+
+        $allResults = $allResultsQuery->get();
 
         if ($allResults->isEmpty()) {
             return Inertia::render('ExamResultsPreview', [

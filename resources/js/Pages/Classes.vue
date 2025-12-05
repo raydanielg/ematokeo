@@ -3,6 +3,7 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import Alert from '@/Components/Alert.vue';
 import { Head, router } from '@inertiajs/vue3';
 import { computed, reactive, ref, watch } from 'vue';
+import { BookOpen } from 'lucide-vue-next';
 
 const props = defineProps({
     classes: {
@@ -12,6 +13,10 @@ const props = defineProps({
     subjects: {
         type: Array,
         default: () => [],
+    },
+    schoolLevel: {
+        type: String,
+        default: '',
     },
 });
 
@@ -45,6 +50,9 @@ watch(
 
 const selectedIds = ref([]);
 const isBulkDeleting = ref(false);
+const isImportingClasses = ref(false);
+const showImportModal = ref(false);
+const selectedImportLevel = ref('');
 
 // New state for single-class subject assignment panel
 const selectedClassId = ref(null);
@@ -56,6 +64,7 @@ const editingId = ref(null);
 const form = reactive({
     name: '',
     description: '',
+    level: '', // Will be set to schoolLevel automatically
 });
 const formSubjectIds = ref([]);
 const classSaveError = ref(null);
@@ -89,6 +98,7 @@ const openCreate = () => {
     editingId.value = null;
     form.name = '';
     form.description = '';
+    form.level = props.schoolLevel; // Set to school level automatically
     formSubjectIds.value = [];
     classSaveError.value = null;
     showForm.value = true;
@@ -230,6 +240,37 @@ const bulkDelete = () => {
     openConfirm('delete-bulk', [...selectedIds.value], 'Are you sure you want to delete all selected classes? This action cannot be undone.');
 };
 
+const openImportModal = () => {
+    selectedImportLevel.value = '';
+    showImportModal.value = true;
+};
+
+const closeImportModal = () => {
+    showImportModal.value = false;
+    selectedImportLevel.value = '';
+};
+
+const confirmImport = () => {
+    if (!selectedImportLevel.value || isImportingClasses.value) return;
+
+    isImportingClasses.value = true;
+
+    router.post(
+        route('classes.bulk-create-standard'),
+        { level: selectedImportLevel.value },
+        {
+            preserveScroll: true,
+            onSuccess: () => {
+                closeImportModal();
+                router.reload({ only: ['classes'] });
+            },
+            onFinish: () => {
+                isImportingClasses.value = false;
+            },
+        },
+    );
+};
+
 const confirmProceed = () => {
     if (confirmActionType.value === 'delete-single' && confirmPayload.value) {
         router.delete(route('classes.destroy', confirmPayload.value), {
@@ -315,6 +356,15 @@ const saveSelectedClassAssignments = () => {
                         @click="openCreate"
                     >
                         + Add Class
+                    </button>
+                    <button
+                        type="button"
+                        class="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 flex items-center gap-1"
+                        :disabled="isImportingClasses"
+                        @click="openImportModal"
+                    >
+                        <BookOpen class="w-4 h-4" />
+                        <span>Import Classes</span>
                     </button>
                     <button
                         type="button"
@@ -517,7 +567,7 @@ const saveSelectedClassAssignments = () => {
                         :message="classSaveError"
                     />
 
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 gap-3">
                         <div>
                             <label class="mb-1 block font-medium">Class Name</label>
                             <input
@@ -527,22 +577,6 @@ const saveSelectedClassAssignments = () => {
                                 placeholder="e.g. Form I A"
                                 required
                             />
-                        </div>
-                        <div>
-                            <label class="mb-1 block font-medium">Level (optional)</label>
-                            <select
-                                v-model="form.level"
-                                class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            >
-                                <option value="">Select level...</option>
-                                <option
-                                    v-for="level in levelOptions"
-                                    :key="level"
-                                    :value="level"
-                                >
-                                    {{ level }}
-                                </option>
-                            </select>
                         </div>
                     </div>
                     <div>
@@ -587,6 +621,87 @@ const saveSelectedClassAssignments = () => {
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+
+        <!-- Import Classes Modal -->
+        <div
+            v-if="showImportModal"
+            class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4"
+        >
+            <div class="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
+                <div class="mb-4 flex items-center gap-2">
+                    <BookOpen class="w-5 h-5 text-blue-600" />
+                    <h3 class="text-lg font-semibold text-gray-800">
+                        Import Classes
+                    </h3>
+                </div>
+                <p class="mb-4 text-sm text-gray-600">
+                    Select the school level to import standard classes for your school.
+                </p>
+
+                <div class="space-y-3 mb-6">
+                    <label class="flex items-center gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50" :class="selectedImportLevel === 'Primary' ? 'border-blue-500 bg-blue-50' : ''">
+                        <input
+                            type="radio"
+                            v-model="selectedImportLevel"
+                            value="Primary"
+                            class="w-4 h-4 text-blue-600"
+                        />
+                        <div>
+                            <p class="font-medium text-gray-900">Primary</p>
+                            <p class="text-xs text-gray-500">Class I - VII</p>
+                        </div>
+                    </label>
+
+                    <label class="flex items-center gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50" :class="selectedImportLevel === 'O-Level' ? 'border-blue-500 bg-blue-50' : ''">
+                        <input
+                            type="radio"
+                            v-model="selectedImportLevel"
+                            value="O-Level"
+                            class="w-4 h-4 text-blue-600"
+                        />
+                        <div>
+                            <p class="font-medium text-gray-900">O-Level (Secondary)</p>
+                            <p class="text-xs text-gray-500">Form I - IV</p>
+                        </div>
+                    </label>
+
+                    <label class="flex items-center gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50" :class="selectedImportLevel === 'A-Level' ? 'border-blue-500 bg-blue-50' : ''">
+                        <input
+                            type="radio"
+                            v-model="selectedImportLevel"
+                            value="A-Level"
+                            class="w-4 h-4 text-blue-600"
+                        />
+                        <div>
+                            <p class="font-medium text-gray-900">A-Level (Secondary)</p>
+                            <p class="text-xs text-gray-500">Form V - VI</p>
+                        </div>
+                    </label>
+                </div>
+
+                <div class="flex justify-end gap-2">
+                    <button
+                        type="button"
+                        class="rounded-md bg-gray-50 px-4 py-2 text-sm font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100"
+                        @click="closeImportModal"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="button"
+                        class="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 flex items-center gap-1"
+                        :disabled="!selectedImportLevel || isImportingClasses"
+                        @click="confirmImport"
+                    >
+                        <span v-if="isImportingClasses" class="inline-flex items-center gap-1">
+                            <span class="inline-flex h-3 w-3 animate-spin rounded-full border border-white border-t-transparent"></span>
+                            <span>Importing...</span>
+                        </span>
+                        <span v-else>Import</span>
+                    </button>
+                </div>
             </div>
         </div>
 

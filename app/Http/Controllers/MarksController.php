@@ -20,8 +20,15 @@ class MarksController extends Controller
         $examId = $request->query('exam');
         $classLevel = $request->query('class');
         $user = $request->user();
+        $schoolId = $user?->school_id;
 
-        $exams = Exam::orderByDesc('created_at')->get(['id', 'name', 'academic_year', 'type']);
+        $examsQuery = Exam::orderByDesc('created_at');
+        
+        if ($schoolId) {
+            $examsQuery->where('school_id', $schoolId);
+        }
+
+        $exams = $examsQuery->get(['id', 'name', 'academic_year', 'type']);
         $gradingSchemes = GradingScheme::orderBy('min_mark')->get([
             'min_mark',
             'max_mark',
