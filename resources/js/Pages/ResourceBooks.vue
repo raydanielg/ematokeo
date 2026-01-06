@@ -1,12 +1,20 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head, useForm } from '@inertiajs/vue3';
+import { Head, useForm, router } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 
 const props = defineProps({
     folders: {
         type: Array,
         default: () => [],
+    },
+    subject: {
+        type: String,
+        default: null,
+    },
+    form: {
+        type: String,
+        default: null,
     },
 });
 
@@ -24,6 +32,39 @@ const selectedFolder = ref('');
 const newFolderName = ref('');
 
 const folderOptions = computed(() => (props.folders || []).map((f) => f.folder));
+
+const subjects = [
+    { key: 'mathematics', name: 'Mathematics' },
+    { key: 'english', name: 'English' },
+    { key: 'kiswahili', name: 'Kiswahili' },
+    { key: 'physics', name: 'Physics' },
+    { key: 'chemistry', name: 'Chemistry' },
+    { key: 'biology', name: 'Biology' },
+    { key: 'civics', name: 'Civics' },
+    { key: 'history', name: 'History' },
+    { key: 'geography', name: 'Geography' },
+];
+
+const selectedSubject = ref(props.subject || '');
+const selectedForm = ref(props.form || '');
+
+const forms = [
+    { key: 'form-i', label: 'Form I' },
+    { key: 'form-ii', label: 'Form II' },
+    { key: 'form-iii', label: 'Form III' },
+    { key: 'form-iv', label: 'Form IV' },
+];
+
+const goToSubjectForm = () => {
+    if (!selectedSubject.value || !selectedForm.value) {
+        return;
+    }
+
+    router.visit(route('resources.books.show', {
+        subject: selectedSubject.value,
+        form: selectedForm.value,
+    }));
+};
 
 const submit = () => {
     // Prefer selected existing folder if present; otherwise use typed name
@@ -82,6 +123,10 @@ const createFolderOnly = () => {
                     <p class="mt-1 text-sm text-gray-500">
                         Create resource folders and upload documents (PDF, Word, etc.) for teachers.
                     </p>
+                    <p v-if="subject || form" class="mt-1 text-xs text-emerald-700">
+                        <span v-if="subject">Subject: {{ subject }}</span>
+                        <span v-if="form" class="ml-2">Class: {{ form }}</span>
+                    </p>
                 </div>
                 <div class="flex items-center gap-2">
                     <button
@@ -103,6 +148,52 @@ const createFolderOnly = () => {
         </template>
 
         <div class="space-y-4">
+            <!-- Subject & class selection -->
+            <div class="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
+                <div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-700">
+                            Choose Subject & Class
+                        </p>
+                        <p class="text-[11px] text-gray-500">
+                            Tap a subject card then pick Form I  Form IV to open that subject resources page.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="grid gap-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                    <button
+                        v-for="sub in subjects"
+                        :key="sub.key"
+                        type="button"
+                        class="flex flex-col items-start rounded-lg border px-3 py-2 text-left text-[11px] shadow-sm transition hover:border-emerald-400 hover:bg-emerald-50"
+                        :class="selectedSubject === sub.key ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 bg-slate-50'"
+                        @click="selectedSubject = sub.key"
+                    >
+                        <span class="text-xs font-semibold text-gray-800">{{ sub.name }}</span>
+                        <span class="mt-0.5 text-[10px] text-gray-500">Tap to choose this subject</span>
+                    </button>
+                </div>
+
+                <div class="mt-4 flex flex-col gap-2 border-t border-dashed border-gray-200 pt-3">
+                    <p class="text-[11px] font-medium text-gray-700">
+                        Select Class Level
+                    </p>
+                    <div class="flex flex-wrap gap-2">
+                        <button
+                            v-for="level in forms"
+                            :key="level.key"
+                            type="button"
+                            class="rounded-full px-3 py-1 text-[11px] font-medium shadow-sm ring-1 transition"
+                            :class="selectedForm === level.key ? 'bg-emerald-600 text-white ring-emerald-600' : 'bg-white text-emerald-700 ring-emerald-200 hover:bg-emerald-50'"
+                            @click="selectedForm = level.key; goToSubjectForm();"
+                        >
+                            {{ level.label }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Folders & files -->
             <div class="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
                 <div class="mb-3 flex items-center justify-between">

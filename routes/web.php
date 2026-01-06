@@ -3251,8 +3251,40 @@ Route::middleware('auth')->group(function () {
 
         return Inertia::render('ResourceBooks', [
             'folders' => $grouped,
+            'subject' => null,
+            'form' => null,
         ]);
     })->name('resources.books.index');
+
+    Route::get('/resources/books/{subject}/{form}', function (string $subject, string $form) {
+        $resources = BookResource::orderBy('folder')
+            ->orderBy('title')
+            ->get([
+                'id',
+                'folder',
+                'title',
+                'description',
+                'file_path',
+                'created_at',
+            ]);
+
+        $grouped = $resources
+            ->groupBy('folder')
+            ->map(function ($items, $folder) {
+                return [
+                    'folder' => $folder,
+                    // Only treat rows with a real file_path as downloadable items
+                    'items' => $items->whereNotNull('file_path')->values(),
+                ];
+            })
+            ->values();
+
+        return Inertia::render('ResourceBooks', [
+            'folders' => $grouped,
+            'subject' => $subject,
+            'form' => $form,
+        ]);
+    })->name('resources.books.show');
 
     Route::post('/resources/books', function (Illuminate\Http\Request $request) {
         $data = $request->validate([
