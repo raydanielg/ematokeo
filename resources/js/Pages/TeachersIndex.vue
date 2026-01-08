@@ -287,27 +287,13 @@ const toggleEditBaseClass = (baseId) => {
 const onToggleAddStream = async (streamClassId) => {
     const id = Number(streamClassId);
     if (!Number.isFinite(id)) return;
-    const wasSelected = addForm.class_ids.includes(id);
     toggleAddClass(id);
-    if (wasSelected) return;
-
-    const chk = await checkClassHasTeacher(id, null);
-    if (chk.hasTeacher) {
-        openClassTeacherWarning(id, chk.teachers, { type: 'add' });
-    }
 };
 
 const onToggleEditStream = async (streamClassId) => {
     const id = Number(streamClassId);
     if (!Number.isFinite(id)) return;
-    const wasSelected = editForm.class_ids.includes(id);
     toggleEditClass(id);
-    if (wasSelected) return;
-
-    const chk = await checkClassHasTeacher(id, editForm.id);
-    if (chk.hasTeacher) {
-        openClassTeacherWarning(id, chk.teachers, { type: 'edit' });
-    }
 };
 
 const filteredSubjectsFor = (classIds) => {
