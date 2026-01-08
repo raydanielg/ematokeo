@@ -97,6 +97,12 @@ const teacherInitialsForClassSubject = (schoolClassId, subjectCode) => {
     return teacherBySubject.value?.[code] || '';
 };
 
+const classHasTeacherAssignments = (schoolClassId) => {
+    const classId = schoolClassId ? String(schoolClassId) : '';
+    const classMap = props.teacherAssignments?.[classId];
+    return !!(classMap && typeof classMap === 'object' && Object.keys(classMap).length);
+};
+
 const pickTeacherInitialForSlot = (schoolClassId, subjectCode, day, slotIndex) => {
     const raw = teacherInitialsForClassSubject(schoolClassId, subjectCode);
     const parts = String(raw || '')
@@ -572,7 +578,7 @@ const generateSampleTimetable = () => {
 
         const setSlot = (day, slotIndex, subject) => {
             const picked = pickTeacherInitialForSlot(classId, subject, day, slotIndex);
-            const teacher = picked || (teachers[subject] || '');
+            const teacher = picked || (classHasTeacherAssignments(classId) ? '' : (teachers[subject] || ''));
             const teacherInitials = typeof teacher === 'string' ? teacher : (teacher?.initials || teacher?.name || '');
             const teacherName = typeof teacher === 'string' ? teacher : (teacher?.name || teacher?.initials || '');
             rowByDay[day].slots[slotIndex] = {
