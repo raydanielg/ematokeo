@@ -3,6 +3,25 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head, usePage } from '@inertiajs/vue3';
 import { computed } from 'vue';
 
+defineProps({
+    studentsCount: {
+        type: Number,
+        default: 0,
+    },
+    pendingMarksCount: {
+        type: Number,
+        default: 0,
+    },
+    timetablesCount: {
+        type: Number,
+        default: 0,
+    },
+    announcementsCount: {
+        type: Number,
+        default: 0,
+    },
+});
+
 const page = usePage();
 const user = computed(() => page?.props?.auth?.user || null);
 </script>
@@ -17,7 +36,7 @@ const user = computed(() => page?.props?.auth?.user || null);
                     Teacher Dashboard
                 </h2>
                 <p class="mt-1 text-sm text-gray-500">
-                    Karibu, {{ user?.name || 'Teacher' }}
+                    👋 Welcome, {{ user?.name || 'Teacher' }}
                 </p>
             </div>
         </template>
@@ -28,7 +47,7 @@ const user = computed(() => page?.props?.auth?.user || null);
                     <div class="flex items-center justify-between">
                         <div>
                             <p class="text-sm text-gray-600">My Students</p>
-                            <p class="mt-2 text-3xl font-bold text-emerald-600">—</p>
+                            <p class="mt-2 text-3xl font-bold text-emerald-600">{{ studentsCount }}</p>
                         </div>
                         <div class="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100">
                             <svg class="h-6 w-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -42,7 +61,7 @@ const user = computed(() => page?.props?.auth?.user || null);
                     <div class="flex items-center justify-between">
                         <div>
                             <p class="text-sm text-gray-600">Pending Marks</p>
-                            <p class="mt-2 text-3xl font-bold text-blue-600">—</p>
+                            <p class="mt-2 text-3xl font-bold text-blue-600">{{ pendingMarksCount }}</p>
                         </div>
                         <div class="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100">
                             <svg class="h-6 w-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -56,7 +75,7 @@ const user = computed(() => page?.props?.auth?.user || null);
                     <div class="flex items-center justify-between">
                         <div>
                             <p class="text-sm text-gray-600">Timetables</p>
-                            <p class="mt-2 text-3xl font-bold text-amber-600">—</p>
+                            <p class="mt-2 text-3xl font-bold text-amber-600">{{ timetablesCount }}</p>
                         </div>
                         <div class="flex h-12 w-12 items-center justify-center rounded-full bg-amber-100">
                             <svg class="h-6 w-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -70,7 +89,7 @@ const user = computed(() => page?.props?.auth?.user || null);
                     <div class="flex items-center justify-between">
                         <div>
                             <p class="text-sm text-gray-600">Announcements</p>
-                            <p class="mt-2 text-3xl font-bold text-purple-600">—</p>
+                            <p class="mt-2 text-3xl font-bold text-purple-600">{{ announcementsCount }}</p>
                         </div>
                         <div class="flex h-12 w-12 items-center justify-center rounded-full bg-purple-100">
                             <svg class="h-6 w-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">

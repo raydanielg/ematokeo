@@ -573,7 +573,55 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
 
     Route::middleware(['teacher_password_changed'])->group(function () {
         Route::get('/', function () {
-            return Inertia::render('Teacher/Dashboard');
+            $user = request()->user();
+
+            $schoolId = $user?->school_id;
+            $teacherId = $user?->id;
+
+            $assignedClassIds = \Illuminate\Support\Facades\DB::table('teacher_class_subject')
+                ->where('teacher_id', $teacherId)
+                ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+                ->distinct()
+                ->pluck('school_class_id');
+
+            $classKeys = \App\Models\SchoolClass::query()
+                ->whereIn('id', $assignedClassIds)
+                ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+                ->get(['level', 'stream'])
+                ->map(fn ($c) => ($c->level ?? '') . '|' . ($c->stream ?? ''))
+                ->unique()
+                ->values();
+
+            $studentsCount = 0;
+            if ($schoolId && $classKeys->count() > 0) {
+                $studentsCount = \App\Models\Student::query()
+                    ->where('school_id', $schoolId)
+                    ->whereIn(
+                        \Illuminate\Support\Facades\DB::raw("CONCAT(class_level, '|', COALESCE(stream, ''))"),
+                        $classKeys->all()
+                    )
+                    ->distinct('id')
+                    ->count('id');
+            }
+
+            $timetablesCount = 0;
+            if ($schoolId) {
+                $timetablesCount = \App\Models\Timetable::query()
+                    ->where('school_id', $schoolId)
+                    ->count();
+            }
+
+            $announcementsCount = \App\Models\Announcement::query()
+                ->whereNotNull('published_at')
+                ->whereIn('audience', ['all', 'teachers'])
+                ->count();
+
+            return Inertia::render('Teacher/Dashboard', [
+                'studentsCount' => $studentsCount,
+                'pendingMarksCount' => 0,
+                'timetablesCount' => $timetablesCount,
+                'announcementsCount' => $announcementsCount,
+            ]);
         })->name('dashboard');
     });
 });
