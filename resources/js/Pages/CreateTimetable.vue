@@ -83,6 +83,15 @@ const subjectIdByCode = computed(() => {
 const teacherInitialsForClassSubject = (schoolClassId, subjectCode) => {
     const classId = schoolClassId ? String(schoolClassId) : '';
     const code = String(subjectCode || '').trim();
+
+    const classMap = props.teacherAssignments?.[classId];
+    if (classMap && typeof classMap === 'object') {
+        // Strict mode: if assignments exist for this class, do not fall back to global teachers.
+        const fromAssignments = classMap?.[code];
+        return fromAssignments ? String(fromAssignments) : '';
+    }
+
+    // Fallback only when the school has not configured per-class assignments.
     const fromAssignments = props.teacherAssignments?.[classId]?.[code];
     if (fromAssignments) return String(fromAssignments);
     return teacherBySubject.value?.[code] || '';
