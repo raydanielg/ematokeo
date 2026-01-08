@@ -25,6 +25,7 @@ class TeacherSeeder extends Seeder
                     'role' => 'teacher',
                     'is_active' => true,
                     'password' => bcrypt('12345678'),
+                    'must_change_password' => true,
                 ]
             );
         }

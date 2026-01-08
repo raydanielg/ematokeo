@@ -32,6 +32,7 @@ class User extends Authenticatable
         'check_number',
         'teaching_classes',
         'password',
+        'must_change_password',
     ];
 
     /**

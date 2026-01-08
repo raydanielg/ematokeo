@@ -9,6 +9,7 @@ use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -57,11 +58,22 @@ class AuthenticatedSessionController extends Controller
             }
         }
 
+        if ($user && $user->role === 'teacher' && ! $user->must_change_password) {
+            $isDefaultPassword =
+                Hash::check('changeme123', $user->password) ||
+                Hash::check('12345678', $user->password);
+
+            if ($isDefaultPassword) {
+                $user->forceFill(['must_change_password' => true])->save();
+                $user->refresh();
+            }
+        }
+
         $targetRoute = 'dashboard';
         if ($user && $user->role === 'admin') {
             $targetRoute = 'admin.dashboard';
         } elseif ($user && $user->role === 'teacher') {
-            $targetRoute = 'teacher.dashboard';
+            $targetRoute = $user->must_change_password ? 'teacher.change-password' : 'teacher.dashboard';
         }
 
         return redirect()->intended(route($targetRoute, absolute: false));

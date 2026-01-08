@@ -552,9 +552,30 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
 
 // Teacher Routes
 Route::middleware(['auth', 'verified', 'teacher'])->prefix('teacher')->name('teacher.')->group(function () {
-    Route::get('/dashboard', function () {
-        return Inertia::render('Teacher/Dashboard');
-    })->name('dashboard');
+    Route::get('/change-password', function () {
+        return Inertia::render('Teacher/ChangePassword');
+    })->name('change-password');
+
+    Route::post('/change-password', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+
+        $data = $request->validate([
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+        ]);
+
+        $user->forceFill([
+            'password' => $data['password'],
+            'must_change_password' => false,
+        ])->save();
+
+        return redirect()->route('teacher.dashboard')->with('success', 'Password updated successfully.');
+    })->name('change-password.update');
+
+    Route::middleware(['teacher_password_changed'])->group(function () {
+        Route::get('/dashboard', function () {
+            return Inertia::render('Teacher/Dashboard');
+        })->name('dashboard');
+    });
 });
 
 Route::middleware('auth')->group(function () {
@@ -7460,13 +7481,16 @@ Route::middleware('auth')->group(function () {
 
         $password = 'changeme123';
 
+        $role = $data['role'] ?: 'user';
+
         User::create([
             'school_id' => $schoolId,
             'name' => $data['name'],
             'email' => $data['email'],
-            'role' => $data['role'] ?: 'user',
+            'role' => $role,
             'is_active' => true,
             'password' => $password,
+            'must_change_password' => $role === 'teacher',
         ]);
 
         return redirect()->route('settings.user-management')->with('success', 'User created. Default password: changeme123');
