@@ -91,6 +91,8 @@ const addForm = reactive({
     subject_ids: [],
 });
 
+const addClassSubjectMap = reactive({});
+
 const addBaseClassIds = ref([]);
 
 const editForm = reactive({
@@ -102,6 +104,8 @@ const editForm = reactive({
     class_ids: [],
     subject_ids: [],
 });
+
+const editClassSubjectMap = reactive({});
 
 const editBaseClassIds = ref([]);
 
@@ -167,6 +171,65 @@ const expandStreamsForBases = (baseIds, selectedStreamIds) => {
 const effectiveAddClassIds = computed(() => expandStreamsForBases(addBaseClassIds.value, addForm.class_ids));
 const effectiveEditClassIds = computed(() => expandStreamsForBases(editBaseClassIds.value, editForm.class_ids));
 
+const getClassLabelById = (id) => {
+    const n = Number(id);
+    const found = (props.allClasses || []).find((c) => Number(c.id) === n) || (props.classes || []).find((c) => Number(c.id) === n);
+    if (!found) return `Class #${n}`;
+    return formatClassOption(found);
+};
+
+const subjectOptionsForClassId = (classId) => {
+    const cid = Number(classId);
+    const allowedIds = props.classSubjectMap?.[cid] || props.classSubjectMap?.[String(cid)] || null;
+    if (Array.isArray(allowedIds) && allowedIds.length) {
+        const allowedSet = new Set(allowedIds.map((v) => Number(v)).filter((v) => Number.isFinite(v)));
+        return (props.subjects || []).filter((s) => allowedSet.has(Number(s.id)));
+    }
+    return props.subjects || [];
+};
+
+const ensureClassSubjectMapKeys = (mapObj, classIds) => {
+    const allowed = new Set((classIds || []).map((v) => Number(v)).filter((v) => Number.isFinite(v)));
+    for (const key of Object.keys(mapObj)) {
+        const k = Number(key);
+        if (!allowed.has(k)) {
+            delete mapObj[key];
+        }
+    }
+    for (const cid of allowed) {
+        if (!Object.prototype.hasOwnProperty.call(mapObj, String(cid))) {
+            mapObj[String(cid)] = [];
+        }
+    }
+};
+
+const unionSubjectIdsFromMap = (mapObj) => {
+    const set = new Set();
+    for (const key of Object.keys(mapObj || {})) {
+        const arr = Array.isArray(mapObj[key]) ? mapObj[key] : [];
+        for (const sid of arr) {
+            const n = Number(sid);
+            if (Number.isFinite(n) && n > 0) set.add(n);
+        }
+    }
+    return Array.from(set);
+};
+
+const pairsFromMap = (mapObj) => {
+    const out = [];
+    for (const key of Object.keys(mapObj || {})) {
+        const cid = Number(key);
+        if (!Number.isFinite(cid) || cid <= 0) continue;
+        const arr = Array.isArray(mapObj[key]) ? mapObj[key] : [];
+        for (const sid of arr) {
+            const s = Number(sid);
+            if (!Number.isFinite(s) || s <= 0) continue;
+            out.push({ class_id: cid, subject_id: s });
+        }
+    }
+    return out;
+};
+
 const openAssignmentConflictModal = (conflicts, onConfirm) => {
     assignmentConflicts.value = Array.isArray(conflicts) ? conflicts : [];
     pendingAssignmentSubmit.value = typeof onConfirm === 'function' ? onConfirm : null;
@@ -187,7 +250,7 @@ const confirmAssignmentConflictModal = () => {
     if (fn) fn();
 };
 
-const fetchAssignmentConflicts = async ({ classIds, subjectIds, excludeTeacherId }) => {
+const fetchAssignmentConflicts = async ({ pairs, excludeTeacherId }) => {
     assignmentConflictsLoading.value = true;
     try {
         const res = await fetch(route('teachers.assignment-conflicts'), {
@@ -200,8 +263,7 @@ const fetchAssignmentConflicts = async ({ classIds, subjectIds, excludeTeacherId
             },
             credentials: 'same-origin',
             body: JSON.stringify({
-                class_ids: classIds,
-                subject_ids: subjectIds,
+                pairs,
                 exclude_teacher_id: excludeTeacherId || undefined,
             }),
         });
@@ -315,6 +377,8 @@ watch(
             return;
         }
         addForm.subject_ids = (addForm.subject_ids || []).filter((sid) => allowed.has(Number(sid)));
+
+        ensureClassSubjectMapKeys(addClassSubjectMap, effectiveAddClassIds.value);
     },
     { deep: true }
 );
@@ -328,6 +392,8 @@ watch(
             return;
         }
         editForm.subject_ids = (editForm.subject_ids || []).filter((sid) => allowed.has(Number(sid)));
+
+        ensureClassSubjectMapKeys(editClassSubjectMap, effectiveEditClassIds.value);
     },
     { deep: true }
 );
@@ -362,9 +428,7 @@ const allowedSubjectsForClassId = (classId) => {
 
 const vipindiSubjectOptionsForRow = (row) => {
     const targetClassId = row.stream_id ? Number(row.stream_id) : Number(row.base_class_id);
-    const allowed = allowedSubjectsForClassId(targetClassId);
-    if (!allowed) return props.subjects || [];
-    return (props.subjects || []).filter((s) => allowed.has(Number(s.id)));
+    return subjectOptionsForClassId(targetClassId);
 };
 
 const weeklyTotal = computed(() => {
@@ -377,23 +441,32 @@ const resetAddForm = () => {
     addForm.class_ids = [];
     addForm.subject_ids = [];
     addBaseClassIds.value = [];
+    for (const k of Object.keys(addClassSubjectMap)) {
+        delete addClassSubjectMap[k];
+    }
 };
 
 const saveTeacher = async () => {
     const expandedClassIds = effectiveAddClassIds.value;
+
+    ensureClassSubjectMapKeys(addClassSubjectMap, expandedClassIds);
+    const classSubjectMapPayload = {};
+    for (const k of Object.keys(addClassSubjectMap)) {
+        classSubjectMapPayload[k] = Array.isArray(addClassSubjectMap[k]) ? addClassSubjectMap[k] : [];
+    }
+    const unionSubjectIds = unionSubjectIdsFromMap(classSubjectMapPayload);
+
     const payload = {
         name: addForm.name,
         phone: addForm.phone,
         class_ids: expandedClassIds,
-        subject_ids: addForm.subject_ids,
+        subject_ids: unionSubjectIds,
+        class_subject_map: classSubjectMapPayload,
     };
 
-    if (payload.class_ids.length && payload.subject_ids.length) {
-        const conflicts = await fetchAssignmentConflicts({
-            classIds: payload.class_ids,
-            subjectIds: payload.subject_ids,
-            excludeTeacherId: null,
-        });
+    const pairs = pairsFromMap(classSubjectMapPayload);
+    if (pairs.length) {
+        const conflicts = await fetchAssignmentConflicts({ pairs, excludeTeacherId: null });
         if (conflicts.length) {
             openAssignmentConflictModal(conflicts, () => {
                 router.post(route('teachers.store'), payload, {
@@ -442,6 +515,17 @@ const openEdit = (teacher) => {
         if (Number.isFinite(bid) && bid > 0) baseFromStreams.add(bid);
     }
     editBaseClassIds.value = Array.from(baseFromStreams);
+
+    for (const k of Object.keys(editClassSubjectMap)) {
+        delete editClassSubjectMap[k];
+    }
+    const existing = teacher?.assigned_class_subject_ids || {};
+    for (const cid of Object.keys(existing)) {
+        const arr = Array.isArray(existing[cid]) ? existing[cid] : [];
+        editClassSubjectMap[String(cid)] = arr.map((v) => Number(v)).filter((v) => Number.isFinite(v));
+    }
+    ensureClassSubjectMapKeys(editClassSubjectMap, effectiveEditClassIds.value);
+
     showEditModal.value = true;
 };
 
@@ -449,20 +533,26 @@ const updateTeacher = async () => {
     if (!editForm.id) return;
 
     const expandedClassIds = effectiveEditClassIds.value;
+
+    ensureClassSubjectMapKeys(editClassSubjectMap, expandedClassIds);
+    const classSubjectMapPayload = {};
+    for (const k of Object.keys(editClassSubjectMap)) {
+        classSubjectMapPayload[k] = Array.isArray(editClassSubjectMap[k]) ? editClassSubjectMap[k] : [];
+    }
+    const unionSubjectIds = unionSubjectIdsFromMap(classSubjectMapPayload);
+
     const payload = {
         name: editForm.name,
         phone: editForm.phone,
         check_number: editForm.check_number,
         class_ids: expandedClassIds,
-        subject_ids: editForm.subject_ids,
+        subject_ids: unionSubjectIds,
+        class_subject_map: classSubjectMapPayload,
     };
 
-    if (payload.class_ids.length && payload.subject_ids.length) {
-        const conflicts = await fetchAssignmentConflicts({
-            classIds: payload.class_ids,
-            subjectIds: payload.subject_ids,
-            excludeTeacherId: editForm.id,
-        });
+    const pairs = pairsFromMap(classSubjectMapPayload);
+    if (pairs.length) {
+        const conflicts = await fetchAssignmentConflicts({ pairs, excludeTeacherId: editForm.id });
         if (conflicts.length) {
             openAssignmentConflictModal(conflicts, () => {
                 router.put(route('teachers.update', editForm.id), payload, {
@@ -1362,25 +1452,37 @@ const formatSubjectOption = (s) => {
                         </div>
                         <div>
                             <label class="mb-1 block text-[11px] font-medium">Assigned subjects</label>
-                            <div class="max-h-44 space-y-1 overflow-auto rounded-md border border-gray-200 bg-white p-2">
-                                <label
-                                    v-for="s in editFilteredSubjects"
-                                    :key="s.id"
-                                    class="flex items-center gap-2 rounded-md px-2 py-1 text-[11px] text-gray-700 hover:bg-emerald-50/40"
+                            <div class="max-h-72 space-y-2 overflow-auto rounded-md border border-gray-200 bg-white p-2">
+                                <div
+                                    v-for="cid in effectiveEditClassIds"
+                                    :key="cid"
+                                    class="rounded-md border border-gray-100 bg-slate-50/40 p-2"
                                 >
-                                    <input
-                                        type="checkbox"
-                                        class="h-3.5 w-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
-                                        :checked="editForm.subject_ids.includes(s.id)"
-                                        @change="toggleEditSubject(s.id)"
-                                    />
-                                    <span class="font-medium text-gray-800">{{ formatSubjectOption(s) }}</span>
-                                </label>
-                                <div v-if="!editFilteredSubjects.length" class="px-2 py-2 text-[11px] text-gray-500">
-                                    Chagua stream kwanza ili masomo yaonekane.
+                                    <div class="text-[10px] font-semibold text-gray-700">{{ getClassLabelById(cid) }}</div>
+                                    <div class="mt-1 grid grid-cols-2 gap-1">
+                                        <label
+                                            v-for="s in subjectOptionsForClassId(cid)"
+                                            :key="`${cid}-${s.id}`"
+                                            class="flex items-center gap-2 rounded-md px-2 py-1 text-[11px] text-gray-700 hover:bg-emerald-50/40"
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                class="h-3.5 w-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                                :checked="(editClassSubjectMap[String(cid)] || []).map((v) => Number(v)).includes(Number(s.id))"
+                                                @change="toggleInArray(editClassSubjectMap[String(cid)], s.id)"
+                                            />
+                                            <span class="font-medium text-gray-800">{{ formatSubjectOption(s) }}</span>
+                                        </label>
+                                        <div v-if="!subjectOptionsForClassId(cid).length" class="col-span-2 px-2 py-1 text-[11px] text-gray-500">
+                                            Hakuna masomo yaliyowekwa kwa darasa hili.
+                                        </div>
+                                    </div>
+                                </div>
+                                <div v-if="!effectiveEditClassIds.length" class="px-2 py-2 text-[11px] text-gray-500">
+                                    Chagua darasa/stream kwanza.
                                 </div>
                             </div>
-                            <p class="mt-1 text-[10px] text-gray-500">Masomo yanatokana na streams ulizochagua.</p>
+                            <p class="mt-1 text-[10px] text-gray-500">Chagua masomo kwa kila darasa/stream.</p>
                         </div>
                     </div>
 
@@ -1516,25 +1618,37 @@ const formatSubjectOption = (s) => {
                         </div>
                         <div>
                             <label class="mb-1 block text-[11px] font-medium">Assigned subjects</label>
-                            <div class="max-h-44 space-y-1 overflow-auto rounded-md border border-gray-200 bg-white p-2">
-                                <label
-                                    v-for="s in addFilteredSubjects"
-                                    :key="s.id"
-                                    class="flex items-center gap-2 rounded-md px-2 py-1 text-[11px] text-gray-700 hover:bg-emerald-50/40"
+                            <div class="max-h-72 space-y-2 overflow-auto rounded-md border border-gray-200 bg-white p-2">
+                                <div
+                                    v-for="cid in effectiveAddClassIds"
+                                    :key="cid"
+                                    class="rounded-md border border-gray-100 bg-slate-50/40 p-2"
                                 >
-                                    <input
-                                        type="checkbox"
-                                        class="h-3.5 w-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
-                                        :checked="addForm.subject_ids.includes(s.id)"
-                                        @change="toggleAddSubject(s.id)"
-                                    />
-                                    <span class="font-medium text-gray-800">{{ formatSubjectOption(s) }}</span>
-                                </label>
-                                <div v-if="!addFilteredSubjects.length" class="px-2 py-2 text-[11px] text-gray-500">
-                                    Chagua stream kwanza ili masomo yaonekane.
+                                    <div class="text-[10px] font-semibold text-gray-700">{{ getClassLabelById(cid) }}</div>
+                                    <div class="mt-1 grid grid-cols-2 gap-1">
+                                        <label
+                                            v-for="s in subjectOptionsForClassId(cid)"
+                                            :key="`${cid}-${s.id}`"
+                                            class="flex items-center gap-2 rounded-md px-2 py-1 text-[11px] text-gray-700 hover:bg-emerald-50/40"
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                class="h-3.5 w-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                                :checked="(addClassSubjectMap[String(cid)] || []).map((v) => Number(v)).includes(Number(s.id))"
+                                                @change="toggleInArray(addClassSubjectMap[String(cid)], s.id)"
+                                            />
+                                            <span class="font-medium text-gray-800">{{ formatSubjectOption(s) }}</span>
+                                        </label>
+                                        <div v-if="!subjectOptionsForClassId(cid).length" class="col-span-2 px-2 py-1 text-[11px] text-gray-500">
+                                            Hakuna masomo yaliyowekwa kwa darasa hili.
+                                        </div>
+                                    </div>
+                                </div>
+                                <div v-if="!effectiveAddClassIds.length" class="px-2 py-2 text-[11px] text-gray-500">
+                                    Chagua darasa/stream kwanza.
                                 </div>
                             </div>
-                            <p class="mt-1 text-[10px] text-gray-500">Masomo yanatokana na streams ulizochagua.</p>
+                            <p class="mt-1 text-[10px] text-gray-500">Chagua masomo kwa kila darasa/stream.</p>
                         </div>
                     </div>
 

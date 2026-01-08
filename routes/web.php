@@ -130,6 +130,14 @@ Route::get('/dashboard', function () {
     $user = request()->user();
     $schoolId = $user?->school_id;
 
+    $selectedYear = request()->query('year');
+    if (!is_null($selectedYear)) {
+        $selectedYear = (int) $selectedYear;
+        if ($selectedYear <= 0) {
+            $selectedYear = null;
+        }
+    }
+
     $studentQuery = Student::query();
     $subjectQuery = Subject::query();
     $classQuery = SchoolClass::query();
@@ -142,8 +150,18 @@ Route::get('/dashboard', function () {
 
     $stats = [
         'students' => $studentQuery->count(),
+        'teachers' => User::query()
+            ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+            ->where('role', 'teacher')
+            ->count(),
         'subjects' => $subjectQuery->count(),
         'classes' => $classQuery->count(),
+        'parents' => Student::query()
+            ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+            ->whereNotNull('guardian_phone')
+            ->where('guardian_phone', '!=', '')
+            ->distinct('guardian_phone')
+            ->count('guardian_phone'),
     ];
 
     $upcomingEvents = Event::whereDate('date', '>=', $today)
@@ -166,7 +184,21 @@ Route::get('/dashboard', function () {
         ]);
 
     // Results summary (basic dashboard analytics)
-    $currentResultsYear = ExamResult::max('academic_year');
+    $availableYears = ExamResult::query()
+        ->whereHas('student', function ($q) use ($schoolId) {
+            if ($schoolId) {
+                $q->where('school_id', $schoolId);
+            }
+        })
+        ->select('academic_year')
+        ->whereNotNull('academic_year')
+        ->distinct()
+        ->orderByDesc('academic_year')
+        ->pluck('academic_year')
+        ->values()
+        ->all();
+
+    $currentResultsYear = $selectedYear ?: (count($availableYears) ? (int) $availableYears[0] : null);
 
     $resultsSummary = [
         'year' => $currentResultsYear,
@@ -263,6 +295,7 @@ Route::get('/dashboard', function () {
         'resultsSummary' => $resultsSummary,
         'topStudents' => $topStudents,
         'bottomStudents' => $bottomStudents,
+        'availableYears' => $availableYears,
     ]);
 })->middleware(['auth', 'verified'])->name('dashboard');
 
@@ -5715,6 +5748,22 @@ Route::middleware('auth')->group(function () {
                 $classSubjects[$k] = collect($arr)->filter()->unique()->values()->all();
             }
 
+            $classSubjectIds = [];
+            foreach ($rows as $r) {
+                $cid = (int) $r->school_class_id;
+                $sid = (int) $r->subject_id;
+                if ($cid <= 0 || $sid <= 0) {
+                    continue;
+                }
+                if (! isset($classSubjectIds[$cid])) {
+                    $classSubjectIds[$cid] = [];
+                }
+                $classSubjectIds[$cid][] = $sid;
+            }
+            foreach ($classSubjectIds as $cid => $arr) {
+                $classSubjectIds[$cid] = collect($arr)->filter()->unique()->values()->all();
+            }
+
             $collaborations = [];
             foreach ($rows as $r) {
                 $cid = (int) $r->school_class_id;
@@ -5761,6 +5810,7 @@ Route::middleware('auth')->group(function () {
             $teacher->setAttribute('assigned_subject_ids', $subjectIds);
             $teacher->setAttribute('assigned_subjects', $subjectLabels);
             $teacher->setAttribute('assigned_class_subjects', $classSubjects);
+            $teacher->setAttribute('assigned_class_subject_ids', $classSubjectIds);
             $teacher->setAttribute('collaborations', $collaborations);
 
             return $teacher;
@@ -5779,15 +5829,25 @@ Route::middleware('auth')->group(function () {
         $schoolId = $request->user()?->school_id;
 
         $data = $request->validate([
-            'class_ids' => ['required', 'array', 'min:1'],
-            'class_ids.*' => ['integer', 'exists:school_classes,id'],
-            'subject_ids' => ['required', 'array', 'min:1'],
-            'subject_ids.*' => ['integer', 'exists:subjects,id'],
+            'pairs' => ['required', 'array', 'min:1'],
+            'pairs.*.class_id' => ['required', 'integer', 'exists:school_classes,id'],
+            'pairs.*.subject_id' => ['required', 'integer', 'exists:subjects,id'],
             'exclude_teacher_id' => ['sometimes', 'integer', 'exists:users,id'],
         ]);
 
-        $classIds = collect($data['class_ids'])->map(fn ($v) => (int) $v)->filter()->unique()->values()->all();
-        $subjectIds = collect($data['subject_ids'])->map(fn ($v) => (int) $v)->filter()->unique()->values()->all();
+        $pairs = collect($data['pairs'] ?? [])
+            ->map(function ($p) {
+                return [
+                    'class_id' => (int) ($p['class_id'] ?? 0),
+                    'subject_id' => (int) ($p['subject_id'] ?? 0),
+                ];
+            })
+            ->filter(fn ($p) => $p['class_id'] > 0 && $p['subject_id'] > 0)
+            ->unique(fn ($p) => $p['class_id'].'|'.$p['subject_id'])
+            ->values();
+
+        $classIds = $pairs->pluck('class_id')->unique()->values()->all();
+        $subjectIds = $pairs->pluck('subject_id')->unique()->values()->all();
         $excludeTeacherId = ! empty($data['exclude_teacher_id']) ? (int) $data['exclude_teacher_id'] : null;
 
         $q = DB::table('teacher_class_subject')
@@ -5937,6 +5997,7 @@ Route::middleware('auth')->group(function () {
             'class_ids.*' => ['integer', 'exists:school_classes,id'],
             'subject_ids' => ['sometimes', 'array'],
             'subject_ids.*' => ['integer', 'exists:subjects,id'],
+            'class_subject_map' => ['sometimes', 'array'],
         ]);
 
         $nameForEmail = trim((string) ($validated['name'] ?? 'teacher'));
@@ -5979,8 +6040,35 @@ Route::middleware('auth')->group(function () {
         $classIds = collect($validated['class_ids'] ?? [])->map(fn ($v) => (int) $v)->filter()->unique()->values();
         $subjectIds = collect($validated['subject_ids'] ?? [])->map(fn ($v) => (int) $v)->filter()->unique()->values();
 
-        if ($classIds->isNotEmpty() && $subjectIds->isNotEmpty()) {
-            $rows = [];
+        $rows = [];
+        $subjectIdsForSync = collect();
+
+        $map = $validated['class_subject_map'] ?? null;
+        if (is_array($map) && count($map)) {
+            foreach ($map as $classIdRaw => $subjectIdArr) {
+                $classId = (int) $classIdRaw;
+                if ($classId <= 0) continue;
+                if (! in_array($classId, $classIds->all(), true)) continue;
+
+                $subs = collect(is_array($subjectIdArr) ? $subjectIdArr : [])
+                    ->map(fn ($v) => (int) $v)
+                    ->filter()
+                    ->unique()
+                    ->values();
+
+                foreach ($subs as $subjectId) {
+                    $rows[] = [
+                        'school_id' => $schoolId,
+                        'teacher_id' => $teacher->id,
+                        'school_class_id' => $classId,
+                        'subject_id' => (int) $subjectId,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+                }
+                $subjectIdsForSync = $subjectIdsForSync->merge($subs);
+            }
+        } elseif ($classIds->isNotEmpty() && $subjectIds->isNotEmpty()) {
             foreach ($classIds as $classId) {
                 foreach ($subjectIds as $subjectId) {
                     $rows[] = [
@@ -5993,14 +6081,20 @@ Route::middleware('auth')->group(function () {
                     ];
                 }
             }
+            $subjectIdsForSync = $subjectIds;
+        }
 
+        if (! empty($rows)) {
             DB::table('teacher_class_subject')->upsert(
                 $rows,
                 ['school_id', 'teacher_id', 'school_class_id', 'subject_id'],
                 ['updated_at']
             );
+        }
 
-            $teacher->subjects()->syncWithoutDetaching($subjectIds->all());
+        $subjectIdsForSync = $subjectIdsForSync->filter()->unique()->values();
+        if ($subjectIdsForSync->isNotEmpty()) {
+            $teacher->subjects()->syncWithoutDetaching($subjectIdsForSync->all());
         }
 
         return redirect()->route('teachers.index')->with('success', 'Teacher registered successfully.');
@@ -6023,6 +6117,7 @@ Route::middleware('auth')->group(function () {
             'class_ids.*' => ['integer', 'exists:school_classes,id'],
             'subject_ids' => ['sometimes', 'array'],
             'subject_ids.*' => ['integer', 'exists:subjects,id'],
+            'class_subject_map' => ['sometimes', 'array'],
         ]);
 
         $checkNumber = $validated['check_number'] ?? null;
@@ -6048,8 +6143,35 @@ Route::middleware('auth')->group(function () {
             ->where('teacher_id', $teacher->id)
             ->delete();
 
-        if ($classIds->isNotEmpty() && $subjectIds->isNotEmpty()) {
-            $rows = [];
+        $rows = [];
+        $subjectIdsForSync = collect();
+
+        $map = $validated['class_subject_map'] ?? null;
+        if (is_array($map) && count($map)) {
+            foreach ($map as $classIdRaw => $subjectIdArr) {
+                $classId = (int) $classIdRaw;
+                if ($classId <= 0) continue;
+                if (! in_array($classId, $classIds->all(), true)) continue;
+
+                $subs = collect(is_array($subjectIdArr) ? $subjectIdArr : [])
+                    ->map(fn ($v) => (int) $v)
+                    ->filter()
+                    ->unique()
+                    ->values();
+
+                foreach ($subs as $subjectId) {
+                    $rows[] = [
+                        'school_id' => $schoolId,
+                        'teacher_id' => $teacher->id,
+                        'school_class_id' => $classId,
+                        'subject_id' => (int) $subjectId,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+                }
+                $subjectIdsForSync = $subjectIdsForSync->merge($subs);
+            }
+        } elseif ($classIds->isNotEmpty() && $subjectIds->isNotEmpty()) {
             foreach ($classIds as $classId) {
                 foreach ($subjectIds as $subjectId) {
                     $rows[] = [
@@ -6062,14 +6184,20 @@ Route::middleware('auth')->group(function () {
                     ];
                 }
             }
+            $subjectIdsForSync = $subjectIds;
+        }
 
+        if (! empty($rows)) {
             DB::table('teacher_class_subject')->upsert(
                 $rows,
                 ['school_id', 'teacher_id', 'school_class_id', 'subject_id'],
                 ['updated_at']
             );
+        }
 
-            $teacher->subjects()->syncWithoutDetaching($subjectIds->all());
+        $subjectIdsForSync = $subjectIdsForSync->filter()->unique()->values();
+        if ($subjectIdsForSync->isNotEmpty()) {
+            $teacher->subjects()->syncWithoutDetaching($subjectIdsForSync->all());
         }
 
         return redirect()->route('teachers.index')->with('success', 'Teacher updated successfully.');

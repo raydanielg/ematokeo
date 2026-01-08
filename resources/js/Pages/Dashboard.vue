@@ -1,11 +1,16 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head, Link } from '@inertiajs/vue3';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
+import { computed } from 'vue';
 
 const props = defineProps({
 	stats: {
 		type: Object,
 		default: () => ({}),
+	},
+	availableYears: {
+		type: Array,
+		default: () => [],
 	},
 	upcomingEvents: {
 		type: Array,
@@ -28,6 +33,18 @@ const props = defineProps({
 		default: () => [],
 	},
 });
+
+const page = usePage();
+const currentYear = computed(() => {
+	const y = page?.props?.ziggy?.query?.year;
+	const n = y ? Number(y) : null;
+	return Number.isFinite(n) && n > 0 ? n : (props.resultsSummary?.year || null);
+});
+
+const onChangeYear = (e) => {
+	const y = Number(e.target.value);
+	router.get(route('dashboard'), { year: Number.isFinite(y) && y > 0 ? y : undefined }, { preserveScroll: true });
+};
 </script>
 
 <template>
@@ -50,10 +67,12 @@ const props = defineProps({
 					</label>
 					<select
 						class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+						:disabled="!props.availableYears || !props.availableYears.length"
+						:value="currentYear || ''"
+						@change="onChangeYear"
 					>
-						<option>2025</option>
-						<option>2024</option>
-						<option>2023</option>
+						<option value="" v-if="!props.availableYears || !props.availableYears.length">No results</option>
+						<option v-for="y in props.availableYears" :key="y" :value="y">{{ y }}</option>
 					</select>
 				</div>
 			</div>
@@ -75,7 +94,7 @@ const props = defineProps({
 				<div class="flex items-center justify-between rounded-xl bg-white px-4 py-3 shadow-sm ring-1 ring-gray-100">
 					<div>
 						<p class="text-xs font-medium text-gray-500">Total Teachers</p>
-						<p class="mt-1 text-2xl font-semibold text-gray-900">0</p>
+						<p class="mt-1 text-2xl font-semibold text-gray-900">{{ props.stats.teachers ?? 0 }}</p>
 					</div>
 					<div class="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
 						<i class="material-icons text-2xl">person_outline</i>
@@ -105,7 +124,7 @@ const props = defineProps({
 				<div class="flex items-center justify-between rounded-xl bg-white px-4 py-3 shadow-sm ring-1 ring-gray-100">
 					<div>
 						<p class="text-xs font-medium text-gray-500">Total Parents</p>
-						<p class="mt-1 text-2xl font-semibold text-gray-900">0</p>
+						<p class="mt-1 text-2xl font-semibold text-gray-900">{{ props.stats.parents ?? 0 }}</p>
 					</div>
 					<div class="flex h-10 w-10 items-center justify-center rounded-lg bg-rose-50 text-rose-600">
 						<i class="material-icons text-2xl">family_restroom</i>
