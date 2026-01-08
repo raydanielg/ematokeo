@@ -34,10 +34,15 @@ const showDeleteModal = ref(false);
 const showTimetableModal = ref(false);
 const showVipindiModal = ref(false);
 const showBulkDeleteModal = ref(false);
+const showAssignmentConflictModal = ref(false);
 
 const showClassTeacherWarning = ref(false);
 const classTeacherWarningLoading = ref(false);
 const classTeacherWarning = ref({ classId: null, teachers: [], context: null });
+
+const assignmentConflictsLoading = ref(false);
+const assignmentConflicts = ref([]);
+const pendingAssignmentSubmit = ref(null);
 
 const selectedTeacherIds = ref([]);
 
@@ -133,6 +138,80 @@ const ensureStreamsBelongToSelectedBases = (baseIds, streamIds) => {
         }
     }
     return (streamIds || []).filter((sid) => allowed.has(Number(sid)));
+};
+
+const expandStreamsForBases = (baseIds, selectedStreamIds) => {
+    const selected = new Set((selectedStreamIds || []).map((v) => Number(v)).filter((v) => Number.isFinite(v)));
+    const expanded = new Set();
+
+    for (const bidRaw of baseIds || []) {
+        const bid = Number(bidRaw);
+        if (!Number.isFinite(bid) || bid <= 0) continue;
+        const streams = streamClassOptionsForBase(bid);
+        if (!streams.length) {
+            expanded.add(bid);
+            continue;
+        }
+
+        const chosenInThisBase = streams.filter((s) => selected.has(Number(s.id)));
+        if (chosenInThisBase.length) {
+            for (const s of chosenInThisBase) expanded.add(Number(s.id));
+        } else {
+            for (const s of streams) expanded.add(Number(s.id));
+        }
+    }
+
+    return Array.from(expanded);
+};
+
+const effectiveAddClassIds = computed(() => expandStreamsForBases(addBaseClassIds.value, addForm.class_ids));
+const effectiveEditClassIds = computed(() => expandStreamsForBases(editBaseClassIds.value, editForm.class_ids));
+
+const openAssignmentConflictModal = (conflicts, onConfirm) => {
+    assignmentConflicts.value = Array.isArray(conflicts) ? conflicts : [];
+    pendingAssignmentSubmit.value = typeof onConfirm === 'function' ? onConfirm : null;
+    showAssignmentConflictModal.value = true;
+};
+
+const closeAssignmentConflictModal = () => {
+    if (assignmentConflictsLoading.value) return;
+    showAssignmentConflictModal.value = false;
+    assignmentConflicts.value = [];
+    pendingAssignmentSubmit.value = null;
+};
+
+const confirmAssignmentConflictModal = () => {
+    if (assignmentConflictsLoading.value) return;
+    const fn = pendingAssignmentSubmit.value;
+    closeAssignmentConflictModal();
+    if (fn) fn();
+};
+
+const fetchAssignmentConflicts = async ({ classIds, subjectIds, excludeTeacherId }) => {
+    assignmentConflictsLoading.value = true;
+    try {
+        const res = await fetch(route('teachers.assignment-conflicts'), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                class_ids: classIds,
+                subject_ids: subjectIds,
+                exclude_teacher_id: excludeTeacherId || undefined,
+            }),
+        });
+        const json = await res.json();
+        return Array.isArray(json?.conflicts) ? json.conflicts : [];
+    } catch {
+        return [];
+    } finally {
+        assignmentConflictsLoading.value = false;
+    }
 };
 
 const toggleInArray = (arr, id) => {
@@ -238,13 +317,13 @@ const filteredSubjectsFor = (classIds) => {
     return (props.subjects || []).filter((s) => allowed.has(Number(s.id)));
 };
 
-const addFilteredSubjects = computed(() => filteredSubjectsFor(addForm.class_ids));
-const editFilteredSubjects = computed(() => filteredSubjectsFor(editForm.class_ids));
+const addFilteredSubjects = computed(() => filteredSubjectsFor(effectiveAddClassIds.value));
+const editFilteredSubjects = computed(() => filteredSubjectsFor(effectiveEditClassIds.value));
 
 watch(
-    () => addForm.class_ids,
+    () => [addBaseClassIds.value, addForm.class_ids],
     () => {
-        const allowed = selectedClassIdsToAllowedSubjectIds(addForm.class_ids);
+        const allowed = selectedClassIdsToAllowedSubjectIds(effectiveAddClassIds.value);
         if (!allowed) {
             addForm.subject_ids = [];
             return;
@@ -255,9 +334,9 @@ watch(
 );
 
 watch(
-    () => editForm.class_ids,
+    () => [editBaseClassIds.value, editForm.class_ids],
     () => {
-        const allowed = selectedClassIdsToAllowedSubjectIds(editForm.class_ids);
+        const allowed = selectedClassIdsToAllowedSubjectIds(effectiveEditClassIds.value);
         if (!allowed) {
             editForm.subject_ids = [];
             return;
@@ -314,8 +393,36 @@ const resetAddForm = () => {
     addBaseClassIds.value = [];
 };
 
-const saveTeacher = () => {
-    router.post(route('teachers.store'), addForm, {
+const saveTeacher = async () => {
+    const expandedClassIds = effectiveAddClassIds.value;
+    const payload = {
+        name: addForm.name,
+        phone: addForm.phone,
+        class_ids: expandedClassIds,
+        subject_ids: addForm.subject_ids,
+    };
+
+    if (payload.class_ids.length && payload.subject_ids.length) {
+        const conflicts = await fetchAssignmentConflicts({
+            classIds: payload.class_ids,
+            subjectIds: payload.subject_ids,
+            excludeTeacherId: null,
+        });
+        if (conflicts.length) {
+            openAssignmentConflictModal(conflicts, () => {
+                router.post(route('teachers.store'), payload, {
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        resetAddForm();
+                        showAddModal.value = false;
+                    },
+                });
+            });
+            return;
+        }
+    }
+
+    router.post(route('teachers.store'), payload, {
         preserveScroll: true,
         onSuccess: () => {
             resetAddForm();
@@ -352,16 +459,38 @@ const openEdit = (teacher) => {
     showEditModal.value = true;
 };
 
-const updateTeacher = () => {
+const updateTeacher = async () => {
     if (!editForm.id) return;
 
-    router.put(route('teachers.update', editForm.id), {
+    const expandedClassIds = effectiveEditClassIds.value;
+    const payload = {
         name: editForm.name,
         phone: editForm.phone,
         check_number: editForm.check_number,
-        class_ids: editForm.class_ids,
+        class_ids: expandedClassIds,
         subject_ids: editForm.subject_ids,
-    }, {
+    };
+
+    if (payload.class_ids.length && payload.subject_ids.length) {
+        const conflicts = await fetchAssignmentConflicts({
+            classIds: payload.class_ids,
+            subjectIds: payload.subject_ids,
+            excludeTeacherId: editForm.id,
+        });
+        if (conflicts.length) {
+            openAssignmentConflictModal(conflicts, () => {
+                router.put(route('teachers.update', editForm.id), payload, {
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        showEditModal.value = false;
+                    },
+                });
+            });
+            return;
+        }
+    }
+
+    router.put(route('teachers.update', editForm.id), payload, {
         preserveScroll: true,
         onSuccess: () => {
             showEditModal.value = false;
@@ -597,6 +726,72 @@ const formatSubjectOption = (s) => {
                         @click="confirmClassTeacherWarning"
                     >
                         OK
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Assignment conflicts confirmation -->
+        <div
+            v-if="showAssignmentConflictModal"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6 backdrop-blur-sm"
+        >
+            <div class="w-full max-w-xl rounded-xl bg-white p-5 text-xs text-gray-700 shadow-xl">
+                <div class="mb-2 flex items-start justify-between gap-3">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-900">Taarifa: tayari kuna mwalimu</h3>
+                        <p class="mt-0.5 text-[11px] text-gray-500">
+                            Darasa/stream na somo hili tayari lina mwalimu. Unataka kuruhusu walimu wawili (au zaidi) wafundishe pamoja?
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-[11px] font-bold text-gray-600 hover:bg-gray-200"
+                        :disabled="assignmentConflictsLoading"
+                        @click="closeAssignmentConflictModal"
+                    >
+                        ×
+                    </button>
+                </div>
+
+                <div class="max-h-64 space-y-2 overflow-auto rounded-lg border border-gray-200 bg-white p-2">
+                    <div
+                        v-for="c in assignmentConflicts"
+                        :key="`${c.class_id}-${c.subject_id}`"
+                        class="rounded-md border border-amber-200 bg-amber-50 p-2"
+                    >
+                        <div class="text-[11px] font-semibold text-amber-900">{{ c.class_label }} · {{ c.subject_label }}</div>
+                        <div class="mt-1 flex flex-wrap gap-1">
+                            <span
+                                v-for="t in (c.teachers || [])"
+                                :key="t.id"
+                                class="rounded bg-white/70 px-2 py-0.5 text-[10px] text-amber-900 ring-1 ring-amber-200"
+                            >
+                                {{ t.name }}
+                            </span>
+                        </div>
+                    </div>
+                    <div v-if="!assignmentConflicts.length" class="px-2 py-2 text-[11px] text-gray-500">
+                        No conflicts.
+                    </div>
+                </div>
+
+                <div class="mt-4 flex justify-end gap-2">
+                    <button
+                        type="button"
+                        class="rounded-md bg-gray-50 px-3 py-1.5 text-[11px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100"
+                        :disabled="assignmentConflictsLoading"
+                        @click="closeAssignmentConflictModal"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="button"
+                        class="rounded-md bg-amber-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-amber-700 disabled:opacity-60"
+                        :disabled="assignmentConflictsLoading"
+                        @click="confirmAssignmentConflictModal"
+                    >
+                        Ruhusu wawili (Endelea)
                     </button>
                 </div>
             </div>
@@ -1000,7 +1195,7 @@ const formatSubjectOption = (s) => {
             v-if="showDetailsModal && selectedTeacher"
             class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6 backdrop-blur-sm"
         >
-            <div class="w-full max-w-md rounded-xl bg-white p-5 text-xs text-gray-700 shadow-xl">
+            <div class="w-full max-w-lg rounded-xl bg-white p-5 text-xs text-gray-700 shadow-xl">
                 <div class="mb-3 flex items-center justify-between">
                     <div>
                         <h3 class="text-sm font-semibold text-gray-900">Teacher details</h3>
@@ -1027,29 +1222,50 @@ const formatSubjectOption = (s) => {
                         <dd class="text-right">{{ selectedTeacher.email }}</dd>
                     </div>
                     <div class="flex justify-between gap-3">
-                        <dt class="font-semibold text-gray-600">Phone</dt>
-                        <dd class="text-right">{{ selectedTeacher.phone || '—' }}</dd>
+                        <dt class="text-[10px] font-semibold text-gray-500">Phone</dt>
+                        <dd class="mt-0.5 text-[11px] font-medium text-gray-900">{{ selectedTeacher.phone || '—' }}</dd>
                     </div>
                     <div class="flex justify-between gap-3">
-                        <dt class="font-semibold text-gray-600">Check No.</dt>
-                        <dd class="text-right">{{ selectedTeacher.check_number || '—' }}</dd>
+                        <dt class="text-[10px] font-semibold text-gray-500">Check No.</dt>
+                        <dd class="mt-0.5 text-[11px] font-medium text-gray-900">{{ selectedTeacher.check_number || '—' }}</dd>
                     </div>
-                    <div class="flex justify-between gap-3">
-                        <dt class="font-semibold text-gray-600">Classes</dt>
-                        <dd class="max-w-[60%] text-right">
-                            <span v-if="selectedTeacher.assigned_classes && selectedTeacher.assigned_classes.length">
-                                {{ selectedTeacher.assigned_classes.join(', ') }}
+                    <div class="col-span-2">
+                        <dt class="text-[10px] font-semibold text-gray-500">Assigned classes</dt>
+                        <dd class="mt-1 flex flex-wrap gap-1">
+                            <span
+                                v-for="c in (selectedTeacher.assigned_classes || [])"
+                                :key="c"
+                                class="rounded bg-gray-100 px-2 py-0.5 text-[10px] text-gray-700"
+                            >
+                                {{ c }}
                             </span>
-                            <span v-else>—</span>
+                            <span v-if="!(selectedTeacher.assigned_classes || []).length" class="text-[11px] text-gray-500">—</span>
                         </dd>
                     </div>
-                    <div class="flex justify-between gap-3">
-                        <dt class="font-semibold text-gray-600">Subjects</dt>
-                        <dd class="max-w-[60%] text-right">
-                            <span v-if="selectedTeacher.assigned_subjects && selectedTeacher.assigned_subjects.length">
-                                {{ selectedTeacher.assigned_subjects.join(', ') }}
-                            </span>
-                            <span v-else>—</span>
+                    <div class="col-span-2" v-if="selectedTeacher.collaborations && Object.keys(selectedTeacher.collaborations).length">
+                        <dt class="text-[10px] font-semibold text-gray-500">Anaeshirikiana nae (same class & subject)</dt>
+                        <dd class="mt-1 space-y-2">
+                            <div
+                                v-for="(subjectsMap, clsName) in selectedTeacher.collaborations"
+                                :key="clsName"
+                                class="rounded-lg border border-amber-200 bg-amber-50/50 p-2"
+                            >
+                                <div class="text-[10px] font-semibold text-amber-900">{{ clsName }}</div>
+                                <div class="mt-1 space-y-1">
+                                    <div v-for="(teachersArr, subjName) in subjectsMap" :key="`${clsName}-${subjName}`">
+                                        <div class="text-[10px] font-semibold text-amber-900">{{ subjName }}</div>
+                                        <div class="mt-0.5 flex flex-wrap gap-1">
+                                            <span
+                                                v-for="t in teachersArr"
+                                                :key="t.id"
+                                                class="rounded bg-white/70 px-2 py-0.5 text-[10px] text-amber-900 ring-1 ring-amber-200"
+                                            >
+                                                {{ t.name }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </dd>
                     </div>
                 </dl>

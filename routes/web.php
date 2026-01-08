@@ -5618,9 +5618,22 @@ Route::middleware('auth')->group(function () {
             ])
             ->get();
 
+        $pairTeachers = [];
+        foreach ($assignmentRows as $r) {
+            $cid = (int) $r->school_class_id;
+            $sid = (int) $r->subject_id;
+            $key = $cid.'|'.$sid;
+            if (! isset($pairTeachers[$key])) {
+                $pairTeachers[$key] = [];
+            }
+            $pairTeachers[$key][] = (int) $r->teacher_id;
+        }
+
         $assignmentsByTeacher = $assignmentRows->groupBy('teacher_id');
 
-        $teachers = $teachers->map(function (User $teacher) use ($assignmentsByTeacher) {
+        $teachersById = $teachers->keyBy('id');
+
+        $teachers = $teachers->map(function (User $teacher) use ($assignmentsByTeacher, $pairTeachers, $teachersById) {
             $rows = $assignmentsByTeacher->get($teacher->id, collect());
 
             $streamClassIds = $rows
@@ -5702,12 +5715,53 @@ Route::middleware('auth')->group(function () {
                 $classSubjects[$k] = collect($arr)->filter()->unique()->values()->all();
             }
 
+            $collaborations = [];
+            foreach ($rows as $r) {
+                $cid = (int) $r->school_class_id;
+                $sid = (int) $r->subject_id;
+                $key = $cid.'|'.$sid;
+
+                $className = $r->class_name ? trim((string) $r->class_name) : '';
+                $classLabel = $className !== ''
+                    ? $className
+                    : (trim(($r->class_level ?? '').' '.($r->class_stream ?? '')) ?: '');
+
+                $code = $r->subject_code ? trim((string) $r->subject_code) : '';
+                $name = $r->subject_name ? trim((string) $r->subject_name) : '';
+                $subjectLabel = $code && $name ? ($code.' - '.$name) : ($code ?: $name);
+
+                if ($classLabel === '' || $subjectLabel === '') {
+                    continue;
+                }
+
+                $others = collect($pairTeachers[$key] ?? [])
+                    ->filter(fn ($tid) => (int) $tid !== (int) $teacher->id)
+                    ->unique()
+                    ->map(function ($tid) use ($teachersById) {
+                        $t = $teachersById->get((int) $tid);
+                        return $t ? ['id' => (int) $t->id, 'name' => (string) $t->name] : null;
+                    })
+                    ->filter()
+                    ->values()
+                    ->all();
+
+                if (empty($others)) {
+                    continue;
+                }
+
+                if (! isset($collaborations[$classLabel])) {
+                    $collaborations[$classLabel] = [];
+                }
+                $collaborations[$classLabel][$subjectLabel] = $others;
+            }
+
             $teacher->setAttribute('assigned_class_ids', $baseClassIds);
             $teacher->setAttribute('assigned_stream_class_ids', $streamClassIds);
             $teacher->setAttribute('assigned_classes', $classLabels);
             $teacher->setAttribute('assigned_subject_ids', $subjectIds);
             $teacher->setAttribute('assigned_subjects', $subjectLabels);
             $teacher->setAttribute('assigned_class_subjects', $classSubjects);
+            $teacher->setAttribute('collaborations', $collaborations);
 
             return $teacher;
         });
@@ -5720,6 +5774,76 @@ Route::middleware('auth')->group(function () {
             'classSubjectMap' => $classSubjectMap,
         ]);
     })->name('teachers.index');
+
+    Route::post('/teachers/assignment-conflicts', function (\Illuminate\Http\Request $request) {
+        $schoolId = $request->user()?->school_id;
+
+        $data = $request->validate([
+            'class_ids' => ['required', 'array', 'min:1'],
+            'class_ids.*' => ['integer', 'exists:school_classes,id'],
+            'subject_ids' => ['required', 'array', 'min:1'],
+            'subject_ids.*' => ['integer', 'exists:subjects,id'],
+            'exclude_teacher_id' => ['sometimes', 'integer', 'exists:users,id'],
+        ]);
+
+        $classIds = collect($data['class_ids'])->map(fn ($v) => (int) $v)->filter()->unique()->values()->all();
+        $subjectIds = collect($data['subject_ids'])->map(fn ($v) => (int) $v)->filter()->unique()->values()->all();
+        $excludeTeacherId = ! empty($data['exclude_teacher_id']) ? (int) $data['exclude_teacher_id'] : null;
+
+        $q = DB::table('teacher_class_subject')
+            ->join('users', 'users.id', '=', 'teacher_class_subject.teacher_id')
+            ->join('school_classes', 'school_classes.id', '=', 'teacher_class_subject.school_class_id')
+            ->join('subjects', 'subjects.id', '=', 'teacher_class_subject.subject_id')
+            ->when($schoolId, fn ($qq) => $qq->where('teacher_class_subject.school_id', $schoolId))
+            ->whereIn('teacher_class_subject.school_class_id', $classIds)
+            ->whereIn('teacher_class_subject.subject_id', $subjectIds)
+            ->where('users.role', 'teacher')
+            ->select([
+                'teacher_class_subject.school_class_id',
+                'teacher_class_subject.subject_id',
+                'school_classes.name as class_name',
+                'subjects.subject_code as subject_code',
+                'subjects.name as subject_name',
+                'users.id as teacher_id',
+                'users.name as teacher_name',
+            ]);
+
+        if ($excludeTeacherId) {
+            $q->where('users.id', '!=', $excludeTeacherId);
+        }
+
+        $rows = $q->get();
+        $byPair = $rows->groupBy(function ($r) {
+            return ((int) $r->school_class_id).'|'.((int) $r->subject_id);
+        });
+
+        $conflicts = [];
+        foreach ($byPair as $key => $grp) {
+            $first = $grp->first();
+            $classLabel = $first->class_name ? trim((string) $first->class_name) : '';
+            $code = $first->subject_code ? trim((string) $first->subject_code) : '';
+            $name = $first->subject_name ? trim((string) $first->subject_name) : '';
+            $subjectLabel = $code && $name ? ($code.' - '.$name) : ($code ?: $name);
+
+            $teachers = $grp
+                ->map(fn ($r) => ['id' => (int) $r->teacher_id, 'name' => (string) $r->teacher_name])
+                ->unique('id')
+                ->values()
+                ->all();
+
+            $conflicts[] = [
+                'class_id' => (int) $first->school_class_id,
+                'subject_id' => (int) $first->subject_id,
+                'class_label' => $classLabel,
+                'subject_label' => $subjectLabel,
+                'teachers' => $teachers,
+            ];
+        }
+
+        return response()->json([
+            'conflicts' => $conflicts,
+        ]);
+    })->name('teachers.assignment-conflicts');
 
     Route::get('/teachers/class-assignment-check', function (\Illuminate\Http\Request $request) {
         $schoolId = $request->user()?->school_id;
