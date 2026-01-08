@@ -96,7 +96,9 @@ const teacherInitialsForClassSubject = (schoolClassId, subjectCode) => {
     const cls = classById.value?.[classId];
     const parentId = cls?.parent_class_id ? String(cls.parent_class_id) : '';
 
-    const classMap = props.teacherAssignments?.[classId] || (parentId ? props.teacherAssignments?.[parentId] : null);
+    // If stream-specific assignments exist, use them ONLY (do not mix with parent Form assignments).
+    const streamMap = props.teacherAssignments?.[classId];
+    const classMap = streamMap !== undefined ? streamMap : (parentId ? props.teacherAssignments?.[parentId] : null);
     if (classMap && typeof classMap === 'object') {
         // Strict mode: if assignments exist for this class, do not fall back to global teachers.
         const fromAssignments = classMap?.[code];
@@ -113,7 +115,9 @@ const classHasTeacherAssignments = (schoolClassId) => {
     const classId = schoolClassId ? String(schoolClassId) : '';
     const cls = classById.value?.[classId];
     const parentId = cls?.parent_class_id ? String(cls.parent_class_id) : '';
-    const classMap = props.teacherAssignments?.[classId] || (parentId ? props.teacherAssignments?.[parentId] : null);
+
+    const streamMap = props.teacherAssignments?.[classId];
+    const classMap = streamMap !== undefined ? streamMap : (parentId ? props.teacherAssignments?.[parentId] : null);
     return !!(classMap && typeof classMap === 'object' && Object.keys(classMap).length);
 };
 
