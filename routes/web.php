@@ -7489,7 +7489,7 @@ Route::middleware('auth')->group(function () {
             'email' => $data['email'],
             'role' => $role,
             'is_active' => true,
-            'password' => $password,
+            'password' => \Illuminate\Support\Facades\Hash::make($password),
             'must_change_password' => $role === 'teacher',
         ]);
 

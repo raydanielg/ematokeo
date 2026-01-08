@@ -44,13 +44,23 @@ class LoginRequest extends FormRequest
 
         $login = $this->input('login');
 
-        // Determine whether the login value is an email or a username
-        $credentials = [
-            filter_var($login, FILTER_VALIDATE_EMAIL) ? 'email' : 'username' => $login,
-            'password' => $this->input('password'),
-        ];
+        $password = $this->input('password');
+        $remember = $this->boolean('remember');
 
-        if (! Auth::attempt($credentials, $this->boolean('remember'))) {
+        $attempted = false;
+        $authenticated = false;
+
+        if (filter_var($login, FILTER_VALIDATE_EMAIL)) {
+            $attempted = true;
+            $authenticated = Auth::attempt(['email' => $login, 'password' => $password], $remember);
+        }
+
+        if (! $authenticated) {
+            $attempted = true;
+            $authenticated = Auth::attempt(['username' => $login, 'password' => $password], $remember);
+        }
+
+        if ($attempted && ! $authenticated) {
             RateLimiter::hit($this->throttleKey());
 
             throw ValidationException::withMessages([

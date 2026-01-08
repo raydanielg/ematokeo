@@ -13,6 +13,7 @@ const mobileSidebarOpen = ref(false);
 const page = usePage();
 
 const isAdmin = computed(() => page.props.auth.user?.role === 'admin');
+const isTeacher = computed(() => page.props.auth.user?.role === 'teacher');
 
 const userSidebarSections = [
     {
@@ -148,7 +149,49 @@ const adminSidebarSections = [
     },
 ];
 
-const sidebarSections = computed(() => isAdmin.value ? adminSidebarSections : userSidebarSections);
+const teacherSidebarSections = [
+    {
+        key: 'teacher-dashboard',
+        title: 'Dashboard',
+        items: ['Overview'],
+    },
+    {
+        key: 'students',
+        title: 'Students',
+        items: ['View Students'],
+    },
+    {
+        key: 'exams',
+        title: 'Exams',
+        items: ['Enter Marks'],
+    },
+    {
+        key: 'results',
+        title: 'Results',
+        items: ['Class Performance', 'Subject Performance'],
+    },
+    {
+        key: 'timetables',
+        title: 'Timetables',
+        items: ['Class Timetables', 'All Timetables'],
+    },
+    {
+        key: 'notifications',
+        title: 'Announcements',
+        items: ['Announcements'],
+    },
+    {
+        key: 'profile',
+        title: 'Profile',
+        items: ['My Account', 'Change Password', 'Logout'],
+    },
+];
+
+const sidebarSections = computed(() => {
+    if (isAdmin.value) return adminSidebarSections;
+    if (isTeacher.value) return teacherSidebarSections;
+    return userSidebarSections;
+});
 
 const openSections = ref([]);
 
@@ -164,6 +207,7 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
     // Admin routes
     if (sectionKey === 'admin-dashboard' && itemName === 'Overview') return route('admin.dashboard');
     if (sectionKey === 'admin-dashboard' && itemName === 'System Statistics') return route('admin.statistics');
+    if (sectionKey === 'teacher-dashboard' && itemName === 'Overview') return route('teacher.dashboard');
     
     // Schools Management
     if (sectionKey === 'admin-schools' && itemName === 'All Schools') return route('admin.schools.index');
@@ -265,6 +309,9 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
     if (sectionKey === 'hostels' && itemName === 'Allocation') return route('hostel-allocations.index');
     if (sectionKey === 'hostels' && itemName === 'Hostel Reports') return route('hostel-reports.index');
     if (sectionKey === 'profile' && itemName === 'My Account') return route('profile.edit');
+    if (sectionKey === 'profile' && itemName === 'Change Password') {
+        return isTeacher.value ? route('teacher.change-password') : route('profile.edit');
+    }
     if (sectionKey === 'profile' && itemName === 'Logout') return route('logout');
     
     return '#';
