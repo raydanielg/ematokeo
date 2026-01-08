@@ -1,7 +1,7 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head, router } from '@inertiajs/vue3';
-import { computed, ref } from 'vue';
+import { Head, Link, router } from '@inertiajs/vue3';
+import { computed, ref, watch } from 'vue';
 
 const props = defineProps({
     teachersWithVipindi: {
@@ -19,6 +19,10 @@ const props = defineProps({
 });
 
 const query = ref('');
+const ajaxQuery = ref('');
+const ajaxResults = ref([]);
+const ajaxLoading = ref(false);
+let ajaxTimer = null;
 
 const norm = (v) => String(v || '').toLowerCase().trim();
 
@@ -53,6 +57,46 @@ const resetPassword = (teacher) => {
         },
     });
 };
+
+const openTeacherDetails = (teacherId) => {
+    if (!teacherId) return;
+    router.get(route('teachers.details', teacherId), {}, { preserveScroll: true });
+};
+
+watch(
+    () => ajaxQuery.value,
+    (val) => {
+        const q = String(val || '').trim();
+        if (ajaxTimer) {
+            clearTimeout(ajaxTimer);
+            ajaxTimer = null;
+        }
+        if (q.length < 2) {
+            ajaxResults.value = [];
+            ajaxLoading.value = false;
+            return;
+        }
+
+        ajaxTimer = setTimeout(async () => {
+            ajaxLoading.value = true;
+            try {
+                const res = await fetch(route('teachers.search', { q }), {
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest',
+                        Accept: 'application/json',
+                    },
+                    credentials: 'same-origin',
+                });
+                const json = await res.json();
+                ajaxResults.value = Array.isArray(json?.data) ? json.data : [];
+            } catch {
+                ajaxResults.value = [];
+            } finally {
+                ajaxLoading.value = false;
+            }
+        }, 250);
+    }
+);
 </script>
 
 <template>
@@ -78,13 +122,44 @@ const resetPassword = (teacher) => {
                     </div>
 
                     <div class="w-full md:w-80">
-                        <label class="mb-1 block text-[11px] font-medium text-gray-700">Search teacher</label>
-                        <input
-                            v-model="query"
-                            type="text"
-                            class="w-full rounded-md border border-gray-300 px-3 py-2 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            placeholder="Search by name, email, phone, check no..."
-                        />
+                        <label class="mb-1 block text-[11px] font-medium text-gray-700">Teacher search (AJAX)</label>
+                        <div class="relative">
+                            <input
+                                v-model="ajaxQuery"
+                                type="text"
+                                class="w-full rounded-md border border-gray-300 px-3 py-2 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                placeholder="Type name/email/check no..."
+                            />
+                            <div
+                                v-if="ajaxLoading || ajaxResults.length"
+                                class="absolute z-10 mt-1 w-full overflow-hidden rounded-md border border-gray-200 bg-white shadow-lg"
+                            >
+                                <div v-if="ajaxLoading" class="px-3 py-2 text-[11px] text-gray-500">Searching...</div>
+                                <button
+                                    v-for="t in ajaxResults"
+                                    :key="t.id"
+                                    type="button"
+                                    class="flex w-full items-start justify-between gap-2 px-3 py-2 text-left text-[11px] hover:bg-emerald-50"
+                                    @click="openTeacherDetails(t.id)"
+                                >
+                                    <div>
+                                        <div class="font-semibold text-gray-900">{{ t.name }}</div>
+                                        <div class="text-[10px] text-gray-500">{{ t.email }}</div>
+                                    </div>
+                                    <div class="text-[10px] text-gray-400">{{ t.check_number || '' }}</div>
+                                </button>
+                                <div v-if="!ajaxLoading && !ajaxResults.length" class="px-3 py-2 text-[11px] text-gray-500">No results.</div>
+                            </div>
+                        </div>
+                        <div class="mt-2">
+                            <label class="mb-1 block text-[11px] font-medium text-gray-700">Filter tables (local)</label>
+                            <input
+                                v-model="query"
+                                type="text"
+                                class="w-full rounded-md border border-gray-300 px-3 py-2 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                placeholder="Filter by name, email, phone, check no..."
+                            />
+                        </div>
                     </div>
                 </div>
             </div>
@@ -114,7 +189,11 @@ const resetPassword = (teacher) => {
                                 <td colspan="5" class="px-3 py-3 text-[11px] text-gray-500">Hakuna mwalimu mwenye vipindi bado.</td>
                             </tr>
                             <tr v-for="t in filteredVipindi" :key="t.id" class="border-b last:border-b-0">
-                                <td class="px-3 py-2 font-medium text-gray-900">{{ t.name }}</td>
+                                <td class="px-3 py-2 font-medium text-gray-900">
+                                    <button type="button" class="text-emerald-700 hover:underline" @click="openTeacherDetails(t.id)">
+                                        {{ t.name }}
+                                    </button>
+                                </td>
                                 <td class="px-3 py-2 text-gray-700">{{ t.email }}</td>
                                 <td class="px-3 py-2 text-gray-700">{{ t.phone || '-' }}</td>
                                 <td class="px-3 py-2 text-gray-700">{{ t.check_number || '-' }}</td>
@@ -159,7 +238,11 @@ const resetPassword = (teacher) => {
                                 <td colspan="5" class="px-3 py-3 text-[11px] text-gray-500">Hakuna walimu kwenye mfumo.</td>
                             </tr>
                             <tr v-for="t in filteredAll" :key="t.id" class="border-b last:border-b-0">
-                                <td class="px-3 py-2 font-medium text-gray-900">{{ t.name }}</td>
+                                <td class="px-3 py-2 font-medium text-gray-900">
+                                    <button type="button" class="text-emerald-700 hover:underline" @click="openTeacherDetails(t.id)">
+                                        {{ t.name }}
+                                    </button>
+                                </td>
                                 <td class="px-3 py-2 text-gray-700">{{ t.email }}</td>
                                 <td class="px-3 py-2 text-gray-700">{{ t.phone || '-' }}</td>
                                 <td class="px-3 py-2 text-gray-700">{{ t.check_number || '-' }}</td>

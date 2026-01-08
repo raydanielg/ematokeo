@@ -46,19 +46,32 @@ const pendingAssignmentSubmit = ref(null);
 
 const selectedTeacherIds = ref([]);
 
+const teacherSearch = ref('');
+const filteredTeachers = computed(() => {
+    const q = String(teacherSearch.value || '').toLowerCase().trim();
+    if (!q) return props.teachers || [];
+    return (props.teachers || []).filter((t) => {
+        const name = String(t?.name || '').toLowerCase();
+        const email = String(t?.email || '').toLowerCase();
+        const phone = String(t?.phone || '').toLowerCase();
+        const check = String(t?.check_number || '').toLowerCase();
+        return name.includes(q) || email.includes(q) || phone.includes(q) || check.includes(q);
+    });
+});
+
 const toggleSelectedTeacher = (id) => {
     toggleInArray(selectedTeacherIds.value, id);
 };
 
 const isAllTeachersSelected = computed(() => {
-    const all = (props.teachers || []).map((t) => Number(t.id)).filter((v) => Number.isFinite(v));
+    const all = (filteredTeachers.value || []).map((t) => Number(t.id)).filter((v) => Number.isFinite(v));
     if (!all.length) return false;
     const cur = new Set((selectedTeacherIds.value || []).map((v) => Number(v)));
     return all.every((id) => cur.has(id));
 });
 
 const toggleSelectAllTeachers = () => {
-    const all = (props.teachers || []).map((t) => Number(t.id)).filter((v) => Number.isFinite(v));
+    const all = (filteredTeachers.value || []).map((t) => Number(t.id)).filter((v) => Number.isFinite(v));
     const cur = new Set((selectedTeacherIds.value || []).map((v) => Number(v)));
     const allSelected = all.length > 0 && all.every((id) => cur.has(id));
     selectedTeacherIds.value = allSelected ? [] : all;
@@ -428,8 +441,64 @@ const allowedSubjectsForClassId = (classId) => {
 
 const vipindiSubjectOptionsForRow = (row) => {
     const targetClassId = row.stream_id ? Number(row.stream_id) : Number(row.base_class_id);
-    return subjectOptionsForClassId(targetClassId);
+    const map = selectedTeacher.value?.assigned_class_subject_ids || {};
+    const allowedIdsRaw = map?.[targetClassId] || map?.[String(targetClassId)] || [];
+    const allowedIds = Array.isArray(allowedIdsRaw)
+        ? allowedIdsRaw.map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0)
+        : [];
+
+    if (!allowedIds.length) {
+        return subjectOptionsForClassId(targetClassId);
+    }
+
+    const allowedSet = new Set(allowedIds);
+    return (props.subjects || []).filter((s) => allowedSet.has(Number(s.id)));
 };
+
+const vipindiAllowedBaseClasses = computed(() => {
+    const baseIds = selectedTeacher.value?.assigned_class_ids || [];
+    const set = new Set((baseIds || []).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0));
+    return (props.classes || []).filter((c) => set.has(Number(c.id)));
+});
+
+const vipindiAllowedStreamsForBase = (baseClassId) => {
+    const baseId = Number(baseClassId);
+    if (!Number.isFinite(baseId) || baseId <= 0) return [];
+    const allowedStreamIds = new Set(
+        (selectedTeacher.value?.assigned_stream_class_ids || [])
+            .map((v) => Number(v))
+            .filter((v) => Number.isFinite(v) && v > 0)
+    );
+
+    return (props.allClasses || [])
+        .filter((c) => Number(c.parent_class_id) === baseId)
+        .filter((c) => allowedStreamIds.has(Number(c.id)))
+        .map((c) => ({ id: Number(c.id), label: formatClassOption(c) }))
+        .sort((a, b) => String(a.label).localeCompare(String(b.label)));
+};
+
+watch(
+    () => vipindiRows.value,
+    (rows) => {
+        for (const row of rows || []) {
+            const baseId = Number(row.base_class_id);
+            const streamId = row.stream_id ? Number(row.stream_id) : '';
+
+            const streams = vipindiAllowedStreamsForBase(baseId);
+            const streamAllowed = streamId && streams.some((s) => Number(s.id) === Number(streamId));
+            if (row.stream_id && !streamAllowed) {
+                row.stream_id = '';
+            }
+
+            const allowedSubjects = vipindiSubjectOptionsForRow(row).map((s) => Number(s.id));
+            const subjectAllowed = allowedSubjects.includes(Number(row.subject_id));
+            if (row.subject_id && !subjectAllowed) {
+                row.subject_id = '';
+            }
+        }
+    },
+    { deep: true }
+);
 
 const weeklyTotal = computed(() => {
     return (timetablePreview.value?.limits || []).reduce((sum, r) => sum + (Number(r.periods_per_week) || 0), 0);
@@ -924,11 +993,11 @@ const formatSubjectOption = (s) => {
                                             class="w-full rounded-md border border-gray-300 px-2 py-1 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
                                         >
                                             <option value="">Select class...</option>
-                                            <option v-for="c in classes" :key="c.id" :value="c.id">
+                                            <option v-for="c in vipindiAllowedBaseClasses" :key="c.id" :value="c.id">
                                                 {{ formatClassOption(c) }}
                                             </option>
                                         </select>
-                                        <div v-if="streamOptionsForBase(row.base_class_id).length" class="mt-1">
+                                        <div v-if="vipindiAllowedStreamsForBase(row.base_class_id).length" class="mt-1">
                                             <select
                                                 v-model="row.stream_id"
                                                 class="w-full rounded-md border border-gray-300 px-2 py-1 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
@@ -1016,7 +1085,16 @@ const formatSubjectOption = (s) => {
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <div>
                         <p class="text-sm font-semibold text-gray-800">Teachers</p>
-                        <p class="mt-0.5 text-[11px] text-gray-500">Jumla: <span class="font-semibold text-gray-700">{{ teachers.length }}</span></p>
+                        <p class="mt-0.5 text-[11px] text-gray-500">Jumla: <span class="font-semibold text-gray-700">{{ filteredTeachers.length }}</span></p>
+                    </div>
+                    <div class="w-full sm:w-72">
+                        <label class="mb-1 block text-[11px] font-medium text-gray-700">Search teacher</label>
+                        <input
+                            v-model="teacherSearch"
+                            type="text"
+                            class="w-full rounded-md border border-gray-300 px-3 py-2 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                            placeholder="Search name/email/phone/check no..."
+                        />
                     </div>
                 </div>
 
@@ -1042,16 +1120,16 @@ const formatSubjectOption = (s) => {
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-if="teachers.length === 0">
+                                <tr v-if="filteredTeachers.length === 0">
                                     <td colspan="7" class="px-4 py-10 text-center">
                                         <div class="mx-auto max-w-sm">
-                                            <div class="text-sm font-semibold text-gray-800">No teachers yet</div>
-                                            <div class="mt-1 text-xs text-gray-500">Bado hujaongeza mwalimu. Bonyeza <span class="font-semibold">Add Teacher</span> kuanza.</div>
+                                            <div class="text-sm font-semibold text-gray-800">No teachers found</div>
+                                            <div class="mt-1 text-xs text-gray-500">Badilisha search au ongeza mwalimu mpya.</div>
                                         </div>
                                     </td>
                                 </tr>
                                 <tr
-                                    v-for="(teacher, idx) in teachers"
+                                    v-for="(teacher, idx) in filteredTeachers"
                                     :key="teacher.id"
                                     :class="[
                                         'border-b border-gray-100 text-xs text-gray-700',

@@ -6019,6 +6019,90 @@ Route::middleware('auth')->group(function () {
         ]);
     })->name('teachers.credentials');
 
+    Route::get('/teachers/search', function (\Illuminate\Http\Request $request) {
+        $schoolId = $request->user()?->school_id;
+        $q = trim((string) $request->query('q', ''));
+
+        if ($q === '') {
+            return response()->json(['data' => []]);
+        }
+
+        $teachers = User::query()
+            ->where('role', 'teacher')
+            ->when($schoolId, fn ($qq) => $qq->where('school_id', $schoolId))
+            ->where(function ($qq) use ($q) {
+                $qq->where('name', 'like', "%{$q}%")
+                    ->orWhere('email', 'like', "%{$q}%")
+                    ->orWhere('phone', 'like', "%{$q}%")
+                    ->orWhere('check_number', 'like', "%{$q}%");
+            })
+            ->orderBy('name')
+            ->limit(20)
+            ->get(['id', 'name', 'email', 'phone', 'check_number']);
+
+        return response()->json(['data' => $teachers]);
+    })->name('teachers.search');
+
+    Route::get('/teachers/{teacher}/details', function (\Illuminate\Http\Request $request, User $teacher) {
+        abort_unless($teacher->role === 'teacher', 404);
+
+        $schoolId = $request->user()?->school_id;
+        if ($schoolId && $teacher->school_id && (int) $teacher->school_id !== (int) $schoolId) {
+            abort(403);
+        }
+
+        $rows = DB::table('teacher_class_subject')
+            ->join('school_classes', 'school_classes.id', '=', 'teacher_class_subject.school_class_id')
+            ->when($schoolId, fn ($q) => $q->where('teacher_class_subject.school_id', $schoolId))
+            ->where('teacher_class_subject.teacher_id', $teacher->id)
+            ->select([
+                'teacher_class_subject.school_class_id',
+                'school_classes.id as class_id',
+                'school_classes.name as class_name',
+                'school_classes.level as class_level',
+                'school_classes.stream as class_stream',
+                'school_classes.parent_class_id as parent_class_id',
+            ])
+            ->distinct()
+            ->orderByRaw('COALESCE(school_classes.parent_class_id, school_classes.id) asc')
+            ->orderBy('school_classes.stream')
+            ->get();
+
+        $byBase = collect($rows)->groupBy(function ($r) {
+            $pid = (int) ($r->parent_class_id ?? 0);
+            return $pid > 0 ? $pid : (int) $r->class_id;
+        });
+
+        $classes = $byBase->map(function ($grp, $baseId) {
+            $first = collect($grp)->first();
+            $baseLabel = $first->parent_class_id
+                ? trim((string) ($first->class_level ?? $first->class_name))
+                : (trim((string) ($first->class_level ?? '')) ?: trim((string) ($first->class_name ?? '')));
+
+            $streams = collect($grp)
+                ->filter(fn ($r) => (int) ($r->parent_class_id ?? 0) > 0)
+                ->map(fn ($r) => [
+                    'id' => (int) $r->class_id,
+                    'label' => trim((string) ($r->class_stream ?? '')),
+                ])
+                ->filter(fn ($s) => $s['label'] !== '')
+                ->unique('id')
+                ->values()
+                ->all();
+
+            return [
+                'base_class_id' => (int) $baseId,
+                'base_label' => $baseLabel,
+                'streams' => $streams,
+            ];
+        })->values()->all();
+
+        return Inertia::render('TeacherDetails', [
+            'teacher' => $teacher->only(['id', 'name', 'email', 'phone', 'check_number']),
+            'classes' => $classes,
+        ]);
+    })->name('teachers.details');
+
     Route::post('/teachers/credentials/{teacher}/reset-password', function (\Illuminate\Http\Request $request, User $teacher) {
         abort_unless($teacher->role === 'teacher', 404);
 
