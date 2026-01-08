@@ -821,7 +821,28 @@ const formatSubjectOption = (s) => {
                                 <span v-else class="text-gray-500">—</span>
                             </td>
                             <td class="px-3 py-2 align-top">
-                                <div v-if="teacher.assigned_subjects && teacher.assigned_subjects.length" class="flex flex-wrap gap-1">
+                                <div
+                                    v-if="teacher.assigned_class_subjects && Object.keys(teacher.assigned_class_subjects).length"
+                                    class="space-y-1"
+                                >
+                                    <div
+                                        v-for="(subs, clsName) in teacher.assigned_class_subjects"
+                                        :key="clsName"
+                                        class="rounded-md border border-emerald-100 bg-emerald-50/40 px-2 py-1"
+                                    >
+                                        <div class="text-[10px] font-semibold text-emerald-900">{{ clsName }}</div>
+                                        <div class="mt-0.5 flex flex-wrap gap-1">
+                                            <span
+                                                v-for="s in subs"
+                                                :key="`${clsName}-${s}`"
+                                                class="rounded bg-white/70 px-1.5 py-0.5 text-[10px] text-emerald-800 ring-1 ring-emerald-100"
+                                            >
+                                                {{ s }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div v-else-if="teacher.assigned_subjects && teacher.assigned_subjects.length" class="flex flex-wrap gap-1">
                                     <span
                                         v-for="s in teacher.assigned_subjects"
                                         :key="s"

@@ -5675,11 +5675,39 @@ Route::middleware('auth')->group(function () {
                 ->values()
                 ->all();
 
+            $classSubjects = [];
+            foreach ($rows as $r) {
+                $className = $r->class_name ? trim((string) $r->class_name) : '';
+                $classLabel = $className !== ''
+                    ? $className
+                    : (trim(($r->class_level ?? '').' '.($r->class_stream ?? '')) ?: '');
+                if ($classLabel === '') {
+                    continue;
+                }
+
+                $code = $r->subject_code ? trim((string) $r->subject_code) : '';
+                $name = $r->subject_name ? trim((string) $r->subject_name) : '';
+                $subjectLabel = $code && $name ? ($code.' - '.$name) : ($code ?: $name);
+                if ($subjectLabel === '') {
+                    continue;
+                }
+
+                if (! isset($classSubjects[$classLabel])) {
+                    $classSubjects[$classLabel] = [];
+                }
+                $classSubjects[$classLabel][] = $subjectLabel;
+            }
+
+            foreach ($classSubjects as $k => $arr) {
+                $classSubjects[$k] = collect($arr)->filter()->unique()->values()->all();
+            }
+
             $teacher->setAttribute('assigned_class_ids', $baseClassIds);
             $teacher->setAttribute('assigned_stream_class_ids', $streamClassIds);
             $teacher->setAttribute('assigned_classes', $classLabels);
             $teacher->setAttribute('assigned_subject_ids', $subjectIds);
             $teacher->setAttribute('assigned_subjects', $subjectLabels);
+            $teacher->setAttribute('assigned_class_subjects', $classSubjects);
 
             return $teacher;
         });
