@@ -32,13 +32,11 @@ const showDetailsModal = ref(false);
 const showEditModal = ref(false);
 const showDeleteModal = ref(false);
 const showTimetableModal = ref(false);
+const showVipindiModal = ref(false);
 
 const addForm = reactive({
     name: '',
-    email: '',
     phone: '',
-    check_number: '',
-    teaching_classes: '',
     class_ids: [],
     subject_ids: [],
 });
@@ -112,6 +110,9 @@ const importForm = reactive({
 const selectedTeacher = ref(null);
 const timetablePreviewLoading = ref(false);
 const timetablePreview = ref({ teacher: null, limits: [] });
+const vipindiLoading = ref(false);
+const vipindiSaving = ref(false);
+const vipindiRows = ref([]);
 
 const weeklyTotal = computed(() => {
     return (timetablePreview.value?.limits || []).reduce((sum, r) => sum + (Number(r.periods_per_week) || 0), 0);
@@ -119,10 +120,7 @@ const weeklyTotal = computed(() => {
 
 const resetAddForm = () => {
     addForm.name = '';
-    addForm.email = '';
     addForm.phone = '';
-    addForm.check_number = '';
-    addForm.teaching_classes = '';
     addForm.class_ids = [];
     addForm.subject_ids = [];
 };
@@ -224,6 +222,86 @@ const openTimetablePreview = async (teacher) => {
     }
 };
 
+const openVipindiModal = async (teacher) => {
+    selectedTeacher.value = teacher;
+    showVipindiModal.value = true;
+    vipindiLoading.value = true;
+    vipindiRows.value = [];
+
+    try {
+        const res = await fetch(route('teachers.weekly-limits', teacher.id), {
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                Accept: 'application/json',
+            },
+            credentials: 'same-origin',
+        });
+        const json = await res.json();
+        const limits = Array.isArray(json?.limits) ? json.limits : [];
+        vipindiRows.value = limits.map((r) => ({
+            school_class_id: Number(r.school_class_id) || '',
+            subject_id: Number(r.subject_id) || '',
+            periods_per_week: Number(r.periods_per_week) || 0,
+        }));
+    } catch {
+        vipindiRows.value = [];
+    } finally {
+        vipindiLoading.value = false;
+    }
+};
+
+const closeVipindiModal = () => {
+    if (vipindiSaving.value) return;
+    showVipindiModal.value = false;
+    vipindiRows.value = [];
+};
+
+const addVipindiRow = () => {
+    vipindiRows.value = [
+        ...vipindiRows.value,
+        { school_class_id: '', subject_id: '', periods_per_week: 0 },
+    ];
+};
+
+const removeVipindiRow = (idx) => {
+    vipindiRows.value = vipindiRows.value.filter((_, i) => i !== idx);
+};
+
+const saveVipindi = async () => {
+    if (!selectedTeacher.value || vipindiSaving.value) return;
+
+    const cleaned = (vipindiRows.value || [])
+        .map((r) => ({
+            school_class_id: Number(r.school_class_id),
+            subject_id: Number(r.subject_id),
+            teacher_id: Number(selectedTeacher.value.id),
+            periods_per_week: Number(r.periods_per_week),
+        }))
+        .filter((r) => Number.isFinite(r.school_class_id) && r.school_class_id > 0)
+        .filter((r) => Number.isFinite(r.subject_id) && r.subject_id > 0)
+        .filter((r) => Number.isFinite(r.periods_per_week) && r.periods_per_week >= 0);
+
+    if (!cleaned.length) return;
+
+    vipindiSaving.value = true;
+    try {
+        await fetch(route('timetables.weekly-limits.save'), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ limits: cleaned }),
+        });
+        closeVipindiModal();
+    } finally {
+        vipindiSaving.value = false;
+    }
+};
+
 const formatClassOption = (cls) => {
     const level = cls?.level ? String(cls.level).trim() : '';
     return level || (cls?.name || '');
@@ -268,6 +346,129 @@ const formatSubjectOption = (s) => {
                 </div>
             </div>
         </template>
+
+        <!-- Assign vipindi modal -->
+        <div
+            v-if="showVipindiModal && selectedTeacher"
+            class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6 backdrop-blur-sm"
+        >
+            <div class="w-full max-w-3xl rounded-xl bg-white p-5 text-xs text-gray-700 shadow-xl">
+                <div class="mb-3 flex items-start justify-between gap-3">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-900">Assign vipindi (weekly limits)</h3>
+                        <p class="mt-0.5 text-[11px] text-gray-500">
+                            {{ selectedTeacher.name }} · Weka vipindi kwa wiki kwa kila darasa na somo.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-[11px] font-bold text-gray-600 hover:bg-gray-200"
+                        :disabled="vipindiSaving"
+                        @click="closeVipindiModal"
+                    >
+                        ×
+                    </button>
+                </div>
+
+                <div v-if="vipindiLoading" class="py-8 text-center text-[11px] text-gray-500">
+                    Loading...
+                </div>
+
+                <div v-else class="space-y-3">
+                    <div class="overflow-hidden rounded-lg border border-gray-200">
+                        <table class="min-w-full border-collapse text-[11px]">
+                            <thead>
+                                <tr class="bg-gray-50 text-left">
+                                    <th class="border-b border-gray-200 px-3 py-2">Class</th>
+                                    <th class="border-b border-gray-200 px-3 py-2">Subject</th>
+                                    <th class="border-b border-gray-200 px-3 py-2">Vipindi / Wiki</th>
+                                    <th class="border-b border-gray-200 px-3 py-2"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-if="!vipindiRows.length">
+                                    <td colspan="4" class="px-3 py-6 text-center text-[11px] text-gray-500">
+                                        Hakuna row bado. Bonyeza "Add row" kuongeza.
+                                    </td>
+                                </tr>
+                                <tr v-for="(row, idx) in vipindiRows" :key="idx" class="hover:bg-gray-50">
+                                    <td class="border-b border-gray-100 px-3 py-2">
+                                        <select
+                                            v-model="row.school_class_id"
+                                            class="w-full rounded-md border border-gray-300 px-2 py-1 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                        >
+                                            <option value="">Select class...</option>
+                                            <option v-for="c in allClasses" :key="c.id" :value="c.id">
+                                                {{ formatClassOption(c) }}
+                                            </option>
+                                        </select>
+                                    </td>
+                                    <td class="border-b border-gray-100 px-3 py-2">
+                                        <select
+                                            v-model="row.subject_id"
+                                            class="w-full rounded-md border border-gray-300 px-2 py-1 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                        >
+                                            <option value="">Select subject...</option>
+                                            <option v-for="s in subjects" :key="s.id" :value="s.id">
+                                                {{ formatSubjectOption(s) }}
+                                            </option>
+                                        </select>
+                                    </td>
+                                    <td class="border-b border-gray-100 px-3 py-2">
+                                        <input
+                                            v-model.number="row.periods_per_week"
+                                            type="number"
+                                            min="0"
+                                            max="50"
+                                            class="w-24 rounded-md border border-gray-300 px-2 py-1 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                        />
+                                    </td>
+                                    <td class="border-b border-gray-100 px-3 py-2 text-right">
+                                        <button
+                                            type="button"
+                                            class="rounded-md bg-red-50 px-2 py-1 text-[11px] font-medium text-red-700 ring-1 ring-red-100 hover:bg-red-100"
+                                            :disabled="vipindiSaving"
+                                            @click="removeVipindiRow(idx)"
+                                        >
+                                            Remove
+                                        </button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="flex items-center justify-between">
+                        <button
+                            type="button"
+                            class="rounded-md bg-slate-50 px-3 py-1.5 text-[11px] font-medium text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
+                            :disabled="vipindiSaving"
+                            @click="addVipindiRow"
+                        >
+                            Add row
+                        </button>
+                        <div class="flex justify-end gap-2">
+                            <button
+                                type="button"
+                                class="rounded-md bg-gray-50 px-3 py-1.5 text-[11px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100"
+                                :disabled="vipindiSaving"
+                                @click="closeVipindiModal"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-md bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+                                :disabled="vipindiSaving || vipindiLoading || !vipindiRows.length"
+                                @click="saveVipindi"
+                            >
+                                {{ vipindiSaving ? 'Saving...' : 'Save vipindi' }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <div class="rounded-2xl bg-slate-50/70 p-4 ring-1 ring-slate-200">
             <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
@@ -362,6 +563,17 @@ const formatSubjectOption = (s) => {
                                             <path d="M7 14h4" />
                                             <path d="M13 10h4" />
                                             <path d="M13 14h4" />
+                                        </svg>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-amber-50 text-amber-700 ring-1 ring-amber-100 hover:bg-amber-100"
+                                        title="Assign vipindi"
+                                        @click="openVipindiModal(teacher)"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M12 20h9" />
+                                            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
                                         </svg>
                                     </button>
                                     <button
@@ -724,49 +936,13 @@ const formatSubjectOption = (s) => {
                         />
                     </div>
                     <div>
-                        <label class="mb-1 block text-[11px] font-medium">Email (for login)</label>
+                        <label class="mb-1 block text-[11px] font-medium">Phone Number (optional)</label>
                         <input
-                            v-model="addForm.email"
-                            type="email"
+                            v-model="addForm.phone"
+                            type="tel"
                             class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            placeholder="teacher@example.com"
-                            required
+                            placeholder="07XXXXXXXX"
                         />
-                    </div>
-                    <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="mb-1 block text-[11px] font-medium">Phone Number</label>
-                            <input
-                                v-model="addForm.phone"
-                                type="tel"
-                                class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                                placeholder="07XXXXXXXX"
-                                required
-                            />
-                        </div>
-                        <div>
-                            <label class="mb-1 block text-[11px] font-medium">Check / Registration No.</label>
-                            <input
-                                v-model="addForm.check_number"
-                                type="text"
-                                class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                                placeholder="Registration number"
-                                required
-                            />
-                        </div>
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-[11px] font-medium">Classes (one or more)</label>
-                        <input
-                            v-model="addForm.teaching_classes"
-                            type="text"
-                            class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            placeholder="e.g. Form I A, Form II B"
-                            required
-                        />
-                        <p class="mt-1 text-[10px] text-gray-500">
-                            Enter a comma-separated list of classes this teacher is responsible for.
-                        </p>
                     </div>
 
                     <div class="grid grid-cols-2 gap-3">

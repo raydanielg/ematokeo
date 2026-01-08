@@ -5675,23 +5675,47 @@ Route::middleware('auth')->group(function () {
         $schoolId = $request->user()?->school_id;
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
-            'phone' => ['required', 'string', 'max:50'],
-            'check_number' => ['required', 'string', 'max:100'],
-            'teaching_classes' => ['required', 'string', 'max:255'],
+            'phone' => ['nullable', 'string', 'max:50'],
+            'email' => ['nullable', 'string', 'email', 'max:255', 'unique:users,email'],
+            'check_number' => ['nullable', 'string', 'max:100'],
+            'teaching_classes' => ['nullable', 'string', 'max:255'],
             'class_ids' => ['sometimes', 'array'],
             'class_ids.*' => ['integer', 'exists:school_classes,id'],
             'subject_ids' => ['sometimes', 'array'],
             'subject_ids.*' => ['integer', 'exists:subjects,id'],
         ]);
 
+        $nameForEmail = trim((string) ($validated['name'] ?? 'teacher'));
+        $base = strtolower(preg_replace('/[^a-z0-9]+/i', '.', $nameForEmail));
+        $base = trim($base, '.');
+        if ($base === '') {
+            $base = 'teacher';
+        }
+
+        $email = $validated['email'] ?? null;
+        if (! $email) {
+            $domain = config('app.url') ? parse_url(config('app.url'), PHP_URL_HOST) : null;
+            $domain = $domain ?: 'ematokeo.local';
+            do {
+                $suffix = str_pad((string) random_int(0, 9999), 4, '0', STR_PAD_LEFT);
+                $email = $base . '.' . $suffix . '@' . $domain;
+            } while (\App\Models\User::where('email', $email)->exists());
+        }
+
+        $checkNumber = $validated['check_number'] ?? null;
+        if (! $checkNumber) {
+            $checkNumber = 'TCH-' . str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        }
+
+        $teachingClasses = $validated['teaching_classes'] ?? '';
+
         $teacher = User::create([
             'school_id' => $schoolId,
             'name' => $validated['name'],
-            'email' => $validated['email'],
-            'phone' => $validated['phone'],
-            'check_number' => $validated['check_number'],
-            'teaching_classes' => $validated['teaching_classes'],
+            'email' => $email,
+            'phone' => $validated['phone'] ?? null,
+            'check_number' => $checkNumber,
+            'teaching_classes' => $teachingClasses,
             'role' => 'teacher',
             'is_active' => true,
             // Default password; in real app you'd send reset link
@@ -5738,7 +5762,7 @@ Route::middleware('auth')->group(function () {
 
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'phone' => ['required', 'string', 'max:50'],
+            'phone' => ['nullable', 'string', 'max:50'],
             'check_number' => ['required', 'string', 'max:100'],
             'teaching_classes' => ['required', 'string', 'max:255'],
             'class_ids' => ['sometimes', 'array'],
