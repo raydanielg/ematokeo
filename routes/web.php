@@ -1054,6 +1054,7 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 'academic_year',
                 'term',
                 'file_path',
+                'schedule_json',
                 'created_at',
             ]);
 
@@ -1062,6 +1063,70 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 'assignedClasses' => $assignedClassNames,
             ]);
         })->name('timetables.my');
+
+        Route::get('/timetables/{timetable}/periods', function (\App\Models\Timetable $timetable) {
+            $user = request()->user();
+            $schoolId = $user?->school_id;
+            $teacherId = $user?->id;
+
+            if ($schoolId && \Illuminate\Support\Facades\Schema::hasColumn('timetables', 'school_id') && $timetable->school_id && (int) $timetable->school_id !== (int) $schoolId) {
+                abort(403);
+            }
+
+            $assignedClassNames = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
+                ->join('school_classes as sc', 'sc.id', '=', 'tcs.school_class_id')
+                ->where('tcs.teacher_id', $teacherId)
+                ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
+                ->distinct()
+                ->pluck('sc.name')
+                ->filter(fn ($v) => $v !== null && trim((string) $v) !== '')
+                ->map(fn ($v) => trim((string) $v))
+                ->values();
+
+            if ($assignedClassNames->isEmpty() || ! $assignedClassNames->contains($timetable->class_name)) {
+                abort(403);
+            }
+
+            $parts = preg_split('/\s+/', trim((string) ($user?->name ?? '')));
+            $initials = collect($parts)
+                ->filter()
+                ->map(fn ($p) => \Illuminate\Support\Str::upper(mb_substr($p, 0, 1)))
+                ->implode('');
+
+            $schedule = $timetable->schedule_json;
+            if (is_string($schedule)) {
+                $decoded = json_decode($schedule, true);
+                $schedule = is_array($decoded) ? $decoded : null;
+            }
+
+            $periods = [];
+            if (is_array($schedule)) {
+                foreach ($schedule as $day => $rows) {
+                    foreach ((array) $rows as $row) {
+                        $slots = (array) ($row['slots'] ?? []);
+                        foreach ($slots as $idx => $slot) {
+                            $teacher = trim((string) (($slot['teacher_initials'] ?? $slot['teacher'] ?? '')));
+                            if ($teacher === '') continue;
+                            $initialParts = array_values(array_filter(array_map('trim', explode('/', $teacher))));
+                            if (! in_array($initials, $initialParts, true)) continue;
+                            $periods[] = [
+                                'day' => $day,
+                                'class_label' => $row['class_label'] ?? ($row['form'] ?? ''),
+                                'stream' => $row['stream'] ?? '',
+                                'subject' => $slot['subject'] ?? '',
+                                'slot_index' => (int) $idx,
+                            ];
+                        }
+                    }
+                }
+            }
+
+            return Inertia::render('Teacher/TimetablePeriods', [
+                'timetable' => $timetable->only(['id', 'title', 'class_name', 'academic_year', 'term']),
+                'teacherInitials' => $initials,
+                'periods' => $periods,
+            ]);
+        })->name('timetables.periods');
 
         Route::get('/announcements', function () {
             $user = request()->user();
@@ -6513,6 +6578,7 @@ Route::middleware('auth')->group(function () {
             'timetable' => null,
             'subjects' => $subjects,
             'classes' => $classes,
+            'teacherAssignments' => $teacherAssignments,
         ]);
     })->name('timetables.create');
 
@@ -6683,6 +6749,7 @@ Route::middleware('auth')->group(function () {
             'academic_year' => ['nullable', 'string', 'max:50'],
             'term' => ['nullable', 'string', 'max:50'],
             'type' => ['nullable', 'string', 'max:50'],
+            'schedule_json' => ['nullable'],
         ]);
 
         $timetable = Timetable::create([
@@ -6692,6 +6759,7 @@ Route::middleware('auth')->group(function () {
             'academic_year' => $data['academic_year'] ?? null,
             'term' => $data['term'] ?? null,
             'name' => $request->input('name') ?? ($data['type'] ?? null),
+            'schedule_json' => $request->input('schedule_json'),
         ]);
 
         // Generate a simple PDF version of the timetable header for archiving
@@ -6883,11 +6951,63 @@ Route::middleware('auth')->group(function () {
                 'stream',
             ]);
 
+        $teacherAssignments = [];
+        try {
+            $rows = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
+                ->join('users as u', 'u.id', '=', 'tcs.teacher_id')
+                ->join('subjects as s', 's.id', '=', 'tcs.subject_id')
+                ->when($schoolId, fn ($q) => $q->where('tcs.school_id', $schoolId))
+                ->get([
+                    'tcs.school_class_id',
+                    's.subject_code',
+                    'u.name as teacher_name',
+                ]);
+
+            foreach ($rows as $r) {
+                $classId = (string) $r->school_class_id;
+                $code = (string) $r->subject_code;
+
+                $parts = preg_split('/\s+/', trim((string) $r->teacher_name));
+                $initials = collect($parts)
+                    ->filter()
+                    ->map(fn ($p) => Str::upper(mb_substr($p, 0, 1)))
+                    ->implode('');
+
+                if (! isset($teacherAssignments[$classId])) {
+                    $teacherAssignments[$classId] = [];
+                }
+                if (! isset($teacherAssignments[$classId][$code])) {
+                    $teacherAssignments[$classId][$code] = [];
+                }
+                if ($initials !== '' && ! in_array($initials, $teacherAssignments[$classId][$code], true)) {
+                    $teacherAssignments[$classId][$code][] = $initials;
+                }
+            }
+
+            foreach ($teacherAssignments as $classId => $bySubject) {
+                foreach ($bySubject as $code => $list) {
+                    $teacherAssignments[$classId][$code] = implode('/', $list);
+                }
+            }
+        } catch (\Throwable $e) {
+            $teacherAssignments = [];
+        }
+
         return Inertia::render('CreateTimetable', [
             'school' => $school,
-            'timetable' => $timetable,
+            'timetable' => $timetable->only([
+                'id',
+                'school_id',
+                'title',
+                'class_name',
+                'academic_year',
+                'term',
+                'file_path',
+                'schedule_json',
+            ]),
             'subjects' => $subjects,
             'classes' => $classes,
+            'teacherAssignments' => $teacherAssignments,
         ]);
     })->name('timetables.show');
 

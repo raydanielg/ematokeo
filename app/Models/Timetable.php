@@ -18,5 +18,6 @@ class Timetable extends Model
         'academic_year',
         'term',
         'file_path',
+        'schedule_json',
     ];
 }

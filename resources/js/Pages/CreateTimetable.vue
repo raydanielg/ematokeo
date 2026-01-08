@@ -20,6 +20,10 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
+    teacherAssignments: {
+        type: Object,
+        default: () => ({}),
+    },
 });
 
 const selectedLimitClassSessionRules = computed(() => {
@@ -50,6 +54,7 @@ const form = useForm({
     term: props.timetable?.term || '',
     start_time: '07:30',
     end_time: '16:00',
+    schedule_json: props.timetable?.schedule_json || null,
 });
 
 const schoolName = computed(() => props.school.name || 'Your School Name');
@@ -74,6 +79,14 @@ const subjectIdByCode = computed(() => {
     });
     return map;
 });
+
+const teacherInitialsForClassSubject = (schoolClassId, subjectCode) => {
+    const classId = schoolClassId ? String(schoolClassId) : '';
+    const code = String(subjectCode || '').trim();
+    const fromAssignments = props.teacherAssignments?.[classId]?.[code];
+    if (fromAssignments) return String(fromAssignments);
+    return teacherBySubject.value?.[code] || '';
+};
 
 const teacherBySubject = computed(() => {
     const map = {};
@@ -463,21 +476,6 @@ const generateSampleTimetable = () => {
         return;
     }
 
-    const existing = schedule.value || {};
-
-    const findExistingRow = (day, rowTemplate) => {
-        const rows = existing?.[day] || [];
-        const targetStream = String(rowTemplate?.stream || '').trim().toUpperCase();
-        const targetLabel = String(rowTemplate?.class_label || rowTemplate?.form || '').trim().toUpperCase();
-        for (let i = 0; i < rows.length; i += 1) {
-            const r = rows[i];
-            const s = String(r?.stream || '').trim().toUpperCase();
-            const l = String(r?.class_label || r?.form || '').trim().toUpperCase();
-            if (s === targetStream && l === targetLabel) return r;
-        }
-        return null;
-    };
-
     days.forEach((day) => {
         next[day] = [];
     });
@@ -503,20 +501,6 @@ const generateSampleTimetable = () => {
                 class_name: c.name || `${classLabel} ${streamLabel}`.trim(),
                 slots: Array.from({ length: 9 }).map(() => null),
             };
-
-            const existingRow = findExistingRow(day, rowByDay[day]);
-            if (existingRow?.slots && Array.isArray(existingRow.slots)) {
-                for (let i = 0; i < 9; i += 1) {
-                    const slot = existingRow.slots[i];
-                    if (!slot || typeof slot !== 'object') continue;
-                    rowByDay[day].slots[i] = {
-                        subject: slot.subject || '',
-                        teacher: slot.teacher || slot.teacher_initials || '',
-                        teacher_initials: slot.teacher_initials || slot.teacher || '',
-                        teacher_name: slot.teacher_name || '',
-                    };
-                }
-            }
         });
 
         // Pre-fill non-teachable fixed slots with blanks so they don't count toward teacher coverage.
@@ -528,20 +512,7 @@ const generateSampleTimetable = () => {
             }
         });
 
-        // Enforce session-time rules on any existing slots by clearing invalid subjects (will be refilled).
-        if (classId) {
-            days.forEach((day) => {
-                for (let i = 0; i < 9; i += 1) {
-                    if (!isTeachableLessonSlot(day, i)) continue;
-                    const cur = rowByDay[day].slots[i];
-                    const subject = String(cur?.subject || '').trim();
-                    if (!subject) continue;
-                    if (!isSubjectAllowedInSlot(classId, subject, i)) {
-                        rowByDay[day].slots[i] = null;
-                    }
-                }
-            });
-        }
+        // Full regenerate: start from empty lesson slots and fill them fresh
 
         // Build lists of available teachable positions by session.
         const morningPositions = [];
@@ -575,7 +546,7 @@ const generateSampleTimetable = () => {
         };
 
         const setSlot = (day, slotIndex, subject) => {
-            const teacher = teachers[subject] || '';
+            const teacher = teacherInitialsForClassSubject(classId, subject) || (teachers[subject] || '');
             const teacherInitials = typeof teacher === 'string' ? teacher : (teacher?.initials || teacher?.name || '');
             const teacherName = typeof teacher === 'string' ? teacher : (teacher?.name || teacher?.initials || '');
             rowByDay[day].slots[slotIndex] = {
@@ -589,20 +560,6 @@ const generateSampleTimetable = () => {
         // 1) Coverage-first: try to place every subject at least once (respecting session rules).
         const unconstrainedSubjects = [];
         classSubjectCodes.forEach((code) => {
-            // If this subject already exists in the preserved schedule, skip it to avoid unnecessary changes.
-            let alreadyPresent = false;
-            days.forEach((day) => {
-                if (alreadyPresent) return;
-                const slots = rowByDay[day].slots || [];
-                if (slots.some((s) => String(s?.subject || '') === String(code))) {
-                    alreadyPresent = true;
-                }
-            });
-            if (alreadyPresent) {
-                unconstrainedSubjects.push(null);
-                return;
-            }
-
             const sid = subjectIdByCode.value?.[String(code)] || null;
             const rule = getSubjectSessionRule(classId, sid);
             if (rule === 'morning') {
@@ -649,8 +606,8 @@ const generateSampleTimetable = () => {
             }
         });
 
-        // Keep regenerate stable: seed cursor with classId so subsequent regenerates don't reshuffle wildly.
-        let cursor = Math.abs((Number(classId || 1) * 7) % (classSubjectCodes.length || 1));
+        // Full regenerate: randomize start point for variety.
+        let cursor = Math.floor(Math.random() * (classSubjectCodes.length || 1));
         const pickSubjectForPos = (pos) => {
             // Break boundaries: slot 4 starts after first break, slot 7 starts after second break.
             const hasPrevious = pos.slotIndex > 0 && ![4, 7].includes(pos.slotIndex);
@@ -735,8 +692,7 @@ const generateSampleTimetable = () => {
             return null;
         };
 
-        // Keep this light so regenerate doesn't drastically change timetable.
-        missingInitials.slice(0, 8).forEach((initial) => {
+        missingInitials.slice(0, 15).forEach((initial) => {
             const subjectCode = findSubjectThatContainsInitial(initial);
             if (!subjectCode) return;
             const pos = findReplaceablePosition(subjectCode);
@@ -820,6 +776,12 @@ onMounted(() => {
         }
     }
 
+    if (props.timetable?.schedule_json) {
+        schedule.value = props.timetable.schedule_json;
+        saveScheduleToStorage();
+        return;
+    }
+
     const stored = loadScheduleFromStorage();
     if (stored) {
         schedule.value = stored;
@@ -829,6 +791,7 @@ onMounted(() => {
 });
 
 const saveTimetable = () => {
+    form.schedule_json = schedule.value || {};
     form.post(route('timetables.store'), {
         preserveScroll: true,
         onSuccess: () => {
@@ -1412,6 +1375,13 @@ const onDrop = (day, rowIndex, slotIndex) => {
                             @click="generateSampleTimetable"
                         >
                             Regenerate Sample Timetable
+                        </button>
+                        <button
+                            type="button"
+                            class="rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
+                            @click="saveTimetable"
+                        >
+                            Save
                         </button>
                         <button
                             type="button"

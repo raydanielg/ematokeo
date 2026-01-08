@@ -19,6 +19,10 @@ const count = computed(() => (Array.isArray(props.timetables) ? props.timetables
 const preview = (id) => {
     router.get(route('timetables.show', id));
 };
+
+const myPeriods = (id) => {
+    router.get(route('teacher.timetables.periods', id));
+};
 </script>
 
 <template>
@@ -91,6 +95,13 @@ const preview = (id) => {
                                             @click="preview(t.id)"
                                         >
                                             Preview
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="rounded-md bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100"
+                                            @click="myPeriods(t.id)"
+                                        >
+                                            My Periods
                                         </button>
                                         <button
                                             type="button"
