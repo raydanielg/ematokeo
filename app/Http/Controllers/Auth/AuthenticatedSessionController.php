@@ -70,7 +70,7 @@ class AuthenticatedSessionController extends Controller
         }
 
         $targetRoute = 'dashboard';
-        if ($user && $user->role === 'admin') {
+        if ($user && $user->role === 'super_admin') {
             $targetRoute = 'admin.dashboard';
         } elseif ($user && $user->role === 'teacher') {
             $targetRoute = $user->must_change_password ? 'teacher.change-password' : 'teacher.dashboard';

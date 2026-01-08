@@ -12,7 +12,7 @@ const isSidebarOpen = ref(true);
 const mobileSidebarOpen = ref(false);
 const page = usePage();
 
-const isAdmin = computed(() => page.props.auth.user?.role === 'admin');
+const isAdmin = computed(() => page.props.auth.user?.role === 'super_admin');
 const isTeacher = computed(() => page.props.auth.user?.role === 'teacher');
 
 const userSidebarSections = [
