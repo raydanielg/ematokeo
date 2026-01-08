@@ -35,19 +35,17 @@ const editingId = ref(null);
 const form = reactive({
     class_id: '',
     stream: '',
-    description: '',
     subject_ids: [],
 });
 
-const openForm = () => {
+const openForm = (baseClassId = '') => {
     showForm.value = true;
     isEditing.value = false;
     editingId.value = null;
-    form.class_id = '';
+    form.class_id = baseClassId ? String(baseClassId) : '';
     form.stream = '';
-    form.description = '';
 
-    // Default: select first 7 subjects if available
+    // Default: select first few subjects if available
     const ids = (props.subjects || []).slice(0, 7).map((s) => s.id);
     form.subject_ids = ids;
 };
@@ -71,7 +69,6 @@ const editStream = (stream) => {
     editingId.value = stream.id;
     form.class_id = stream.parent_class_id ?? '';
     form.stream = stream.stream ?? '';
-    form.description = stream.description ?? '';
     form.subject_ids = Array.isArray(stream.subject_ids) ? [...stream.subject_ids] : [];
 };
 
@@ -84,15 +81,14 @@ const deleteStream = (stream) => {
 };
 
 const saveStream = () => {
-    if (!form.class_id || !form.stream || form.subject_ids.length < 7) {
-        alert('Please select class, stream and at least 7 subjects.');
+    if (!form.class_id || !form.stream || form.subject_ids.length < 1) {
+        alert('Please select class, stream name and at least 1 subject.');
         return;
     }
 
     const payload = {
         class_id: Number(form.class_id),
         stream: form.stream,
-        description: form.description,
         subject_ids: form.subject_ids,
     };
 
@@ -139,13 +135,13 @@ const saveStream = () => {
                             {{ isEditing ? 'Edit Stream' : 'Add New Stream' }}
                         </h3>
                         <p class="mt-0.5 text-[11px] text-gray-500">
-                            Define class, stream name and assign subjects. At least 7 subjects are required.
+                            Define class, stream name and assign subjects.
                         </p>
                     </div>
                     <button type="button" class="text-[11px] text-gray-500 hover:text-gray-700" @click="closeForm">Close</button>
                 </div>
 
-                <div class="grid gap-3 md:grid-cols-3">
+                <div class="grid gap-3 md:grid-cols-2">
                     <div>
                         <label class="mb-1 block text-[11px] font-medium">Class</label>
                         <select
@@ -159,28 +155,19 @@ const saveStream = () => {
                         </select>
                     </div>
                     <div>
-                        <label class="mb-1 block text-[11px] font-medium">Stream (e.g. A, B)</label>
+                        <label class="mb-1 block text-[11px] font-medium">Stream name</label>
                         <input
                             v-model="form.stream"
                             type="text"
-                            class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] uppercase focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            placeholder="A"
-                        />
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-[11px] font-medium">Description (optional)</label>
-                        <input
-                            v-model="form.description"
-                            type="text"
                             class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            placeholder="Short note about this stream"
+                            placeholder="e.g. A, B, Computer Science"
                         />
                     </div>
                 </div>
 
                 <div class="mt-3 border-t border-gray-100 pt-3">
                     <div class="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-                        Subjects (minimum 7)
+                        Subjects (minimum 1)
                     </div>
                     <div class="flex flex-wrap gap-2">
                         <label
@@ -199,7 +186,7 @@ const saveStream = () => {
                         </label>
                     </div>
                     <p class="mt-1 text-[10px] text-gray-500">
-                        At least 7 subjects are required for a stream. The first 7 are pre-selected when creating a new one.
+                        Select subjects for this specific stream (you can choose just one if needed).
                     </p>
                 </div>
 
@@ -222,24 +209,31 @@ const saveStream = () => {
             </div>
 
             <div
-                v-for="(items, level) in groupedByLevel"
-                :key="level"
+                v-for="base in baseClasses"
+                :key="`base-` + base.id"
                 class="rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100"
             >
-                <div class="mb-3 flex items-center justify-between">
+                <div class="mb-3 flex items-start justify-between gap-3">
                     <div>
                         <h3 class="text-sm font-semibold text-gray-800">
-                            {{ level === 'Other' ? 'Other Streams' : level }}
+                            {{ base.name }}
                         </h3>
                         <p class="text-[11px] text-gray-500">
-                            {{ items.length }} stream(s) in this level.
+                            {{ (streamsPerClass[base.id] || []).length }} stream(s)
                         </p>
                     </div>
+                    <button
+                        type="button"
+                        class="inline-flex items-center rounded-md bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
+                        @click="openForm(base.id)"
+                    >
+                        Add Stream
+                    </button>
                 </div>
 
-                <div v-if="items.length" class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                <div v-if="(streamsPerClass[base.id] || []).length" class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
                     <div
-                        v-for="c in items"
+                        v-for="c in streamsPerClass[base.id]"
                         :key="c.id"
                         class="flex flex-col justify-between rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-800 shadow-sm"
                     >
@@ -247,7 +241,7 @@ const saveStream = () => {
                             <div class="flex items-center justify-between">
                                 <div>
                                     <div class="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
-                                        {{ c.name }}
+                                        {{ base.name }} {{ c.stream || '' }}
                                     </div>
                                     <div class="text-[10px] text-gray-500">
                                         Stream: {{ c.stream || '—' }}
@@ -270,16 +264,13 @@ const saveStream = () => {
                                     </button>
                                 </div>
                             </div>
-                            <p v-if="c.description" class="mt-1 text-[11px] text-gray-600">
-                                {{ c.description }}
-                            </p>
                         </div>
 
                         <div class="mt-2 border-t border-gray-100 pt-2">
                             <div class="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                                 Subjects
                             </div>
-                            <div v-if="c.subject_codes.length" class="flex flex-wrap gap-1">
+                            <div v-if="c.subject_codes && c.subject_codes.length" class="flex flex-wrap gap-1">
                                 <span
                                     v-for="code in c.subject_codes"
                                     :key="code"
@@ -295,7 +286,7 @@ const saveStream = () => {
                     </div>
                 </div>
                 <div v-else class="rounded-lg border border-dashed border-gray-200 bg-gray-50 p-3 text-[11px] text-gray-500">
-                    No streams have been created for this class yet. Use the Add Stream button above.
+                    No streams for this class yet. Click Add Stream to create.
                 </div>
             </div>
 

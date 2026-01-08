@@ -37,6 +37,27 @@ const saveError = ref(null);
 const showRegistrationSuccess = ref(false);
 const errors = ref({});
 
+const toast = reactive({
+    show: false,
+    variant: 'success',
+    title: '',
+    message: '',
+});
+
+let toastTimer = null;
+
+const showToast = (variant, title, message) => {
+    toast.variant = variant;
+    toast.title = title;
+    toast.message = message;
+    toast.show = true;
+
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+        toast.show = false;
+    }, 3500);
+};
+
 const page = usePage();
 
 onMounted(() => {
@@ -58,8 +79,12 @@ const saveField = (field) => {
         { [field]: form[field] },
         {
             preserveScroll: true,
+            onSuccess: () => {
+                showToast('success', 'Saved successfully', 'Your changes have been saved.');
+            },
             onError: (err) => {
                 errors.value = err;
+                showToast('danger', 'Save failed', 'Please check the field and try again.');
             },
             onFinish: () => {
                 saving[field] = false;
@@ -90,6 +115,7 @@ const saveAll = () => {
             onSuccess: () => {
                 saveStatus.value = 'success';
                 saveError.value = null;
+                showToast('success', 'Saved successfully', 'Your school information has been saved.');
             },
             onError: (err) => {
                 saveStatus.value = 'error';
@@ -97,6 +123,11 @@ const saveAll = () => {
                 if (err.name) {
                     saveError.value = err.name[0];
                 }
+                showToast(
+                    'danger',
+                    'Save failed',
+                    saveError.value || 'Something went wrong while saving. Please check the fields and try again.',
+                );
             },
             onFinish: () => {
                 savingAll.value = false;
@@ -118,6 +149,12 @@ const deleteSubject = (id) => {
     <Head title="School Information" />
 
     <AuthenticatedLayout>
+        <div v-if="toast.show" class="pointer-events-none fixed right-4 top-4 z-50 w-full max-w-sm">
+            <div class="pointer-events-auto">
+                <Alert :variant="toast.variant" :title="toast.title" :message="toast.message" />
+            </div>
+        </div>
+
         <template #header>
             <div>
                 <h2 class="text-2xl font-semibold leading-tight text-gray-800">

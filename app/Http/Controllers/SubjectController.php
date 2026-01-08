@@ -28,7 +28,7 @@ class SubjectController extends Controller
             'class_levels',
         ]);
 
-        $classes = SchoolClass::orderBy('name')->get([
+        $classes = SchoolClass::orderBy('id')->get([
             'id',
             'name',
         ]);
@@ -74,25 +74,39 @@ class SubjectController extends Controller
             'subject_code' => ['required', 'string', 'max:10'],
             'name' => ['required', 'string', 'max:255'],
             'class_levels' => ['nullable', 'string', 'max:255'],
-            'description' => ['nullable', 'string'],
             'class_id' => ['nullable', 'integer', 'exists:school_classes,id'],
+            'class_ids' => ['sometimes', 'array'],
+            'class_ids.*' => ['integer', 'exists:school_classes,id'],
             'assign_to_current_user' => ['sometimes', 'boolean'],
         ]);
+
+        $classIds = [];
+        if (! empty($validated['class_ids']) && is_array($validated['class_ids'])) {
+            $classIds = $validated['class_ids'];
+        } elseif (! empty($validated['class_id'])) {
+            $classIds = [$validated['class_id']];
+        }
+
+        $classLevels = $validated['class_levels'] ?? null;
+        if (! empty($classIds)) {
+            $classLevels = SchoolClass::whereIn('id', $classIds)
+                ->orderBy('id')
+                ->pluck('name')
+                ->implode(', ');
+        }
 
         $subject = Subject::create([
             'school_id' => $request->user()?->school_id,
             'subject_code' => $validated['subject_code'],
             'name' => $validated['name'],
-            'class_levels' => $validated['class_levels'] ?? null,
-            'description' => $validated['description'] ?? null,
+            'class_levels' => $classLevels,
         ]);
 
-        // Optionally assign this subject to a specific class immediately
-        if (! empty($validated['class_id'])) {
-            $class = SchoolClass::find($validated['class_id']);
-            if ($class) {
+        // Optionally assign this subject to selected classes immediately
+        if (! empty($classIds)) {
+            SchoolClass::whereIn('id', $classIds)->each(function (SchoolClass $class) use ($subject) {
                 $class->subjects()->syncWithoutDetaching([$subject->id]);
-            }
+            });
         }
 
         // Optionally assign this subject to the authenticated user (teacher)

@@ -1,5 +1,5 @@
 <script setup>
-import GuestLayout from '@/Layouts/GuestLayout.vue';
+import AuthLayout from '@/Layouts/AuthLayout.vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
@@ -18,21 +18,19 @@ const submit = () => {
 </script>
 
 <template>
-    <GuestLayout>
+    <AuthLayout :compact="true">
         <Head title="Confirm Password" />
 
-        <div class="mb-4 text-sm text-gray-600">
-            This is a secure area of the application. Please confirm your
-            password before continuing.
-        </div>
+        <h1 class="text-xl font-bold text-slate-900">Confirm password</h1>
+        <p class="mt-1 text-sm text-slate-600">Please confirm your password before continuing.</p>
 
-        <form @submit.prevent="submit">
+        <form @submit.prevent="submit" class="space-y-6">
             <div>
-                <InputLabel for="password" value="Password" />
+                <InputLabel for="password" value="Password" class="text-slate-700 text-xs font-semibold" />
                 <TextInput
                     id="password"
                     type="password"
-                    class="mt-1 block w-full"
+                    class="mt-1 block w-full h-10 rounded-lg border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-400 focus:ring-indigo-100"
                     v-model="form.password"
                     required
                     autocomplete="current-password"
@@ -41,9 +39,9 @@ const submit = () => {
                 <InputError class="mt-2" :message="form.errors.password" />
             </div>
 
-            <div class="mt-4 flex justify-end">
+            <div class="flex justify-end">
                 <PrimaryButton
-                    class="ms-4"
+                    class="h-10 rounded-lg bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800"
                     :class="{ 'opacity-25': form.processing }"
                     :disabled="form.processing"
                 >
@@ -51,5 +49,5 @@ const submit = () => {
                 </PrimaryButton>
             </div>
         </form>
-    </GuestLayout>
+    </AuthLayout>
 </template>

@@ -1,6 +1,11 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head } from '@inertiajs/vue3';
+import { Head, router } from '@inertiajs/vue3';
+
+const getQueryExam = () => {
+    const url = new URL(window.location.href);
+    return url.searchParams.get('exam') || '';
+};
 
 const props = defineProps({
     class: Object,
@@ -8,11 +13,29 @@ const props = defineProps({
     exam: Object,
     students: Array,
     summary: Object,
+    streams: Array,
     year: [String, Number],
 });
 
 const printReport = () => {
     window.print();
+};
+
+const onStreamChange = (e) => {
+    const classId = e.target.value;
+    if (!classId) {
+        return;
+    }
+
+    const params = new URLSearchParams();
+    const examId = props.exam?.id || getQueryExam();
+    if (examId) {
+        params.set('exam', examId);
+    }
+
+    const query = params.toString();
+    const url = route('reports.classes.show', classId) + (query ? `?${query}` : '');
+    router.visit(url);
 };
 </script>
 
@@ -64,7 +87,7 @@ const printReport = () => {
                         {{ school?.address_line ?? '' }}
                     </div>
                     <div class="text-[10px] text-gray-700">
-                        SIMU: {{ school?.phone ?? '........' }}, EMAIL: {{ school?.email ?? '........' }}
+                        Simu: {{ school?.phone ?? '........' }}, Email: {{ school?.email ?? '........' }}
                     </div>
                 </div>
                 <div class="mt-2 text-[11px] font-semibold uppercase tracking-wide text-gray-800">
@@ -72,7 +95,22 @@ const printReport = () => {
                 </div>
                 <div class="text-[10px] text-gray-600">
                     KIDATO: <span class="font-semibold">{{ props.class.level }}</span>
-                    <span v-if="props.class.stream"> STREAM: <span class="font-semibold">{{ props.class.stream }}</span></span>
+                    <span class="ml-2">
+                        STREAM:
+                        <select
+                            class="ml-1 rounded border border-gray-300 bg-white px-1 py-0.5 text-[10px] text-gray-700"
+                            :value="props.class.id"
+                            @change="onStreamChange"
+                        >
+                            <option
+                                v-for="s in (streams || [])"
+                                :key="s.id"
+                                :value="s.id"
+                            >
+                                {{ s.stream || '-' }}
+                            </option>
+                        </select>
+                    </span>
                     &nbsp;·&nbsp;
                     MWAKA: <span class="font-semibold">{{ exam?.academic_year || year }}</span>
                 </div>

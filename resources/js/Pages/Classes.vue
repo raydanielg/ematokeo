@@ -3,10 +3,14 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import Alert from '@/Components/Alert.vue';
 import { Head, router } from '@inertiajs/vue3';
 import { computed, reactive, ref, watch } from 'vue';
-import { BookOpen } from 'lucide-vue-next';
+import { BookOpen, Layers, Pencil, Trash2, X } from 'lucide-vue-next';
 
 const props = defineProps({
     classes: {
+        type: Array,
+        default: () => [],
+    },
+    streams: {
         type: Array,
         default: () => [],
     },
@@ -51,8 +55,151 @@ watch(
 const selectedIds = ref([]);
 const isBulkDeleting = ref(false);
 const isImportingClasses = ref(false);
-const showImportModal = ref(false);
-const selectedImportLevel = ref('');
+
+const showSubjectsModal = ref(false);
+const subjectsModalClass = ref(null);
+
+const showStreamsModal = ref(false);
+const streamsModalBaseClass = ref(null);
+const activeStreamTab = ref('');
+
+const streamForm = reactive({
+    stream: '',
+    subject_ids: [],
+});
+const isSavingStream = ref(false);
+
+const toast = reactive({
+    show: false,
+    variant: 'success',
+    title: '',
+    message: '',
+});
+
+let toastTimer = null;
+
+const showToast = (variant, title, message) => {
+    toast.variant = variant;
+    toast.title = title;
+    toast.message = message;
+    toast.show = true;
+
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+        toast.show = false;
+    }, 3500);
+};
+
+const isLevelLockedToSchool = computed(() => !!props.schoolLevel);
+
+const subjectsById = computed(() => {
+    const map = new Map();
+    (props.subjects || []).forEach((s) => map.set(String(s.id), s));
+    return map;
+});
+
+const streamsPerClass = computed(() => {
+    const map = {};
+    (props.streams || []).forEach((s) => {
+        const key = String(s.parent_class_id || '');
+        if (!key) return;
+        if (!map[key]) map[key] = [];
+        map[key].push(s);
+    });
+    return map;
+});
+
+const openSubjectsModal = (row) => {
+    subjectsModalClass.value = row;
+    showSubjectsModal.value = true;
+};
+
+const closeSubjectsModal = () => {
+    showSubjectsModal.value = false;
+    subjectsModalClass.value = null;
+};
+
+const openStreamsModal = (row) => {
+    streamsModalBaseClass.value = row;
+    showStreamsModal.value = true;
+
+    const items = streamsPerClass.value[String(row.id)] || [];
+    activeStreamTab.value = items.length ? String(items[0].id) : 'new';
+    setActiveStreamTab(activeStreamTab.value);
+};
+
+const closeStreamsModal = () => {
+    showStreamsModal.value = false;
+    streamsModalBaseClass.value = null;
+    activeStreamTab.value = '';
+    streamForm.stream = '';
+    streamForm.subject_ids = [];
+    isSavingStream.value = false;
+};
+
+const setActiveStreamTab = (id) => {
+    activeStreamTab.value = id;
+    if (id === 'new') {
+        streamForm.stream = '';
+        streamForm.subject_ids = [];
+        return;
+    }
+
+    const items = streamsPerClass.value[String(streamsModalBaseClass.value?.id || '')] || [];
+    const stream = items.find((s) => String(s.id) === String(id));
+    if (!stream) return;
+    streamForm.stream = stream.stream || '';
+    streamForm.subject_ids = Array.isArray(stream.subject_ids) ? [...stream.subject_ids] : [];
+};
+
+const toggleStreamSubject = (subjectId) => {
+    const idx = streamForm.subject_ids.indexOf(subjectId);
+    if (idx === -1) {
+        streamForm.subject_ids.push(subjectId);
+    } else {
+        streamForm.subject_ids.splice(idx, 1);
+    }
+};
+
+const saveStream = () => {
+    if (!streamsModalBaseClass.value || isSavingStream.value) return;
+    if (!streamForm.stream || !streamForm.subject_ids.length) return;
+
+    isSavingStream.value = true;
+
+    const payload = {
+        class_id: Number(streamsModalBaseClass.value.id),
+        stream: streamForm.stream,
+        subject_ids: streamForm.subject_ids,
+    };
+
+    if (activeStreamTab.value && activeStreamTab.value !== 'new') {
+        router.post(route('streams.update', activeStreamTab.value), payload, {
+            preserveScroll: true,
+            onSuccess: () => {
+                router.reload({ only: ['streams'] });
+            },
+            onFinish: () => {
+                isSavingStream.value = false;
+            },
+        });
+    } else {
+        router.post(route('streams.store'), payload, {
+            preserveScroll: true,
+            onSuccess: () => {
+                router.reload({ only: ['streams'] });
+            },
+            onFinish: () => {
+                isSavingStream.value = false;
+            },
+        });
+    }
+};
+
+const deleteStream = (streamId) => {
+    if (!streamId) return;
+    openConfirm('delete-stream', String(streamId), 'Are you sure you want to delete this stream? This action cannot be undone.');
+};
 
 // New state for single-class subject assignment panel
 const selectedClassId = ref(null);
@@ -240,29 +387,27 @@ const bulkDelete = () => {
     openConfirm('delete-bulk', [...selectedIds.value], 'Are you sure you want to delete all selected classes? This action cannot be undone.');
 };
 
-const openImportModal = () => {
-    selectedImportLevel.value = '';
-    showImportModal.value = true;
-};
-
-const closeImportModal = () => {
-    showImportModal.value = false;
-    selectedImportLevel.value = '';
-};
-
 const confirmImport = () => {
-    if (!selectedImportLevel.value || isImportingClasses.value) return;
+    const levelToImport = props.schoolLevel || '';
+    if (!levelToImport) {
+        showToast('danger', 'Missing school level', 'Please set your school level in School Information first.');
+        return;
+    }
+    if (isImportingClasses.value) return;
 
     isImportingClasses.value = true;
 
     router.post(
         route('classes.bulk-create-standard'),
-        { level: selectedImportLevel.value },
+        { level: levelToImport },
         {
             preserveScroll: true,
             onSuccess: () => {
-                closeImportModal();
                 router.reload({ only: ['classes'] });
+                showToast('success', 'Import complete', 'Classes have been imported and updated in the table.');
+            },
+            onError: () => {
+                showToast('danger', 'Import failed', 'Something went wrong while importing classes. Please try again.');
             },
             onFinish: () => {
                 isImportingClasses.value = false;
@@ -293,6 +438,13 @@ const confirmProceed = () => {
                 },
             },
         );
+    } else if (confirmActionType.value === 'delete-stream' && confirmPayload.value) {
+        router.delete(route('streams.destroy', confirmPayload.value), {
+            preserveScroll: true,
+            onSuccess: () => {
+                router.reload({ only: ['streams'] });
+            },
+        });
     }
 
     closeConfirm();
@@ -339,6 +491,12 @@ const saveSelectedClassAssignments = () => {
     <Head title="Classes" />
 
     <AuthenticatedLayout>
+        <div v-if="toast.show" class="pointer-events-none fixed right-4 top-4 z-50 w-full max-w-sm">
+            <div class="pointer-events-auto">
+                <Alert :variant="toast.variant" :title="toast.title" :message="toast.message" />
+            </div>
+        </div>
+
         <template #header>
             <div class="flex items-center justify-between">
                 <div>
@@ -356,15 +514,6 @@ const saveSelectedClassAssignments = () => {
                         @click="openCreate"
                     >
                         + Add Class
-                    </button>
-                    <button
-                        type="button"
-                        class="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 flex items-center gap-1"
-                        :disabled="isImportingClasses"
-                        @click="openImportModal"
-                    >
-                        <BookOpen class="w-4 h-4" />
-                        <span>Import Classes</span>
                     </button>
                     <button
                         type="button"
@@ -503,8 +652,12 @@ const saveSelectedClassAssignments = () => {
                                 </div>
                             </td>
                             <td class="px-3 py-2 align-top">
-                                <div class="text-[11px] text-gray-700">
-                                    <span class="font-medium">{{
+                                <button
+                                    type="button"
+                                    class="text-left text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
+                                    @click="openSubjectsModal(row)"
+                                >
+                                    {{
                                         subjects
                                             .filter((s) =>
                                                 row.subject_ids
@@ -513,30 +666,234 @@ const saveSelectedClassAssignments = () => {
                                             )
                                             .map((s) => s.subject_code)
                                             .join(', ') || 'None'
-                                    }}</span>
-                                </div>
+                                    }}
+                                </button>
                             </td>
                             <td class="px-3 py-2 align-top">
                                 <div class="flex justify-end gap-2">
                                     <button
                                         type="button"
-                                        class="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700 ring-1 ring-blue-100 hover:bg-blue-100"
-                                        @click="openEdit(row)"
+                                        class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-violet-50 text-violet-700 ring-1 ring-violet-100 hover:bg-violet-100"
+                                        title="Streams"
+                                        aria-label="Streams"
+                                        @click="openStreamsModal(row)"
                                     >
-                                        Edit
+                                        <Layers class="h-4 w-4" />
                                     </button>
                                     <button
                                         type="button"
-                                        class="rounded-md bg-red-50 px-2 py-1 text-[11px] font-medium text-red-700 ring-1 ring-red-100 hover:bg-red-100"
+                                        class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100"
+                                        title="Edit"
+                                        aria-label="Edit"
+                                        @click="openEdit(row)"
+                                    >
+                                        <Pencil class="h-4 w-4" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-red-50 text-red-700 ring-1 ring-red-100 hover:bg-red-100"
+                                        title="Delete"
+                                        aria-label="Delete"
                                         @click="deleteClass(row.id)"
                                     >
-                                        Delete
+                                        <Trash2 class="h-4 w-4" />
                                     </button>
                                 </div>
                             </td>
                         </tr>
                     </tbody>
                 </table>
+            </div>
+        </div>
+
+        <!-- Subjects modal (view) -->
+        <div
+            v-if="showSubjectsModal && subjectsModalClass"
+            class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6"
+        >
+            <div class="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5">
+                <div class="flex items-start justify-between border-b border-gray-100 bg-gradient-to-r from-emerald-50 to-white px-5 py-4">
+                    <div>
+                        <h3 class="text-base font-semibold text-gray-900">Subjects</h3>
+                        <p class="mt-1 text-[11px] text-gray-600">
+                            {{ subjectsModalClass.name }}
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        class="rounded-full p-1 text-gray-400 hover:bg-white hover:text-gray-600"
+                        @click="closeSubjectsModal"
+                    >
+                        <X class="h-4 w-4" />
+                    </button>
+                </div>
+
+                <div class="px-5 py-4">
+                    <div class="flex flex-wrap gap-2">
+                        <span
+                            v-for="id in (subjectsModalClass.subject_ids || [])"
+                            :key="`sub-` + id"
+                            class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-100"
+                        >
+                            {{ subjectsById.get(String(id))?.subject_code || id }}
+                        </span>
+                        <span
+                            v-if="!(subjectsModalClass.subject_ids && subjectsModalClass.subject_ids.length)"
+                            class="text-xs text-gray-500"
+                        >
+                            No subjects assigned.
+                        </span>
+                    </div>
+                </div>
+
+                <div class="flex justify-end border-t border-gray-100 px-5 py-3">
+                    <button
+                        type="button"
+                        class="rounded-md bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100"
+                        @click="closeSubjectsModal"
+                    >
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Streams modal (tabbed) -->
+        <div
+            v-if="showStreamsModal && streamsModalBaseClass"
+            class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6"
+        >
+            <div class="w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5">
+                <div class="flex items-start justify-between border-b border-gray-100 bg-gradient-to-r from-violet-50 to-white px-5 py-4">
+                    <div>
+                        <h3 class="text-base font-semibold text-gray-900">Streams</h3>
+                        <p class="mt-1 text-[11px] text-gray-600">
+                            Manage streams for {{ streamsModalBaseClass.name }}
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        class="rounded-full p-1 text-gray-400 hover:bg-white hover:text-gray-600"
+                        @click="closeStreamsModal"
+                    >
+                        <X class="h-4 w-4" />
+                    </button>
+                </div>
+
+                <div class="border-b border-gray-100 px-5 py-3">
+                    <div class="flex flex-wrap gap-2">
+                        <button
+                            v-for="s in (streamsPerClass[String(streamsModalBaseClass.id)] || [])"
+                            :key="`tab-` + s.id"
+                            type="button"
+                            class="rounded-md px-3 py-1.5 text-[11px] font-semibold"
+                            :class="activeStreamTab === String(s.id) ? 'bg-violet-600 text-white' : 'bg-gray-50 text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100'"
+                            @click="setActiveStreamTab(String(s.id))"
+                        >
+                            {{ s.stream || 'Stream' }}
+                        </button>
+                        <button
+                            type="button"
+                            class="rounded-md px-3 py-1.5 text-[11px] font-semibold"
+                            :class="activeStreamTab === 'new' ? 'bg-violet-600 text-white' : 'bg-gray-50 text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100'"
+                            @click="setActiveStreamTab('new')"
+                        >
+                            + New
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid gap-4 px-5 py-4 md:grid-cols-2">
+                    <div class="space-y-3 text-xs text-gray-700">
+                        <div>
+                            <label class="mb-1 block font-medium">Stream name</label>
+                            <input
+                                v-model="streamForm.stream"
+                                type="text"
+                                class="w-full rounded-md border border-gray-300 px-3 py-2 text-xs focus:border-violet-500 focus:outline-none focus:ring-violet-500"
+                                placeholder="e.g. A, B, Science"
+                            />
+                        </div>
+
+                        <div>
+                            <div class="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                                Subjects (minimum 1)
+                            </div>
+                            <div class="flex flex-wrap gap-2">
+                                <label
+                                    v-for="subject in subjects"
+                                    :key="`stream-sub-` + subject.id"
+                                    class="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-medium"
+                                    :class="
+                                        streamForm.subject_ids.includes(subject.id)
+                                            ? 'border-violet-500 bg-violet-50 text-violet-800'
+                                            : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                                    "
+                                >
+                                    <input
+                                        type="checkbox"
+                                        class="h-3 w-3 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+                                        :value="subject.id"
+                                        :checked="streamForm.subject_ids.includes(subject.id)"
+                                        @change="toggleStreamSubject(subject.id)"
+                                    />
+                                    <span>{{ subject.subject_code }}</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="space-y-3">
+                        <div class="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700">
+                            <div class="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                                Current stream subjects
+                            </div>
+                            <div class="flex flex-wrap gap-1">
+                                <span
+                                    v-for="id in streamForm.subject_ids"
+                                    :key="`pill-` + id"
+                                    class="inline-flex items-center rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-gray-700 ring-1 ring-gray-200"
+                                >
+                                    {{ subjectsById.get(String(id))?.subject_code || id }}
+                                </span>
+                                <span v-if="!streamForm.subject_ids.length" class="text-[11px] text-gray-500">
+                                    Select subjects on the left.
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between border-t border-gray-100 px-5 py-3">
+                    <button
+                        v-if="activeStreamTab && activeStreamTab !== 'new'"
+                        type="button"
+                        class="rounded-md bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 ring-1 ring-red-200 hover:bg-red-100"
+                        @click="deleteStream(activeStreamTab)"
+                    >
+                        Delete stream
+                    </button>
+                    <div v-else></div>
+
+                    <div class="flex gap-2">
+                        <button
+                            type="button"
+                            class="rounded-md bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100"
+                            @click="closeStreamsModal"
+                        >
+                            Close
+                        </button>
+                        <button
+                            type="button"
+                            class="rounded-md bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            :disabled="isSavingStream || !streamForm.stream || !streamForm.subject_ids.length"
+                            @click="saveStream"
+                        >
+                            <span v-if="!isSavingStream">Save</span>
+                            <span v-else>Saving...</span>
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -621,87 +978,6 @@ const saveSelectedClassAssignments = () => {
                         </button>
                     </div>
                 </form>
-            </div>
-        </div>
-
-        <!-- Import Classes Modal -->
-        <div
-            v-if="showImportModal"
-            class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4"
-        >
-            <div class="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
-                <div class="mb-4 flex items-center gap-2">
-                    <BookOpen class="w-5 h-5 text-blue-600" />
-                    <h3 class="text-lg font-semibold text-gray-800">
-                        Import Classes
-                    </h3>
-                </div>
-                <p class="mb-4 text-sm text-gray-600">
-                    Select the school level to import standard classes for your school.
-                </p>
-
-                <div class="space-y-3 mb-6">
-                    <label class="flex items-center gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50" :class="selectedImportLevel === 'Primary' ? 'border-blue-500 bg-blue-50' : ''">
-                        <input
-                            type="radio"
-                            v-model="selectedImportLevel"
-                            value="Primary"
-                            class="w-4 h-4 text-blue-600"
-                        />
-                        <div>
-                            <p class="font-medium text-gray-900">Primary</p>
-                            <p class="text-xs text-gray-500">Class I - VII</p>
-                        </div>
-                    </label>
-
-                    <label class="flex items-center gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50" :class="selectedImportLevel === 'O-Level' ? 'border-blue-500 bg-blue-50' : ''">
-                        <input
-                            type="radio"
-                            v-model="selectedImportLevel"
-                            value="O-Level"
-                            class="w-4 h-4 text-blue-600"
-                        />
-                        <div>
-                            <p class="font-medium text-gray-900">O-Level (Secondary)</p>
-                            <p class="text-xs text-gray-500">Form I - IV</p>
-                        </div>
-                    </label>
-
-                    <label class="flex items-center gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50" :class="selectedImportLevel === 'A-Level' ? 'border-blue-500 bg-blue-50' : ''">
-                        <input
-                            type="radio"
-                            v-model="selectedImportLevel"
-                            value="A-Level"
-                            class="w-4 h-4 text-blue-600"
-                        />
-                        <div>
-                            <p class="font-medium text-gray-900">A-Level (Secondary)</p>
-                            <p class="text-xs text-gray-500">Form V - VI</p>
-                        </div>
-                    </label>
-                </div>
-
-                <div class="flex justify-end gap-2">
-                    <button
-                        type="button"
-                        class="rounded-md bg-gray-50 px-4 py-2 text-sm font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100"
-                        @click="closeImportModal"
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        type="button"
-                        class="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 flex items-center gap-1"
-                        :disabled="!selectedImportLevel || isImportingClasses"
-                        @click="confirmImport"
-                    >
-                        <span v-if="isImportingClasses" class="inline-flex items-center gap-1">
-                            <span class="inline-flex h-3 w-3 animate-spin rounded-full border border-white border-t-transparent"></span>
-                            <span>Importing...</span>
-                        </span>
-                        <span v-else>Import</span>
-                    </button>
-                </div>
             </div>
         </div>
 

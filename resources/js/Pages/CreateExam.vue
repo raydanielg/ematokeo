@@ -12,10 +12,6 @@ const props = defineProps({
         type: [String, Number],
         default: () => new Date().getFullYear(),
     },
-    classLevels: {
-        type: Array,
-        default: () => [],
-    },
     exams: {
         type: Array,
         default: () => [],
@@ -30,7 +26,7 @@ const form = useForm({
     end_date: '',
     term: '',
     notes: '',
-    levels: [],
+    class_ids: [],
 });
 
 let editingExamId = null;
@@ -76,7 +72,7 @@ const startEdit = (exam) => {
     form.end_date = exam.end_date || '';
     form.term = exam.term || '';
     form.notes = exam.notes || '';
-    form.levels = Array.isArray(exam.levels) ? [...exam.levels] : [];
+    form.class_ids = Array.isArray(exam.class_ids) ? [...exam.class_ids] : [];
 };
 </script>
 
@@ -122,6 +118,7 @@ const startEdit = (exam) => {
                                 <option value="">Select type</option>
                                 <option value="Midterm">Midterm</option>
                                 <option value="Terminal">Terminal</option>
+                                <option value="Joint">Joint</option>
                                 <option value="Mock">Mock</option>
                                 <option value="Trial">Trial</option>
                                 <option value="Other">Other</option>
@@ -193,18 +190,18 @@ const startEdit = (exam) => {
                     Classes Sitting For This Exam
                 </h3>
                 <p class="mb-2 text-[11px] text-gray-500">
-                    Select one or more class levels that will sit for this exam (e.g. Form I, Form II). Streams (A, B, C) will be handled automatically.
+                    Select one or more classes that will sit for this exam.
                 </p>
                 <div class="max-h-64 space-y-1 overflow-y-auto pr-1 text-xs text-gray-700">
                     <label
-                        v-for="level in classLevels"
-                        :key="level"
+                        v-for="cls in classes"
+                        :key="cls.id"
                         class="flex items-center justify-between rounded px-2 py-1 hover:bg-gray-50"
                     >
-                        <span class="font-medium text-gray-800">{{ level }}</span>
+                        <span class="font-medium text-gray-800">{{ cls.name }}</span>
                         <input
-                            v-model="form.levels"
-                            :value="level"
+                            v-model="form.class_ids"
+                            :value="cls.id"
                             type="checkbox"
                             class="h-3 w-3 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
                         />

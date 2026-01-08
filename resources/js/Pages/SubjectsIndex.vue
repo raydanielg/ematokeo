@@ -18,46 +18,65 @@ const isAddModalOpen = ref(false);
 const isSavingSubject = ref(false);
 
 const form = reactive({
-    class_id: '',
+    class_ids: [],
     subject_code: '',
     name: '',
-    class_levels: '',
-    description: '',
     assign_to_current_user: false,
 });
 
 // Hardcoded suggested subjects (templates) matching SubjectSeeder
 const subjectTemplates = [
+    { code: 'KIS', name: 'Kiswahili' },
+    { code: 'ENG', name: 'English Language' },
+    { code: 'B/MAT', name: 'Basic Mathematics' },
     { code: 'CIV', name: 'Civics' },
     { code: 'HIS', name: 'History' },
     { code: 'GEO', name: 'Geography' },
-    { code: 'KIS', name: 'Kiswahili' },
-    { code: 'ENG', name: 'English Language' },
-    { code: 'PHY', name: 'Physics' },
-    { code: 'CHE', name: 'Chemistry' },
     { code: 'BIO', name: 'Biology' },
-    { code: 'B/MAT', name: 'Basic Mathematics' },
-    { code: 'BOOK', name: 'Book Keeping' },
-    { code: 'COMM', name: 'Commerce' },
-    { code: 'ECON', name: 'Economics' },
+    { code: 'CHE', name: 'Chemistry' },
+    { code: 'PHY', name: 'Physics' },
     { code: 'GK', name: 'General Knowledge' },
-    { code: 'COMP', name: 'Computer Studies' },
     { code: 'AGRI', name: 'Agriculture' },
+    { code: 'COMM', name: 'Commerce' },
+    { code: 'BOOK', name: 'Book Keeping' },
+    { code: 'ECON', name: 'Economics' },
+    { code: 'ACC', name: 'Accountancy' },
+    { code: 'ENT', name: 'Entrepreneurship' },
+    { code: 'COMP', name: 'Computer Studies' },
+    { code: 'ICT', name: 'Information and Computer Studies' },
+    { code: 'LIT', name: 'Literature in English' },
+    { code: 'K/F', name: 'Kiswahili for Foreigners' },
+    { code: 'ARAB', name: 'Arabic' },
     { code: 'FREN', name: 'French' },
     { code: 'GER', name: 'German' },
-    { code: 'ARAB', name: 'Arabic' },
-    { code: 'FINE', name: 'Fine Art' },
+    { code: 'CHI', name: 'Chinese' },
+    { code: 'ISL', name: 'Islamic Knowledge' },
+    { code: 'BIB', name: 'Bible Knowledge' },
+    { code: 'ECO', name: 'Ecology' },
+    { code: 'HSC', name: 'Home Science' },
+    { code: 'F/N', name: 'Food and Nutrition' },
+    { code: 'TD', name: 'Technical Drawing' },
+    { code: 'WD', name: 'Woodwork' },
+    { code: 'MW', name: 'Metalwork' },
+    { code: 'BC', name: 'Building Construction' },
+    { code: 'ELC', name: 'Electrical Installation' },
+    { code: 'AUT', name: 'Automotive Mechanics' },
+    { code: 'PLU', name: 'Plumbing' },
+    { code: 'TAIL', name: 'Tailoring' },
+    { code: 'ART', name: 'Fine Art' },
     { code: 'MUS', name: 'Music' },
+    { code: 'PE', name: 'Physical Education' },
+    { code: 'SPO', name: 'Sports' },
+    { code: 'THE', name: 'Theatre Arts' },
+    { code: 'BUS', name: 'Business Studies' },
 ];
 
 const selectedTemplateCode = ref('');
 
 const openAddModal = () => {
-    form.class_id = '';
+    form.class_ids = [];
     form.subject_code = '';
     form.name = '';
-    form.class_levels = '';
-    form.description = '';
     form.assign_to_current_user = false;
     selectedTemplateCode.value = '';
     isAddModalOpen.value = true;
@@ -84,6 +103,15 @@ const saveSubject = () => {
             isSavingSubject.value = false;
         },
     });
+};
+
+const toggleSelectedClass = (classId) => {
+    const idx = form.class_ids.indexOf(classId);
+    if (idx === -1) {
+        form.class_ids.push(classId);
+    } else {
+        form.class_ids.splice(idx, 1);
+    }
 };
 
 watch(
@@ -214,12 +242,12 @@ watch(
                 </div>
                 <form class="space-y-3 text-xs text-gray-700" @submit.prevent="saveSubject">
                     <div>
-                        <label class="mb-1 block font-medium">Choose from suggested subjects</label>
+                        <label class="mb-1 block font-medium">Suggested subjects</label>
                         <select
                             v-model="selectedTemplateCode"
-                            class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                            class="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
                         >
-                            <option value="">-- Type manually or pick from this list --</option>
+                            <option value="">-- Select from suggested list (or type manually below) --</option>
                             <option
                                 v-for="tpl in subjectTemplates"
                                 :key="tpl.code"
@@ -228,24 +256,34 @@ watch(
                                 {{ tpl.code }} - {{ tpl.name }}
                             </option>
                         </select>
+                        <p class="mt-2 text-[11px] text-gray-500">
+                            Ukichagua kwenye list, itajaza Subject Name na Code automatically. Ukikosa somo, andika manually.
+                        </p>
                     </div>
 
                     <div>
-                        <label class="mb-1 block font-medium">Select Class for this Subject</label>
-                        <select
-                            v-model="form.class_id"
-                            class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            required
-                        >
-                            <option value="" disabled>Select class...</option>
-                            <option
-                                v-for="c in classes"
-                                :key="c.id"
-                                :value="c.id"
-                            >
-                                {{ c.name }}
-                            </option>
-                        </select>
+                        <label class="mb-1 block font-medium">Select class(es) for this Subject</label>
+                        <div class="rounded-md border border-gray-200 bg-white p-2">
+                            <div class="grid grid-cols-2 gap-2">
+                                <label
+                                    v-for="c in classes"
+                                    :key="c.id"
+                                    class="flex cursor-pointer items-center gap-2 rounded-md border px-2 py-2 text-[11px]"
+                                    :class="form.class_ids.includes(c.id) ? 'border-emerald-300 bg-emerald-50' : 'border-gray-200 bg-white hover:bg-gray-50'"
+                                >
+                                    <input
+                                        type="checkbox"
+                                        class="h-3 w-3 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                        :checked="form.class_ids.includes(c.id)"
+                                        @change="toggleSelectedClass(c.id)"
+                                    />
+                                    <span class="font-medium text-gray-800">{{ c.name }}</span>
+                                </label>
+                            </div>
+                            <p class="mt-2 text-[11px] text-gray-500">
+                                You can select multiple classes.
+                            </p>
+                        </div>
                     </div>
 
                     <div class="grid grid-cols-2 gap-3">
@@ -269,16 +307,6 @@ watch(
                                 required
                             />
                         </div>
-                    </div>
-
-                    <div>
-                        <label class="mb-1 block font-medium">Description (optional)</label>
-                        <textarea
-                            v-model="form.description"
-                            rows="3"
-                            class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            placeholder="Any extra details about this subject"
-                        ></textarea>
                     </div>
 
                     <div class="flex items-center gap-2">

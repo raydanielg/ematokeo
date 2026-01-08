@@ -108,7 +108,7 @@ const onExamChange = (event) => {
                             <th class="border-b border-gray-200 px-3 py-1.5 text-left">Exam Name</th>
                             <th class="border-b border-gray-200 px-3 py-1.5 text-left">Year</th>
                             <th class="border-b border-gray-200 px-3 py-1.5 text-left">Type</th>
-                            <th class="border-b border-gray-200 px-3 py-1.5 text-left">Class Levels</th>
+                            <th class="border-b border-gray-200 px-3 py-1.5 text-left">Classes</th>
                             <th class="border-b border-gray-200 px-3 py-1.5 text-center">Status</th>
                             <th class="border-b border-gray-200 px-3 py-1.5 text-right">Action</th>
                         </tr>
@@ -134,13 +134,13 @@ const onExamChange = (event) => {
                                 {{ exam.type || '—' }}
                             </td>
                             <td class="px-3 py-1.5 align-top">
-                                <span v-if="exam.levels && exam.levels.length" class="inline-flex flex-wrap gap-1">
+                                <span v-if="exam.class_names && exam.class_names.length" class="inline-flex flex-wrap gap-1">
                                     <span
-                                        v-for="level in exam.levels"
-                                        :key="level"
+                                        v-for="cls in exam.class_names"
+                                        :key="cls"
                                         class="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-100"
                                     >
-                                        {{ level }}
+                                        {{ cls }}
                                     </span>
                                 </span>
                                 <span v-else class="text-gray-400">—</span>

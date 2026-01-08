@@ -100,7 +100,7 @@ const openClassReport = (classId) => {
                     <thead>
                         <tr class="bg-gray-50 text-gray-600">
                             <th class="border-b border-gray-200 px-3 py-1.5 text-left">Class</th>
-                            <th class="border-b border-gray-200 px-3 py-1.5 text-left">Stream</th>
+                            <th class="border-b border-gray-200 px-3 py-1.5 text-left">Streams</th>
                             <th class="border-b border-gray-200 px-3 py-1.5 text-right">Action</th>
                         </tr>
                     </thead>
@@ -112,21 +112,22 @@ const openClassReport = (classId) => {
                         </tr>
                         <tr
                             v-for="cls in classes"
-                            :key="cls.id"
+                            :key="cls.level"
                             class="border-b border-gray-100 text-gray-700 odd:bg-white even:bg-gray-50"
                         >
                             <td class="px-3 py-1.5 align-top text-[11px] font-medium text-gray-900">
                                 {{ cls.level }}
                             </td>
                             <td class="px-3 py-1.5 align-top text-[11px]">
-                                {{ cls.stream || '-' }}
+                                <span class="font-medium">{{ (cls.streams || []).length }}</span>
+                                <span class="text-gray-500">stream(s)</span>
                             </td>
                             <td class="px-3 py-1.5 align-top text-right">
                                 <button
                                     type="button"
                                     class="inline-flex items-center rounded-md bg-emerald-600 px-3 py-1 text-[10px] font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-gray-300"
-                                    :disabled="!filters.exam"
-                                    @click="openClassReport(cls.id)"
+                                    :disabled="!filters.exam || !(cls.streams && cls.streams.length)"
+                                    @click="openClassReport(cls.streams[0].id)"
                                 >
                                     Open Report
                                 </button>

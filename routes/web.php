@@ -26,6 +26,7 @@ use App\Models\Topic;
 use App\Models\Event;
 use App\Models\SmsNotification;
 use App\Models\Announcement;
+use App\Models\TimetableWeeklyLimit;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
@@ -33,52 +34,76 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Schema;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Inertia\Inertia;
 
 Route::get('/', function () {
-    return Inertia::render('Welcome', [
+    $schoolModel = School::query()->first();
+    $school = $schoolModel ? [
+        'email' => $schoolModel->email,
+        'head_teacher_phone' => $schoolModel->head_teacher_phone,
+    ] : null;
+
+    return Inertia::render('Home/Index', [
         'canLogin' => Route::has('login'),
-        'canRegister' => Route::has('register'),
-        'laravelVersion' => Application::VERSION,
-        'phpVersion' => PHP_VERSION,
+        'school' => $school,
     ]);
 });
 
 Route::get('/about', function () {
-    return Inertia::render('About', [
-        'canLogin' => Route::has('login'),
-        'canRegister' => Route::has('register'),
-    ]);
+    return redirect()->route('login');
 });
 
 Route::get('/blog', function () {
-    return Inertia::render('Blog', [
-        'canLogin' => Route::has('login'),
-        'canRegister' => Route::has('register'),
-    ]);
+    return redirect()->route('login');
 });
 
 Route::get('/blog/{id}', function () {
-    return Inertia::render('BlogDetail', [
-        'canLogin' => Route::has('login'),
-        'canRegister' => Route::has('register'),
-    ]);
+    return redirect()->route('login');
 });
 
 Route::get('/publications', function () {
-    return Inertia::render('Publications', [
-        'canLogin' => Route::has('login'),
-        'canRegister' => Route::has('register'),
-    ]);
+    return redirect()->route('login');
 });
 
 Route::get('/contact', function () {
-    return Inertia::render('Contact', [
-        'canLogin' => Route::has('login'),
-        'canRegister' => Route::has('register'),
-    ]);
+    return redirect()->route('login');
 });
+
+Route::get('/gallery', function () {
+    $schoolModel = School::query()->first();
+    $school = $schoolModel ? [
+        'email' => $schoolModel->email,
+        'head_teacher_phone' => $schoolModel->head_teacher_phone,
+    ] : null;
+
+    $imagesRoot = public_path('images');
+    $images = [];
+    if (File::exists($imagesRoot)) {
+        $images = collect(File::allFiles($imagesRoot))
+            ->filter(function (\SplFileInfo $file) {
+                $ext = strtolower($file->getExtension());
+                return in_array($ext, ['jpg', 'jpeg', 'png', 'webp', 'gif'], true);
+            })
+            ->map(function (\SplFileInfo $file) {
+                $relative = str_replace('\\', '/', $file->getRelativePathname());
+                return [
+                    'url' => url('/images/'.$relative),
+                    'name' => $file->getFilename(),
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    return Inertia::render('Gallery/Index', [
+        'school' => $school,
+        'images' => $images,
+    ]);
+})->name('gallery.index');
 
 Route::get('/success', function () {
     return Inertia::render('Auth/Success');
@@ -1424,7 +1449,7 @@ Route::middleware('auth')->group(function () {
             ->orderBy('academic_year', 'desc')
             ->pluck('academic_year');
 
-        $examQuery = Exam::with('classes:id,level')
+        $examQuery = Exam::with('classes:id,name,parent_class_id')
             ->orderByDesc('created_at');
 
         if ($yearFilter) {
@@ -1443,8 +1468,9 @@ Route::middleware('auth')->group(function () {
                 'academic_year',
             ])
             ->map(function (Exam $exam) {
-                $levels = $exam->classes
-                    ->pluck('level')
+                $classNames = $exam->classes
+                    ->whereNull('parent_class_id')
+                    ->pluck('name')
                     ->filter()
                     ->unique()
                     ->values()
@@ -1455,7 +1481,7 @@ Route::middleware('auth')->group(function () {
                     'name' => $exam->name,
                     'type' => $exam->type,
                     'academic_year' => $exam->academic_year,
-                    'levels' => $levels,
+                    'class_names' => $classNames,
                 ];
             });
 
@@ -1470,8 +1496,16 @@ Route::middleware('auth')->group(function () {
     })->name('results.process');
 
     Route::get('/results/class', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+        $schoolName = $schoolId
+            ? (\App\Models\School::query()->where('id', $schoolId)->value('name'))
+            : null;
+
         $yearFilter = $request->query('year');
         $examFilter = $request->query('exam');
+        $selectedClassId = $request->query('class');
+        $selectedStreamId = $request->query('stream');
 
         $years = Exam::select('academic_year')
             ->whereNotNull('academic_year')
@@ -1494,13 +1528,44 @@ Route::middleware('auth')->group(function () {
         $performance = collect();
         $topStudents = collect();
         $bottomStudents = collect();
+        $assignedClasses = collect();
+        $streams = collect();
+        $preview = null;
 
         if ($examFilter) {
-            $exam = Exam::find($examFilter);
+            $exam = Exam::with('classes:id,name,parent_class_id')->find($examFilter);
 
             if ($exam) {
+                $assignedClasses = $exam->classes
+                    ->whereNull('parent_class_id')
+                    ->map(fn (SchoolClass $c) => ['id' => $c->id, 'name' => $c->name])
+                    ->values();
+
+                $selectedClass = null;
+                if ($selectedClassId) {
+                    $selectedClass = $exam->classes->firstWhere('id', (int) $selectedClassId);
+                }
+
+                if ($selectedClass) {
+                    // Prefer streams that are assigned on the exam, fallback to all streams under the base class
+                    $streams = $exam->classes
+                        ->where('parent_class_id', $selectedClass->id)
+                        ->map(fn (SchoolClass $c) => ['id' => $c->id, 'name' => $c->name])
+                        ->values();
+
+                    if ($streams->isEmpty()) {
+                        $streams = SchoolClass::query()
+                            ->where('parent_class_id', $selectedClass->id)
+                            ->orderBy('name')
+                            ->get(['id', 'name'])
+                            ->map(fn (SchoolClass $c) => ['id' => $c->id, 'name' => $c->name])
+                            ->values();
+                    }
+                }
+
                 $allResults = ExamResult::where('exam_id', $exam->id)
                     ->with(['student:id,exam_number,full_name,gender,class_level'])
+                    ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
                     ->get();
 
                 if ($allResults->isNotEmpty()) {
@@ -1516,12 +1581,118 @@ Route::middleware('auth')->group(function () {
                         });
                     };
 
-                    // Group by class level and compute aggregates
+                    $fallbackGradeForMark = function (?int $mark): ?string {
+                        if ($mark === null) {
+                            return null;
+                        }
+
+                        return match (true) {
+                            $mark >= 75 => 'A',
+                            $mark >= 65 => 'B',
+                            $mark >= 45 => 'C',
+                            $mark >= 30 => 'D',
+                            default => 'F',
+                        };
+                    };
+
+                    $pointsForGrade = function (?string $grade): ?int {
+                        if (! $grade) {
+                            return null;
+                        }
+
+                        $g = strtoupper(trim($grade));
+
+                        return match ($g) {
+                            'A' => 1,
+                            'B' => 2,
+                            'C' => 3,
+                            'D' => 4,
+                            'F' => 5,
+                            default => null,
+                        };
+                    };
+
+                    $divisionForPoints = function (?int $pointsTotal): ?string {
+                        if ($pointsTotal === null) {
+                            return null;
+                        }
+
+                        return match (true) {
+                            $pointsTotal >= 7 && $pointsTotal <= 17 => 'I',
+                            $pointsTotal >= 18 && $pointsTotal <= 21 => 'II',
+                            $pointsTotal >= 22 && $pointsTotal <= 25 => 'III',
+                            $pointsTotal >= 26 && $pointsTotal <= 33 => 'IV',
+                            $pointsTotal >= 34 => '0',
+                            default => null,
+                        };
+                    };
+
+                    $divisionFromAverage = function (?int $avgMark) use ($gradeForMark, $fallbackGradeForMark): string {
+                        if ($avgMark === null) {
+                            return '0';
+                        }
+
+                        $scheme = $gradeForMark($avgMark);
+                        if ($scheme && $scheme->division) {
+                            $code = (string) $scheme->division;
+                            if (str_contains($code, 'I')) {
+                                return 'I';
+                            }
+                            if (str_contains($code, 'II')) {
+                                return 'II';
+                            }
+                            if (str_contains($code, 'III')) {
+                                return 'III';
+                            }
+                            if (str_contains($code, 'IV')) {
+                                return 'IV';
+                            }
+                        }
+
+                        $grade = $scheme?->grade ?? $fallbackGradeForMark($avgMark);
+                        $grade = $grade ? strtoupper((string) $grade) : null;
+
+                        return match ($grade) {
+                            'A' => 'I',
+                            'B' => 'II',
+                            'C' => 'III',
+                            'D' => 'IV',
+                            default => '0',
+                        };
+                    };
+
+                    $divisionForStudent = function ($rows) use ($gradeForMark, $fallbackGradeForMark, $pointsForGrade, $divisionForPoints, $divisionFromAverage): string {
+                        $marks = $rows->pluck('marks')->filter(fn ($m) => $m !== null);
+                        $total = $marks->sum();
+                        $count = $marks->count();
+                        $avg = $count > 0 ? (int) round($total / $count) : null;
+
+                        $pointsArr = [];
+                        foreach ($rows as $res) {
+                            $scheme = $gradeForMark($res->marks);
+                            $grade = $res->grade ?? $scheme?->grade ?? $fallbackGradeForMark($res->marks);
+                            $p = $res->points ?? $scheme?->points;
+                            if ($p === null) {
+                                $p = $pointsForGrade($grade);
+                            }
+                            if ($p !== null) {
+                                $pointsArr[] = (int) $p;
+                            }
+                        }
+
+                        if (count($pointsArr) >= 7) {
+                            $pointsTotal = array_sum($pointsArr);
+                            return $divisionForPoints($pointsTotal) ?? '0';
+                        }
+
+                        return $divisionFromAverage($avg);
+                    };
+
                     $performance = $allResults
                         ->groupBy(function (ExamResult $res) {
                             return $res->student->class_level ?? 'Unknown';
                         })
-                        ->map(function ($rows, $classLevel) use ($gradeForMark) {
+                        ->map(function ($rows, $classLevel) use ($gradeForMark, $fallbackGradeForMark) {
                             $studentGroups = $rows->groupBy('student_id');
                             $candidates = $studentGroups->count();
 
@@ -1565,8 +1736,9 @@ Route::middleware('auth')->group(function () {
                                         } else {
                                             $divBucket = '0';
                                         }
-                                    } elseif ($scheme) {
-                                        $grade = strtoupper($scheme->grade);
+                                    } else {
+                                        $grade = $scheme?->grade ?? $fallbackGradeForMark($avg);
+                                        $grade = $grade ? strtoupper((string) $grade) : null;
                                         $divBucket = match ($grade) {
                                             'A' => 'I',
                                             'B' => 'II',
@@ -1596,7 +1768,7 @@ Route::middleware('auth')->group(function () {
                     // Per-student ranking (for top/bottom lists)
                     $studentsPerf = $allResults
                         ->groupBy('student_id')
-                        ->map(function ($rows) use ($gradeForMark) {
+                        ->map(function ($rows) use ($divisionForStudent) {
                             /** @var \App\Models\ExamResult $first */
                             $first = $rows->first();
                             $student = $first->student;
@@ -1606,28 +1778,22 @@ Route::middleware('auth')->group(function () {
                             $count = $marks->count();
                             $average = $count > 0 ? round($total / $count, 1) : null;
 
-                            // Division from average
-                            $divisionCode = null;
-                            if ($average !== null) {
-                                $scheme = $gradeForMark((int) round($average));
-                                if ($scheme && $scheme->division) {
-                                    $divisionCode = $scheme->division;
-                                } elseif ($scheme) {
-                                    $grade = strtoupper($scheme->grade);
-                                    $divisionCode = match ($grade) {
-                                        'A' => 'Division I',
-                                        'B' => 'Division II',
-                                        'C' => 'Division III',
-                                        'D' => 'Division IV',
-                                        default => 'Division 0',
-                                    };
-                                }
+                            $enteredCount = $rows->filter(fn ($r) => $r->marks !== null)->count();
+                            $totalCount = $rows->count();
+                            $isComplete = $totalCount > 0 && $enteredCount === $totalCount;
+
+                            if (! $isComplete) {
+                                return null;
                             }
 
+                            $divisionCode = $divisionForStudent($rows);
+
                             return [
+                                'student_id' => $first->student_id,
                                 'exam_number' => $student->exam_number,
                                 'full_name' => $student->full_name,
                                 'class_level' => $student->class_level,
+                                'total' => $count > 0 ? $total : null,
                                 'average' => $average,
                                 'division' => $divisionCode,
                             ];
@@ -1647,24 +1813,308 @@ Route::middleware('auth')->group(function () {
                         })
                         ->take(10)
                         ->values();
+
+                    // Printable per-class/stream preview
+                    if ($selectedClass) {
+                        $targetName = $selectedClass->name;
+                        if ($selectedStreamId) {
+                            $stream = $exam->classes->firstWhere('id', (int) $selectedStreamId)
+                                ?? SchoolClass::find((int) $selectedStreamId);
+                            if ($stream) {
+                                $targetName = $stream->name;
+                            }
+                        }
+
+                        $filtered = $allResults->filter(function (ExamResult $res) use ($targetName) {
+                            return ($res->student?->class_level ?? '') === $targetName;
+                        });
+
+                        $studentGroups = $filtered->groupBy('student_id');
+                        $candidates = $studentGroups->count();
+                        $validMarks = $filtered->pluck('marks')->filter(fn ($m) => $m !== null);
+                        $averageMark = $validMarks->isNotEmpty() ? round($validMarks->avg(), 2) : null;
+
+                        $divisionCounts = ['I' => 0, 'II' => 0, 'III' => 0, 'IV' => 0, '0' => 0];
+                        $studentRows = collect();
+
+                        foreach ($studentGroups as $studentId => $rows) {
+                            /** @var \App\Models\ExamResult $first */
+                            $first = $rows->first();
+                            $student = $first->student;
+
+                            $marks = $rows->pluck('marks')->filter(fn ($m) => $m !== null);
+                            $div = $divisionForStudent($rows);
+                            $divisionCounts[$div] = ($divisionCounts[$div] ?? 0) + 1;
+
+                            $total = $marks->sum();
+                            $count = $marks->count();
+                            $avg = $count > 0 ? round($total / $count, 1) : null;
+
+                            $studentRows->push([
+                                'exam_number' => $student?->exam_number,
+                                'full_name' => $student?->full_name,
+                                'gender' => $student?->gender,
+                                'total' => $count > 0 ? $total : null,
+                                'avg' => $avg,
+                                'div' => $div,
+                                'pts' => null,
+                            ]);
+                        }
+
+                        $passCount = ($divisionCounts['I'] ?? 0) + ($divisionCounts['II'] ?? 0) + ($divisionCounts['III'] ?? 0) + ($divisionCounts['IV'] ?? 0);
+                        $failCount = $divisionCounts['0'] ?? 0;
+
+                        $preview = [
+                            'class_name' => $targetName,
+                            'candidates' => $candidates,
+                            'average_mark' => $averageMark,
+                            'passed' => $passCount,
+                            'failed' => $failCount,
+                            'divisions' => $divisionCounts,
+                            'students' => $studentRows
+                                ->sortByDesc(fn ($r) => $r['avg'] ?? -INF)
+                                ->values(),
+                        ];
+                    }
                 }
             }
         }
 
         return Inertia::render('ClassPerformance', [
+            'schoolName' => $schoolName,
             'years' => $years,
             'exams' => $examList,
             'performance' => $performance,
             'topStudents' => $topStudents,
             'bottomStudents' => $bottomStudents,
+            'assignedClasses' => $assignedClasses,
+            'streams' => $streams,
+            'preview' => $preview,
             'filters' => [
                 'year' => $yearFilter,
                 'exam' => $examFilter,
+                'class' => $selectedClassId,
+                'stream' => $selectedStreamId,
             ],
         ]);
     })->name('results.class');
 
+    Route::get('/results/student-details', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+
+        $examId = (int) $request->query('exam');
+        $studentId = (int) $request->query('student');
+
+        if (! $examId || ! $studentId) {
+            return response()->json(['message' => 'Missing exam or student parameter.'], 422);
+        }
+
+        $exam = Exam::find($examId);
+        if (! $exam) {
+            return response()->json(['message' => 'Exam not found.'], 404);
+        }
+
+        $results = ExamResult::where('exam_id', $examId)
+            ->where('student_id', $studentId)
+            ->with(['student:id,exam_number,full_name,gender,class_level', 'subject:id,subject_code,name'])
+            ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+            ->get();
+
+        if ($results->isEmpty()) {
+            return response()->json(['message' => 'No results found for this student.'], 404);
+        }
+
+        $schemes = GradingScheme::all();
+
+        $gradeForMark = function (?int $mark) use ($schemes) {
+            if ($mark === null) {
+                return null;
+            }
+
+            return $schemes->first(function (GradingScheme $s) use ($mark) {
+                return $mark >= $s->min_mark && $mark <= $s->max_mark;
+            });
+        };
+
+        $fallbackGradeForMark = function (?int $mark): ?string {
+            if ($mark === null) {
+                return null;
+            }
+
+            return match (true) {
+                $mark >= 75 => 'A',
+                $mark >= 65 => 'B',
+                $mark >= 45 => 'C',
+                $mark >= 30 => 'D',
+                default => 'F',
+            };
+        };
+
+        $pointsForGrade = function (?string $grade): ?int {
+            if (! $grade) {
+                return null;
+            }
+
+            $g = strtoupper(trim($grade));
+            return match ($g) {
+                'A' => 1,
+                'B' => 2,
+                'C' => 3,
+                'D' => 4,
+                'F' => 5,
+                default => null,
+            };
+        };
+
+        $divisionFromAverage = function (?int $avgMark) use ($gradeForMark, $fallbackGradeForMark): string {
+            if ($avgMark === null) {
+                return '0';
+            }
+
+            $scheme = $gradeForMark($avgMark);
+            if ($scheme && $scheme->division) {
+                $code = (string) $scheme->division;
+                if (str_contains($code, 'I')) {
+                    return 'I';
+                }
+                if (str_contains($code, 'II')) {
+                    return 'II';
+                }
+                if (str_contains($code, 'III')) {
+                    return 'III';
+                }
+                if (str_contains($code, 'IV')) {
+                    return 'IV';
+                }
+            }
+
+            $grade = $scheme?->grade ?? $fallbackGradeForMark($avgMark);
+            $grade = $grade ? strtoupper((string) $grade) : null;
+
+            return match ($grade) {
+                'A' => 'I',
+                'B' => 'II',
+                'C' => 'III',
+                'D' => 'IV',
+                default => '0',
+            };
+        };
+
+        $divisionForPoints = function (?int $pointsTotal): ?string {
+            if ($pointsTotal === null) {
+                return null;
+            }
+
+            return match (true) {
+                $pointsTotal >= 7 && $pointsTotal <= 17 => 'I',
+                $pointsTotal >= 18 && $pointsTotal <= 21 => 'II',
+                $pointsTotal >= 22 && $pointsTotal <= 25 => 'III',
+                $pointsTotal >= 26 && $pointsTotal <= 33 => 'IV',
+                $pointsTotal >= 34 => '0',
+                default => null,
+            };
+        };
+
+        /** @var \App\Models\ExamResult $first */
+        $first = $results->first();
+        $student = $first->student;
+
+        $subjects = $results->map(function (ExamResult $res) use ($gradeForMark, $fallbackGradeForMark, $pointsForGrade) {
+            $scheme = $gradeForMark($res->marks);
+
+            $savedGrade = $res->grade;
+            $savedPoints = $res->points;
+
+            $computedGrade = $scheme?->grade ?? $fallbackGradeForMark($res->marks);
+            $computedPoints = $scheme?->points;
+            if ($computedPoints === null) {
+                $computedPoints = $pointsForGrade($computedGrade);
+            }
+
+            $displayGrade = $savedGrade ?? $computedGrade;
+            $displayPoints = $savedPoints ?? $computedPoints;
+
+            return [
+                'code' => $res->subject?->subject_code,
+                'name' => $res->subject?->name ?? $res->subject?->subject_code,
+                'entered' => $res->marks !== null,
+                'marks' => $res->marks,
+                'grade' => $displayGrade ? strtoupper((string) $displayGrade) : null,
+                'points' => $displayPoints,
+                'saved' => [
+                    'grade' => $savedGrade ? strtoupper((string) $savedGrade) : null,
+                    'points' => $savedPoints,
+                ],
+                'computed' => [
+                    'grade' => $computedGrade ? strtoupper((string) $computedGrade) : null,
+                    'points' => $computedPoints,
+                ],
+            ];
+        })->values();
+
+        $enteredCount = $subjects->filter(fn ($s) => (bool) ($s['entered'] ?? false))->count();
+        $totalCount = $subjects->count();
+        $isComplete = $totalCount > 0 && $enteredCount === $totalCount;
+
+        // Summary is computed from entered marks (even if incomplete). Mark it as provisional when incomplete.
+        $validMarks = $subjects->pluck('marks')->filter(fn ($m) => $m !== null);
+        $count = $validMarks->count();
+
+        $total = $count > 0 ? $validMarks->sum() : null;
+        $average = $count > 0 ? round($total / $count, 1) : null;
+
+        $validPoints = $subjects
+            ->filter(fn ($s) => (bool) ($s['entered'] ?? false))
+            ->map(fn ($s) => $s['saved']['points'] ?? $s['computed']['points'] ?? null)
+            ->filter(fn ($p) => $p !== null)
+            ->map(fn ($p) => (int) $p);
+
+        $pointsTotal = $validPoints->isNotEmpty() ? $validPoints->sum() : null;
+
+        $division = null;
+        if ($average !== null) {
+            // Use points-based divisions only when enough entered subjects are present, otherwise average-based
+            if ($validPoints->count() >= 7 && $pointsTotal !== null) {
+                $division = $divisionForPoints($pointsTotal) ?? '0';
+            } else {
+                $division = $divisionFromAverage((int) round($average));
+            }
+        }
+
+        return response()->json([
+            'exam' => [
+                'id' => $exam->id,
+                'name' => $exam->name,
+                'academic_year' => $exam->academic_year,
+                'type' => $exam->type,
+            ],
+            'student' => [
+                'id' => $student?->id,
+                'exam_number' => $student?->exam_number,
+                'full_name' => $student?->full_name,
+                'gender' => $student?->gender,
+                'class_level' => $student?->class_level,
+            ],
+            'entry' => [
+                'entered_count' => $enteredCount,
+                'total_count' => $totalCount,
+                'is_complete' => $isComplete,
+            ],
+            'summary' => [
+                'total' => $total,
+                'average' => $average,
+                'points' => $pointsTotal,
+                'division' => $division,
+            ],
+            'subjects' => $subjects,
+        ]);
+    })->name('results.student-details');
+
     Route::get('/results/subject', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+
         $yearFilter = $request->query('year');
         $examFilter = $request->query('exam');
 
@@ -1694,6 +2144,7 @@ Route::middleware('auth')->group(function () {
             if ($exam) {
                 $allResults = ExamResult::where('exam_id', $exam->id)
                     ->with(['subject:id,subject_code,name'])
+                    ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
                     ->get();
 
                 if ($allResults->isNotEmpty()) {
@@ -1709,27 +2160,62 @@ Route::middleware('auth')->group(function () {
                         });
                     };
 
+                    $fallbackGradeForMark = function (?int $mark): ?string {
+                        if ($mark === null) {
+                            return null;
+                        }
+
+                        return match (true) {
+                            $mark >= 75 => 'A',
+                            $mark >= 65 => 'B',
+                            $mark >= 45 => 'C',
+                            $mark >= 30 => 'D',
+                            default => 'F',
+                        };
+                    };
+
+                    $pointsForGrade = function (?string $grade): ?int {
+                        if (! $grade) {
+                            return null;
+                        }
+
+                        $g = strtoupper(trim($grade));
+                        return match ($g) {
+                            'A' => 1,
+                            'B' => 2,
+                            'C' => 3,
+                            'D' => 4,
+                            'F' => 5,
+                            default => null,
+                        };
+                    };
+
                     // Subject summary metrics (similar to exams.results)
                     $performance = $allResults
                         ->groupBy('subject_id')
-                        ->map(function ($rows, $subjectId) use ($gradeForMark) {
+                        ->map(function ($rows, $subjectId) use ($gradeForMark, $fallbackGradeForMark, $pointsForGrade) {
                             /** @var \App\Models\ExamResult $first */
                             $first = $rows->first();
                             $subject = $first->subject;
 
-                            $sat = $rows->count();
+                            $sat = $rows->filter(fn (ExamResult $r) => $r->marks !== null || $r->grade !== null)->count();
                             $pass = 0;
                             $points = [];
 
                             foreach ($rows as $res) {
                                 $scheme = $gradeForMark($res->marks);
-                                if ($scheme) {
-                                    if ($scheme->points !== null) {
-                                        $points[] = $scheme->points;
-                                    }
-                                    if (strtoupper($scheme->grade) !== 'F') {
-                                        $pass++;
-                                    }
+                                $grade = $res->grade ?? $scheme?->grade ?? $fallbackGradeForMark($res->marks);
+                                $p = $res->points ?? $scheme?->points;
+                                if ($p === null) {
+                                    $p = $pointsForGrade($grade);
+                                }
+
+                                if ($p !== null) {
+                                    $points[] = (int) $p;
+                                }
+
+                                if ($grade !== null && strtoupper((string) $grade) !== 'F') {
+                                    $pass++;
                                 }
                             }
 
@@ -1739,14 +2225,16 @@ Route::middleware('auth')->group(function () {
                             // Simple competency text based on GPA
                             $competency = null;
                             if ($gpa !== null) {
-                                if ($gpa <= 2.0) {
-                                    $competency = 'Grade B (Very Good)';
-                                } elseif ($gpa <= 3.0) {
-                                    $competency = 'Grade C (Good)';
-                                } elseif ($gpa <= 4.0) {
-                                    $competency = 'Grade D (Satisfactory)';
+                                if ($gpa < 2.0) {
+                                    $competency = 'Bora sana (Excellent)';
+                                } elseif ($gpa < 3.0) {
+                                    $competency = 'Vizuri sana (Very Good)';
+                                } elseif ($gpa < 4.0) {
+                                    $competency = 'Vizuri (Good)';
+                                } elseif ($gpa < 5.0) {
+                                    $competency = 'Inaridhisha (Satisfactory)';
                                 } else {
-                                    $competency = 'Grade F (Fail)';
+                                    $competency = 'Feli (Fail)';
                                 }
                             }
 
@@ -1777,6 +2265,9 @@ Route::middleware('auth')->group(function () {
     })->name('results.subject');
 
     Route::get('/results/ranking', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+
         $yearFilter = $request->query('year');
         $examFilter = $request->query('exam');
 
@@ -1806,6 +2297,7 @@ Route::middleware('auth')->group(function () {
             if ($exam) {
                 $allResults = ExamResult::where('exam_id', $exam->id)
                     ->with(['student:id,exam_number,full_name,gender,class_level'])
+                    ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
                     ->get();
 
                 if ($allResults->isNotEmpty()) {
@@ -1821,9 +2313,115 @@ Route::middleware('auth')->group(function () {
                         });
                     };
 
+                    $fallbackGradeForMark = function (?int $mark): ?string {
+                        if ($mark === null) {
+                            return null;
+                        }
+
+                        return match (true) {
+                            $mark >= 75 => 'A',
+                            $mark >= 65 => 'B',
+                            $mark >= 45 => 'C',
+                            $mark >= 30 => 'D',
+                            default => 'F',
+                        };
+                    };
+
+                    $pointsForGrade = function (?string $grade): ?int {
+                        if (! $grade) {
+                            return null;
+                        }
+
+                        $g = strtoupper(trim($grade));
+                        return match ($g) {
+                            'A' => 1,
+                            'B' => 2,
+                            'C' => 3,
+                            'D' => 4,
+                            'F' => 5,
+                            default => null,
+                        };
+                    };
+
+                    $divisionForPoints = function (?int $pointsTotal): ?string {
+                        if ($pointsTotal === null) {
+                            return null;
+                        }
+
+                        return match (true) {
+                            $pointsTotal >= 7 && $pointsTotal <= 17 => 'I',
+                            $pointsTotal >= 18 && $pointsTotal <= 21 => 'II',
+                            $pointsTotal >= 22 && $pointsTotal <= 25 => 'III',
+                            $pointsTotal >= 26 && $pointsTotal <= 33 => 'IV',
+                            $pointsTotal >= 34 => '0',
+                            default => null,
+                        };
+                    };
+
+                    $divisionFromAverage = function (?int $avgMark) use ($gradeForMark, $fallbackGradeForMark): string {
+                        if ($avgMark === null) {
+                            return '0';
+                        }
+
+                        $scheme = $gradeForMark($avgMark);
+                        if ($scheme && $scheme->division) {
+                            $code = (string) $scheme->division;
+                            if (str_contains($code, 'I')) {
+                                return 'I';
+                            }
+                            if (str_contains($code, 'II')) {
+                                return 'II';
+                            }
+                            if (str_contains($code, 'III')) {
+                                return 'III';
+                            }
+                            if (str_contains($code, 'IV')) {
+                                return 'IV';
+                            }
+                        }
+
+                        $grade = $scheme?->grade ?? $fallbackGradeForMark($avgMark);
+                        $grade = $grade ? strtoupper((string) $grade) : null;
+
+                        return match ($grade) {
+                            'A' => 'I',
+                            'B' => 'II',
+                            'C' => 'III',
+                            'D' => 'IV',
+                            default => '0',
+                        };
+                    };
+
+                    $divisionForStudent = function ($rows) use ($gradeForMark, $fallbackGradeForMark, $pointsForGrade, $divisionForPoints, $divisionFromAverage): string {
+                        $marks = $rows->pluck('marks')->filter(fn ($m) => $m !== null);
+                        $total = $marks->sum();
+                        $count = $marks->count();
+                        $avg = $count > 0 ? (int) round($total / $count) : null;
+
+                        $pointsArr = [];
+                        foreach ($rows as $res) {
+                            $scheme = $gradeForMark($res->marks);
+                            $grade = $res->grade ?? $scheme?->grade ?? $fallbackGradeForMark($res->marks);
+                            $p = $res->points ?? $scheme?->points;
+                            if ($p === null) {
+                                $p = $pointsForGrade($grade);
+                            }
+                            if ($p !== null) {
+                                $pointsArr[] = (int) $p;
+                            }
+                        }
+
+                        if (count($pointsArr) >= 7) {
+                            $pointsTotal = array_sum($pointsArr);
+                            return $divisionForPoints($pointsTotal) ?? '0';
+                        }
+
+                        return $divisionFromAverage($avg);
+                    };
+
                     $ranking = $allResults
                         ->groupBy('student_id')
-                        ->map(function ($rows) use ($gradeForMark) {
+                        ->map(function ($rows) use ($gradeForMark, $fallbackGradeForMark, $pointsForGrade, $divisionForStudent) {
                             /** @var \App\Models\ExamResult $first */
                             $first = $rows->first();
                             $student = $first->student;
@@ -1833,35 +2431,24 @@ Route::middleware('auth')->group(function () {
                             $count = $marks->count();
                             $average = $count > 0 ? round($total / $count, 1) : null;
 
-                            // Points total from grading scheme
                             $pointsArr = [];
                             foreach ($rows as $res) {
                                 $scheme = $gradeForMark($res->marks);
-                                if ($scheme && $scheme->points !== null) {
-                                    $pointsArr[] = $scheme->points;
+                                $grade = $res->grade ?? $scheme?->grade ?? $fallbackGradeForMark($res->marks);
+                                $p = $res->points ?? $scheme?->points;
+                                if ($p === null) {
+                                    $p = $pointsForGrade($grade);
+                                }
+                                if ($p !== null) {
+                                    $pointsArr[] = (int) $p;
                                 }
                             }
-                            $pointsTotal = ! empty($pointsArr) ? array_sum($pointsArr) : null;
 
-                            // Division based on average
-                            $divisionCode = null;
-                            if ($average !== null) {
-                                $avgScheme = $gradeForMark((int) round($average));
-                                if ($avgScheme && $avgScheme->division) {
-                                    $divisionCode = $avgScheme->division;
-                                } elseif ($avgScheme) {
-                                    $grade = strtoupper($avgScheme->grade);
-                                    $divisionCode = match ($grade) {
-                                        'A' => 'Division I',
-                                        'B' => 'Division II',
-                                        'C' => 'Division III',
-                                        'D' => 'Division IV',
-                                        default => 'Division 0',
-                                    };
-                                }
-                            }
+                            $pointsTotal = count($pointsArr) >= 7 ? array_sum($pointsArr) : null;
+                            $divisionCode = $divisionForStudent($rows);
 
                             return [
+                                'student_id' => $first->student_id,
                                 'exam_number' => $student->exam_number,
                                 'full_name' => $student->full_name,
                                 'class_level' => $student->class_level,
@@ -1871,6 +2458,7 @@ Route::middleware('auth')->group(function () {
                                 'points' => $pointsTotal,
                             ];
                         })
+                        ->filter()
                         ->values()
                         ->sortByDesc(function ($row) {
                             // Sort by average desc, then points asc
@@ -2112,10 +2700,16 @@ Route::middleware('auth')->group(function () {
     })->name('timetables.invigilation');
 
     Route::get('/reports/students/{student}', function (\Illuminate\Http\Request $request, Student $student) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+
         $examId = $request->query('exam');
         $testExamId = $request->query('test_exam');
+        $download = $request->query('download');
 
-        $school = School::query()->first();
+        $school = $schoolId
+            ? School::query()->where('id', $schoolId)->first()
+            : School::query()->first();
         $currentYear = AcademicYear::where('is_current', true)->first();
 
         $exam = null;
@@ -2123,12 +2717,31 @@ Route::middleware('auth')->group(function () {
         $summary = null;
         $behaviours = collect();
 
+        $classTeacherName = null;
+        if ($student->class_level) {
+            $classModel = SchoolClass::query()
+                ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+                ->where('level', $student->class_level)
+                ->when($student->stream, fn ($q) => $q->where('stream', $student->stream))
+                ->with('teacher:id,name')
+                ->first();
+
+            $classTeacherName = $classModel?->teacher?->name;
+        }
+
+        $headTeacherName = $school?->head_teacher_name;
+
+        if ($schoolId && $student->school_id && (int) $student->school_id !== (int) $schoolId) {
+            abort(403);
+        }
+
         if ($examId) {
             $exam = Exam::find($examId);
 
             if ($exam) {
                 $results = ExamResult::where('exam_id', $exam->id)
                     ->where('student_id', $student->id)
+                    ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
                     ->with('subject:id,subject_code,name')
                     ->get();
 
@@ -2137,6 +2750,7 @@ Route::middleware('auth')->group(function () {
                 if ($testExamId) {
                     $testResults = ExamResult::where('exam_id', $testExamId)
                         ->where('student_id', $student->id)
+                        ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
                         ->get(['subject_id', 'marks']);
 
                     $testResultsBySubject = $testResults->keyBy('subject_id');
@@ -2154,126 +2768,260 @@ Route::middleware('auth')->group(function () {
                     });
                 };
 
-                $subjects = $results->map(function (ExamResult $res) use ($gradeForMark, $testResultsBySubject) {
-                    $testMark = null;
-                    if ($testResultsBySubject->isNotEmpty()) {
-                        $testMark = optional($testResultsBySubject->get($res->subject_id))->marks;
+                $pointsForGrade = function (?string $grade): ?int {
+                    if (! $grade) {
+                        return null;
                     }
 
-                    $examMark = $res->marks;
-                    $total = ($testMark ?? 0) + ($examMark ?? 0);
+                    $g = strtoupper(trim($grade));
+                    return match ($g) {
+                        'A' => 1,
+                        'B' => 2,
+                        'C' => 3,
+                        'D' => 4,
+                        'F' => 5,
+                        default => null,
+                    };
+                };
 
-                    // If both test and exam marks are missing, treat total/average as null so UI shows '-'
-                    if ($testMark === null && $examMark === null) {
-                        $total = null;
-                        $average = null;
-                    } elseif ($testMark !== null && $examMark !== null) {
-                        $average = round($total / 2, 2);
-                    } else {
-                        // Only one of them exists, use that value as the average
-                        $average = $examMark ?? $testMark;
+                $teacherSentenceForGrade = function (?string $grade): ?string {
+                    if (! $grade) {
+                        return null;
                     }
 
+                    $g = strtoupper(trim($grade));
+                    return match ($g) {
+                        'A' => 'Umefanya vizuri sana. Endelea kujituma ili kudumisha ufaulu wa hali ya juu.',
+                        'B' => 'Umefanya vizuri. Ongeza bidii ili ufikie kiwango cha juu zaidi.',
+                        'C' => 'Umefanya vizuri kwa kiwango cha wastani. Jitahidi zaidi hasa kwenye masomo yenye changamoto.',
+                        'D' => 'Ufaulu wako unaridhisha lakini unahitaji bidii zaidi. Panga muda wa kujisomea na uombe msaada inapohitajika.',
+                        'F' => 'Umehitaji kuongeza bidii. Anza mapema kurekebisha mapungufu na ufuate ushauri wa walimu.',
+                        default => null,
+                    };
+                };
+
+                $headteacherSentenceForGrade = function (?string $grade): ?string {
+                    if (! $grade) {
+                        return null;
+                    }
+
+                    $g = strtoupper(trim($grade));
+                    return match ($g) {
+                        'A' => 'Hongera kwa ufaulu bora. Endelea kuwa mfano bora shuleni na nyumbani.',
+                        'B' => 'Hongera kwa ufaulu mzuri. Dumisha nidhamu na bidii ili kuongeza matokeo.',
+                        'C' => 'Matokeo yako ni ya wastani. Tunaamini unaweza kufanya vizuri zaidi ukiongeza juhudi na nidhamu.',
+                        'D' => 'Tunahitaji kuona maendeleo zaidi. Tafadhali ongeza bidii, mahudhurio na ufuate maelekezo ya walimu.',
+                        'F' => 'Matokeo hayajaridhisha. Zingatia masomo kwa umakini na fuata mpango wa kurekebisha ili kuboresha.',
+                        default => null,
+                    };
+                };
+
+                $divisionForPoints = function (?int $pointsTotal): ?string {
+                    if ($pointsTotal === null) {
+                        return null;
+                    }
+
+                    return match (true) {
+                        $pointsTotal >= 7 && $pointsTotal <= 17 => 'Division I',
+                        $pointsTotal >= 18 && $pointsTotal <= 21 => 'Division II',
+                        $pointsTotal >= 22 && $pointsTotal <= 25 => 'Division III',
+                        $pointsTotal >= 26 && $pointsTotal <= 33 => 'Division IV',
+                        $pointsTotal >= 34 && $pointsTotal <= 35 => 'Division 0',
+                        default => 'Division 0',
+                    };
+                };
+
+                $fallbackGradeForMark = function (?int $mark): ?string {
+                    if ($mark === null) {
+                        return null;
+                    }
+
+                    return match (true) {
+                        $mark >= 75 => 'A',
+                        $mark >= 65 => 'B',
+                        $mark >= 45 => 'C',
+                        $mark >= 30 => 'D',
+                        default => 'F',
+                    };
+                };
+
+                $commentForGrade = function (?string $grade): ?string {
+                    if (! $grade) {
+                        return null;
+                    }
+
+                    $g = strtoupper(trim($grade));
+                    return match ($g) {
+                        'A' => 'Bora sana (Excellent)',
+                        'B' => 'Vizuri sana (Very Good)',
+                        'C' => 'Vizuri (Good)',
+                        'D' => 'Inaridhisha (Satisfactory)',
+                        'F' => 'Feli (Fail)',
+                        default => null,
+                    };
+                };
+
+                $subjects = $results->map(function (ExamResult $res) use ($gradeForMark, $fallbackGradeForMark, $commentForGrade) {
+                    $mark = $res->marks;
+                    $average = $mark;
                     $scheme = $gradeForMark($average !== null ? (int) round($average) : null);
+                    $displayGrade = $res->grade ?? $scheme?->grade ?? $fallbackGradeForMark($average !== null ? (int) round($average) : null);
+                    $displayGrade = $displayGrade ? strtoupper((string) $displayGrade) : null;
+
+                    $comment = $commentForGrade($displayGrade);
 
                     return [
                         'code' => $res->subject->subject_code,
                         'name' => $res->subject->name ?? $res->subject->subject_code,
-                        'test_mark' => $testMark,
-                        'exam_mark' => $examMark,
-                        'total' => $total,
+                        'marks' => $mark,
                         'average' => $average,
-                        'grade' => $scheme?->grade,
+                        'grade' => $displayGrade,
+                        'comment' => $comment,
                     ];
                 });
 
-                $validMarks = $subjects->pluck('average')->filter(fn ($m) => $m !== null);
-                $totalMarks = $validMarks->sum();
-                $subjectCount = $validMarks->count();
-                $average = $subjectCount > 0 ? round($totalMarks / $subjectCount, 2) : null;
+                // Prefer stored per-student summary from Data Entry
+                $storedSummary = \App\Models\ExamStudentResult::query()
+                    ->where('exam_id', $exam->id)
+                    ->where('student_id', $student->id)
+                    ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+                    ->first(['total', 'average', 'grade', 'division', 'points']);
 
-                // Points total for this student based on best seven subjects
-                $pointsArr = [];
-                foreach ($subjects as $sub) {
-                    $scheme = $gradeForMark($sub['average']);
-                    if ($scheme && $scheme->points !== null) {
-                        $pointsArr[] = $scheme->points;
+                $overallGrade = null;
+                if ($storedSummary && $storedSummary->grade) {
+                    $overallGrade = strtoupper((string) $storedSummary->grade);
+                } elseif ($storedSummary && $storedSummary->average !== null) {
+                    $scheme = $gradeForMark((int) round($storedSummary->average));
+                    $overallGrade = $scheme?->grade ?? $fallbackGradeForMark((int) round($storedSummary->average));
+                    $overallGrade = $overallGrade ? strtoupper((string) $overallGrade) : null;
+                } else {
+                    $avgArr = [];
+                    foreach ($subjects as $sub) {
+                        $avg = $sub['average'] ?? null;
+                        if ($avg !== null) {
+                            $avgArr[] = (int) round($avg);
+                        }
+                    }
+
+                    if (! empty($avgArr)) {
+                        $overallAverage = (int) round(array_sum($avgArr) / count($avgArr));
+                        $scheme = $gradeForMark($overallAverage);
+                        $overallGrade = $scheme?->grade ?? $fallbackGradeForMark($overallAverage);
+                        $overallGrade = $overallGrade ? strtoupper((string) $overallGrade) : null;
                     }
                 }
 
-                // Take the best seven (lowest) points only
+                $teacherComment = $teacherSentenceForGrade($overallGrade) ?? $commentForGrade($overallGrade);
+                $headteacherComment = $headteacherSentenceForGrade($overallGrade) ?? $commentForGrade($overallGrade);
+
+                // Compute points/division from entered marks as fallback (best 7 subjects)
+                $pointsArr = [];
+                foreach ($subjects as $sub) {
+                    $avg = $sub['average'] ?? null;
+                    if ($avg === null) {
+                        continue;
+                    }
+
+                    $scheme = $gradeForMark((int) round($avg));
+                    $g = $sub['grade'] ?? $scheme?->grade ?? $fallbackGradeForMark((int) round($avg));
+                    $g = $g ? strtoupper((string) $g) : null;
+
+                    $p = $scheme?->points;
+                    if ($p === null) {
+                        $p = $pointsForGrade($g);
+                    }
+
+                    if ($p !== null) {
+                        $pointsArr[] = (int) $p;
+                    }
+                }
+
+                $computedPoints = null;
+                $computedDivision = null;
                 if (! empty($pointsArr)) {
-                    sort($pointsArr); // ascending: best performance first (lowest points)
+                    sort($pointsArr); // best first (lowest points)
                     $bestSeven = array_slice($pointsArr, 0, 7);
-                    $pointsTotal = array_sum($bestSeven);
-                } else {
-                    $pointsTotal = null;
+                    if (! empty($bestSeven)) {
+                        $computedPoints = (int) array_sum($bestSeven);
+                        $computedDivision = $divisionForPoints($computedPoints);
+                    }
                 }
 
-                // Division derived from pointsTotal using NECTA-like thresholds
-                if ($pointsTotal === null) {
-                    $division = null;
-                } elseif ($pointsTotal >= 34) {
-                    $division = 'Division 0';
-                } elseif ($pointsTotal >= 26) {
-                    $division = 'Division IV';
-                } elseif ($pointsTotal >= 22) {
-                    $division = 'Division III';
-                } elseif ($pointsTotal >= 18) {
-                    $division = 'Division II';
-                } else {
-                    $division = 'Division I';
-                }
-
-                // Compute position within same class level for this exam
                 $position = null;
                 $outOf = null;
 
-                $allResults = ExamResult::where('exam_id', $exam->id)
-                    ->with(['student:id,class_level'])
-                    ->get();
-
-                if ($allResults->isNotEmpty()) {
-                    $classLevel = $student->class_level;
-
-                    $perStudent = $allResults
-                        ->filter(function (ExamResult $res) use ($classLevel) {
-                            return $res->student && $res->student->class_level === $classLevel;
+                // Position within same class_level using students who actually have exam results (marks not null)
+                $classLevel = $student->class_level;
+                if ($classLevel !== null) {
+                    $peerResults = \App\Models\ExamResult::query()
+                        ->where('exam_id', $exam->id)
+                        ->whereNotNull('marks')
+                        ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+                        ->whereHas('student', function ($q) use ($classLevel, $schoolId) {
+                            $q->where('class_level', $classLevel)
+                                ->when($schoolId, fn ($qq) => $qq->where('school_id', $schoolId));
                         })
-                        ->groupBy('student_id')
-                        ->map(function ($rows, $studId) use ($gradeForMark) {
-                            $marks = $rows->pluck('marks')->filter(fn ($m) => $m !== null);
-                            $total = $marks->sum();
-                            $count = $marks->count();
-                            $average = $count > 0 ? round($total / $count, 2) : null;
+                        ->get(['student_id', 'marks', 'grade', 'points']);
 
-                            $pointsArr = [];
-                            foreach ($rows as $res) {
-                                $scheme = $gradeForMark($res->marks);
-                                if ($scheme && $scheme->points !== null) {
-                                    $pointsArr[] = $scheme->points;
+                    $peers = $peerResults
+                        ->groupBy('student_id')
+                        ->map(function ($rows, $studentId) use ($gradeForMark, $fallbackGradeForMark, $pointsForGrade) {
+                            $marksArr = [];
+                            $ptsArr = [];
+
+                            foreach ($rows as $r) {
+                                $m = $r->marks;
+                                if ($m === null) {
+                                    continue;
+                                }
+
+                                $marksArr[] = (int) $m;
+
+                                $scheme = $gradeForMark((int) $m);
+                                $g = $r->grade ?? $scheme?->grade ?? $fallbackGradeForMark((int) $m);
+                                $g = $g ? strtoupper((string) $g) : null;
+
+                                $p = $r->points ?? $scheme?->points;
+                                if ($p === null) {
+                                    $p = $pointsForGrade($g);
+                                }
+
+                                if ($p !== null) {
+                                    $ptsArr[] = (int) $p;
                                 }
                             }
-                            $pointsTotal = ! empty($pointsArr) ? array_sum($pointsArr) : null;
+
+                            sort($ptsArr);
+                            $bestSeven = array_slice($ptsArr, 0, 7);
+                            $pointsTotal = ! empty($bestSeven) ? (int) array_sum($bestSeven) : null;
+
+                            $avg = null;
+                            if (! empty($marksArr)) {
+                                $avg = (int) round(array_sum($marksArr) / count($marksArr));
+                            }
 
                             return [
-                                'student_id' => $studId,
-                                'average' => $average,
+                                'student_id' => (int) $studentId,
                                 'points' => $pointsTotal,
+                                'average' => $avg,
                             ];
                         })
+                        ->filter(fn ($r) => $r['points'] !== null)
                         ->values()
-                        ->sortByDesc(function ($row) {
-                            $avg = $row['average'] ?? -INF;
-                            $points = $row['points'] ?? INF;
+                        ->sort(function ($a, $b) {
+                            // Lower points is better; if tie, higher average is better
+                            if ($a['points'] !== $b['points']) {
+                                return $a['points'] <=> $b['points'];
+                            }
 
-                            return sprintf('%015.3f-%015.3f', $avg, -$points);
+                            $avgA = $a['average'] ?? -INF;
+                            $avgB = $b['average'] ?? -INF;
+                            return $avgB <=> $avgA;
                         })
                         ->values();
 
-                    $outOf = $perStudent->count();
-
-                    foreach ($perStudent as $index => $row) {
+                    $outOf = $peers->count();
+                    foreach ($peers as $index => $row) {
                         if ((int) $row['student_id'] === (int) $student->id) {
                             $position = $index + 1;
                             break;
@@ -2281,14 +3029,30 @@ Route::middleware('auth')->group(function () {
                     }
                 }
 
-                $summary = [
-                    'total' => $totalMarks,
-                    'average' => $average,
-                    'division' => $division,
-                    'points' => $pointsTotal,
-                    'position' => $position,
-                    'out_of' => $outOf,
-                ];
+                if ($storedSummary) {
+                    $summary = [
+                        'total' => $storedSummary->total,
+                        'average' => $storedSummary->average,
+                        'division' => $storedSummary->division ?? $computedDivision,
+                        'points' => $storedSummary->points ?? $computedPoints,
+                        'position' => $position,
+                        'out_of' => $outOf,
+                        'teacher_comment' => $teacherComment,
+                        'headteacher_comment' => $headteacherComment,
+                    ];
+                } else {
+                    // No stored summary yet, still show computed division/points if available
+                    $summary = [
+                        'total' => null,
+                        'average' => null,
+                        'division' => $computedDivision,
+                        'points' => $computedPoints,
+                        'position' => null,
+                        'out_of' => null,
+                        'teacher_comment' => $teacherComment,
+                        'headteacher_comment' => $headteacherComment,
+                    ];
+                }
 
                 // Behaviour grid pattern driven by division
                 $baseBehaviours = [
@@ -2308,7 +3072,7 @@ Route::middleware('auth')->group(function () {
                     ['code' => '914', 'label' => 'Sifa nzuri ya Ushawishi'],
                 ];
 
-                $divisionCode = strtoupper((string) $division);
+                $divisionCode = strtoupper((string) ($summary['division'] ?? ''));
 
                 // Default: mixed C/D
                 $gradesPattern = ['C', 'D', 'C', 'D', 'C', 'D', 'C', 'D', 'C', 'D', 'C', 'D', 'C', 'D'];
@@ -2337,6 +3101,46 @@ Route::middleware('auth')->group(function () {
             }
         }
 
+        // If behaviours have been saved in DB for this student/exam, prefer them
+        if ($exam) {
+            $savedBehaviours = \App\Models\StudentBehaviourRating::query()
+                ->where('student_id', $student->id)
+                ->where('exam_id', $exam->id)
+                ->orderBy('code')
+                ->get(['code', 'label', 'grade']);
+
+            if ($savedBehaviours->isNotEmpty()) {
+                $behaviours = $savedBehaviours->map(function ($row) {
+                    return [
+                        'code' => $row->code,
+                        'label' => $row->label,
+                        'grade' => $row->grade,
+                    ];
+                });
+            }
+        }
+
+        if ($download === 'pdf') {
+            $yearValue = $currentYear?->year ?? date('Y');
+            $safeName = Str::slug((string) ($student->full_name ?? 'student'), '_');
+            $downloadName = $safeName.'_Report_'.$yearValue.'.pdf';
+
+            $pdf = Pdf::loadView('reports.student_report_card_pdf', [
+                'student' => $student,
+                'school' => $school,
+                'exam' => $exam,
+                'subjects' => $subjects,
+                'summary' => $summary,
+                'behaviours' => $behaviours,
+                'year' => $yearValue,
+                'class_teacher_name' => $classTeacherName,
+                'head_teacher_name' => $headTeacherName,
+                'print_date' => date('d/m/Y'),
+            ])->setPaper('a4', 'portrait');
+
+            return $pdf->download($downloadName);
+        }
+
         return Inertia::render('StudentReportCard', [
             'student' => $student,
             'school' => $school,
@@ -2344,6 +3148,8 @@ Route::middleware('auth')->group(function () {
             'subjects' => $subjects,
             'summary' => $summary,
             'behaviours' => $behaviours,
+            'class_teacher_name' => $classTeacherName,
+            'head_teacher_name' => $headTeacherName,
             'year' => $currentYear?->year ?? date('Y'),
         ]);
     })->name('reports.students.show');
@@ -2370,13 +3176,22 @@ Route::middleware('auth')->group(function () {
             'academic_year',
         ]);
 
-        $classes = SchoolClass::orderBy('level')
+        $allClasses = SchoolClass::query()
+            ->orderBy('level')
             ->orderBy('stream')
-            ->get([
-                'id',
-                'level',
-                'stream',
-            ]);
+            ->get(['id', 'level', 'stream']);
+
+        $classes = $allClasses
+            ->groupBy('level')
+            ->map(function ($rows, $level) {
+                return [
+                    'level' => $level,
+                    'streams' => $rows
+                        ->map(fn ($c) => ['id' => $c->id, 'stream' => $c->stream])
+                        ->values(),
+                ];
+            })
+            ->values();
 
         return Inertia::render('ClassReportsIndex', [
             'years' => $years,
@@ -2398,6 +3213,11 @@ Route::middleware('auth')->group(function () {
         $exam = null;
         $students = collect();
         $summary = null;
+
+        $streams = SchoolClass::query()
+            ->where('level', $class->level)
+            ->orderBy('stream')
+            ->get(['id', 'stream']);
 
         if ($examId) {
             $exam = Exam::find($examId);
@@ -2515,6 +3335,7 @@ Route::middleware('auth')->group(function () {
             'exam' => $exam,
             'students' => $students,
             'summary' => $summary,
+            'streams' => $streams,
             'year' => $currentYear?->year ?? date('Y'),
         ]);
     })->name('reports.classes.show');
@@ -2523,25 +3344,63 @@ Route::middleware('auth')->group(function () {
         $yearFilter = $request->query('year');
         $examFilter = $request->query('exam');
 
-        $school = School::query()->first();
+        $user = $request->user();
+        $schoolId = $user?->school_id;
 
-        $years = Exam::select('academic_year')
+        if (! $schoolId) {
+            abort(403);
+        }
+
+        $school = School::query()->where('id', $schoolId)->first();
+        if (! $school) {
+            abort(404);
+        }
+
+        $years = ExamResult::query()
+            ->where('school_id', $schoolId)
             ->whereNotNull('academic_year')
+            ->select('academic_year')
             ->distinct()
             ->orderBy('academic_year', 'desc')
             ->pluck('academic_year');
 
-        $examListQuery = Exam::orderByDesc('created_at');
+        $examIdsForSchool = ExamResult::query()
+            ->where('school_id', $schoolId)
+            ->select('exam_id')
+            ->distinct()
+            ->pluck('exam_id');
+
+        if ($examIdsForSchool->isEmpty()) {
+            return Inertia::render('SchoolReport', [
+                'school' => $school,
+                'years' => $years,
+                'exams' => collect(),
+                'classPerformance' => collect(),
+                'schoolSummary' => null,
+                'examSummaries' => collect(),
+                'subjectPerformance' => collect(),
+                'topSubjectsBest' => collect(),
+                'topSubjectsWorst' => collect(),
+                'yearTopStudents' => collect(),
+                'yearTrends' => collect(),
+                'timetablesSummary' => null,
+                'academicTeacher' => null,
+                'filters' => [
+                    'year' => $yearFilter,
+                    'exam' => $examFilter,
+                ],
+            ]);
+        }
+
+        $examListQuery = Exam::query()
+            ->when($examIdsForSchool->isNotEmpty(), fn ($q) => $q->whereIn('id', $examIdsForSchool))
+            ->orderByDesc('created_at');
+
         if ($yearFilter) {
             $examListQuery->where('academic_year', $yearFilter);
         }
 
-        $examList = $examListQuery->get([
-            'id',
-            'name',
-            'type',
-            'academic_year',
-        ]);
+        $examList = $examListQuery->get(['id', 'name', 'type', 'academic_year']);
 
         $classPerformance = collect();
         $schoolSummary = null;
@@ -2557,6 +3416,7 @@ Route::middleware('auth')->group(function () {
 
             if ($exam) {
                 $allResults = ExamResult::where('exam_id', $exam->id)
+                    ->where('school_id', $schoolId)
                     ->with(['student:id,exam_number,full_name,gender,class_level,stream'])
                     ->get();
 
@@ -2682,7 +3542,11 @@ Route::middleware('auth')->group(function () {
         // Per-exam summary for selected year (multi-exam overview)
         if ($yearFilter) {
             $examSummaries = $examList->map(function (Exam $exam) {
-                $results = ExamResult::where('exam_id', $exam->id)->get();
+                $user = request()->user();
+                $schoolId = $user?->school_id;
+                $results = ExamResult::where('exam_id', $exam->id)
+                    ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+                    ->get();
 
                 if ($results->isEmpty()) {
                     return [
@@ -2714,6 +3578,7 @@ Route::middleware('auth')->group(function () {
 
             if ($examIdsForYear->isNotEmpty()) {
                 $yearResults = ExamResult::whereIn('exam_id', $examIdsForYear)
+                    ->where('school_id', $schoolId)
                     ->with(['subject:id,subject_code,name', 'student:id,exam_number,full_name,class_level,stream,gender'])
                     ->get();
 
@@ -2779,27 +3644,42 @@ Route::middleware('auth')->group(function () {
                             // Points total
                             $pointsArr = [];
                             foreach ($rows as $res) {
-                                $scheme = $gradeForMarkYear($res->marks);
+                                $mark = $res->marks;
+                                $intMark = $mark !== null ? (int) round((float) $mark) : null;
+                                $scheme = $gradeForMarkYear($intMark);
                                 if ($scheme && $scheme->points !== null) {
                                     $pointsArr[] = $scheme->points;
                                 }
                             }
-                            $pointsTotal = ! empty($pointsArr) ? array_sum($pointsArr) : null;
+                            $pointsTotal = ! empty($pointsArr) ? (int) array_sum($pointsArr) : 0;
 
                             // Division from average
-                            $divisionCode = null;
+                            $divisionCode = '0';
                             if ($average !== null) {
                                 $avgScheme = $gradeForMarkYear((int) round($average));
                                 if ($avgScheme && $avgScheme->division) {
-                                    $divisionCode = $avgScheme->division;
+                                    $d = strtoupper(trim((string) $avgScheme->division));
+                                    if (in_array($d, ['I', 'II', 'III', 'IV', '0'], true)) {
+                                        $divisionCode = $d;
+                                    } elseif (str_contains($d, 'DIVISION I')) {
+                                        $divisionCode = 'I';
+                                    } elseif (str_contains($d, 'DIVISION II')) {
+                                        $divisionCode = 'II';
+                                    } elseif (str_contains($d, 'DIVISION III')) {
+                                        $divisionCode = 'III';
+                                    } elseif (str_contains($d, 'DIVISION IV')) {
+                                        $divisionCode = 'IV';
+                                    } elseif (str_contains($d, 'DIVISION 0')) {
+                                        $divisionCode = '0';
+                                    }
                                 } elseif ($avgScheme) {
                                     $grade = strtoupper($avgScheme->grade);
                                     $divisionCode = match ($grade) {
-                                        'A' => 'Division I',
-                                        'B' => 'Division II',
-                                        'C' => 'Division III',
-                                        'D' => 'Division IV',
-                                        default => 'Division 0',
+                                        'A' => 'I',
+                                        'B' => 'II',
+                                        'C' => 'III',
+                                        'D' => 'IV',
+                                        default => '0',
                                     };
                                 }
                             }
@@ -2815,11 +3695,20 @@ Route::middleware('auth')->group(function () {
                             ];
                         })
                         ->values()
-                        ->sortByDesc(function ($row) {
-                            $avg = $row['average'] ?? -INF;
-                            $points = $row['points'] ?? INF;
+                        ->sort(function ($a, $b) {
+                            $avgA = $a['average'] ?? -INF;
+                            $avgB = $b['average'] ?? -INF;
+                            if ($avgA !== $avgB) {
+                                return $avgA < $avgB ? 1 : -1;
+                            }
 
-                            return sprintf('%015.3f-%015.3f', $avg, -$points);
+                            $pointsA = $a['points'] ?? INF;
+                            $pointsB = $b['points'] ?? INF;
+                            if ($pointsA === $pointsB) {
+                                return 0;
+                            }
+
+                            return $pointsA < $pointsB ? -1 : 1;
                         })
                         ->take(10)
                         ->values();
@@ -2828,14 +3717,22 @@ Route::middleware('auth')->group(function () {
         }
 
         // Multi-year trend: average mark and candidates per academic year
-        $allYears = Exam::select('academic_year')
+        $allYears = ExamResult::query()
+            ->where('school_id', $schoolId)
             ->whereNotNull('academic_year')
+            ->select('academic_year')
             ->distinct()
             ->orderBy('academic_year')
             ->pluck('academic_year');
 
         $yearTrends = $allYears->map(function ($year) {
-            $examIds = Exam::where('academic_year', $year)->pluck('id');
+            $schoolId = request()->user()?->school_id;
+            $examIds = ExamResult::query()
+                ->where('school_id', $schoolId)
+                ->where('academic_year', $year)
+                ->select('exam_id')
+                ->distinct()
+                ->pluck('exam_id');
 
             if ($examIds->isEmpty()) {
                 return [
@@ -2845,7 +3742,9 @@ Route::middleware('auth')->group(function () {
                 ];
             }
 
-            $results = ExamResult::whereIn('exam_id', $examIds)->get();
+            $results = ExamResult::whereIn('exam_id', $examIds)
+                ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+                ->get();
             if ($results->isEmpty()) {
                 return [
                     'year' => $year,
@@ -2865,6 +3764,40 @@ Route::middleware('auth')->group(function () {
             ];
         });
 
+        $timetablesSummary = null;
+        if (Schema::hasColumn('timetables', 'school_id')) {
+            $timetablesQuery = Timetable::query()->where('school_id', $schoolId);
+
+            $totalTimetables = (clone $timetablesQuery)->count();
+            $recentTimetables = (clone $timetablesQuery)
+                ->orderByDesc('created_at')
+                ->take(5)
+                ->get(['id', 'title', 'class_name', 'academic_year', 'term', 'created_at']);
+
+            $byYear = (clone $timetablesQuery)
+                ->select('academic_year', DB::raw('COUNT(*) as total'))
+                ->groupBy('academic_year')
+                ->orderByDesc('academic_year')
+                ->get();
+
+            $byTerm = (clone $timetablesQuery)
+                ->select('term', DB::raw('COUNT(*) as total'))
+                ->groupBy('term')
+                ->orderByDesc('total')
+                ->get();
+
+            $timetablesSummary = [
+                'total' => $totalTimetables,
+                'recent' => $recentTimetables,
+                'by_year' => $byYear,
+                'by_term' => $byTerm,
+            ];
+        }
+
+        $academicTeacher = User::whereIn('role', ['academic', 'academic_teacher'])
+            ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+            ->first(['id', 'name']);
+
         return Inertia::render('SchoolReport', [
             'school' => $school,
             'years' => $years,
@@ -2877,6 +3810,8 @@ Route::middleware('auth')->group(function () {
             'topSubjectsWorst' => $topSubjectsWorst,
             'yearTopStudents' => $yearTopStudents,
             'yearTrends' => $yearTrends,
+            'timetablesSummary' => $timetablesSummary,
+            'academicTeacher' => $academicTeacher,
             'filters' => [
                 'year' => $yearFilter,
                 'exam' => $examFilter,
@@ -2886,6 +3821,8 @@ Route::middleware('auth')->group(function () {
 
     Route::get('/students', function (\Illuminate\Http\Request $request) {
         $classFilter = $request->query('class');
+        $sort = $request->query('sort');
+        $dir = strtolower((string) $request->query('dir', 'asc')) === 'desc' ? 'desc' : 'asc';
 
         $user = $request->user();
 
@@ -2899,17 +3836,50 @@ Route::middleware('auth')->group(function () {
             $query->where('class_level', $classFilter);
         }
 
-        $students = $query
-            ->orderBy('class_level')
-            ->orderBy('stream')
-            ->orderBy('full_name')
-            ->get();
+        $allowedSorts = [
+            'exam_number' => 'exam_number',
+            'full_name' => 'full_name',
+            'class_level' => 'class_level',
+            'stream' => 'stream',
+            'gender' => 'gender',
+        ];
 
-        // Map class_level -> subject details (code + name) from SchoolClass
-        $classSubjects = SchoolClass::with('subjects:id,subject_code,name')
+        if ($sort && isset($allowedSorts[$sort])) {
+            $col = $allowedSorts[$sort];
+
+            if ($col === 'gender') {
+                $query->orderByRaw("CASE WHEN gender='F' THEN 0 WHEN gender='M' THEN 1 ELSE 2 END {$dir}");
+            } elseif ($col === 'exam_number') {
+                $query->orderByRaw("CAST(exam_number AS INTEGER) {$dir}");
+            } else {
+                $query->orderBy($col, $dir);
+            }
+
+            $query->orderByRaw("CASE WHEN gender='F' THEN 0 WHEN gender='M' THEN 1 ELSE 2 END asc")
+                ->orderBy('full_name', 'asc')
+                ->orderByRaw('CAST(exam_number AS INTEGER) asc');
+        } else {
+            $query->orderBy('class_level', 'asc')
+                ->orderByRaw("CASE WHEN gender='F' THEN 0 WHEN gender='M' THEN 1 ELSE 2 END asc")
+                ->orderBy('full_name', 'asc')
+                ->orderByRaw('CAST(exam_number AS INTEGER) asc');
+        }
+
+        $students = $query->get();
+
+        // Map class_level (class name) -> subject details (code + name) from SchoolClass
+        $classSubjectsQuery = SchoolClass::with('subjects:id,subject_code,name');
+
+        if ($user && $user->school_id) {
+            $classSubjectsQuery->where('school_id', $user->school_id);
+        }
+
+        $classSubjects = $classSubjectsQuery
+            ->whereNull('parent_class_id')
+            ->orderBy('id')
             ->get()
             ->mapWithKeys(function (SchoolClass $class) {
-                $key = trim($class->level ?? '');
+                $key = trim($class->name ?? '');
 
                 return [
                     $key => $class->subjects
@@ -2923,25 +3893,100 @@ Route::middleware('auth')->group(function () {
                 ];
             });
 
-        $students = $students->map(function (Student $student) use ($classSubjects) {
-            $key = trim($student->class_level ?? '');
+        // Map class_level -> stream -> subject details
+        $streamSubjects = [];
+        $streamSubjectsQuery = SchoolClass::with('subjects:id,subject_code,name')
+            ->whereNotNull('school_classes.parent_class_id')
+            ->join('school_classes as parent', 'parent.id', '=', 'school_classes.parent_class_id')
+            ->select([
+                'school_classes.*',
+                'parent.name as parent_name',
+            ])
+            ->whereNotNull('school_classes.stream')
+            ->where('school_classes.stream', '!=', '');
+
+        if ($user && $user->school_id) {
+            $streamSubjectsQuery->where('school_classes.school_id', $user->school_id);
+        }
+
+        $streamSubjects = $streamSubjectsQuery
+            ->get()
+            ->groupBy(fn (SchoolClass $c) => trim((string) $c->parent_name))
+            ->map(function ($rows) {
+                return $rows
+                    ->groupBy(fn (SchoolClass $c) => trim((string) $c->stream))
+                    ->map(function ($streamRows) {
+                        /** @var \App\Models\SchoolClass $first */
+                        $first = $streamRows->first();
+                        if (! $first) return [];
+
+                        return $first->subjects
+                            ->map(function (Subject $subject) {
+                                return [
+                                    'code' => $subject->subject_code,
+                                    'name' => $subject->name ?? $subject->subject_code,
+                                ];
+                            })
+                            ->all();
+                    })
+                    ->all();
+            })
+            ->all();
+
+        $students = $students->map(function (Student $student) use ($classSubjects, $streamSubjects) {
+            $classKey = trim($student->class_level ?? '');
+            $streamKey = trim($student->stream ?? '');
+
+            $subjects = $classSubjects->get($classKey, []);
+            if ($streamKey !== '' && isset($streamSubjects[$classKey]) && isset($streamSubjects[$classKey][$streamKey])) {
+                $streamSubs = $streamSubjects[$classKey][$streamKey];
+                if (is_array($streamSubs) && count($streamSubs) > 0) {
+                    $subjects = $streamSubs;
+                }
+            }
 
             return array_merge($student->toArray(), [
-                'subjects' => $classSubjects->get($key, []),
+                'subjects' => $subjects,
             ]);
         });
 
-        // Available class levels for the current school (for Add Student form/filter)
-        $classLevelsQuery = SchoolClass::select('level')
-            ->distinct()
-            ->whereNotNull('level')
-            ->orderBy('level');
+        // Available classes for the current school (for Add Student form/filter)
+        $classesQuery = SchoolClass::query()
+            ->whereNull('parent_class_id')
+            ->orderBy('id');
 
         if ($user && $user->school_id) {
-            $classLevelsQuery->where('school_id', $user->school_id);
+            $classesQuery->where('school_id', $user->school_id);
         }
 
-        $classes = $classLevelsQuery->pluck('level');
+        $classes = $classesQuery->pluck('name');
+
+        // Streams per class (for stream-aware edit forms)
+        $streamsQuery = SchoolClass::query()
+            ->whereNotNull('school_classes.parent_class_id')
+            ->join('school_classes as parent', 'parent.id', '=', 'school_classes.parent_class_id')
+            ->select([
+                'parent.name as class_level',
+                'school_classes.stream as stream',
+            ])
+            ->whereNotNull('school_classes.stream')
+            ->where('school_classes.stream', '!=', '');
+
+        if ($user && $user->school_id) {
+            $streamsQuery->where('school_classes.school_id', $user->school_id);
+        }
+
+        $streamsByClass = $streamsQuery
+            ->get()
+            ->groupBy('class_level')
+            ->map(function ($rows) {
+                return $rows
+                    ->pluck('stream')
+                    ->filter(fn ($s) => $s !== null && $s !== '')
+                    ->unique()
+                    ->values()
+                    ->all();
+            });
 
         $exams = Exam::orderByDesc('created_at')
             ->limit(10)
@@ -2955,9 +4000,14 @@ Route::middleware('auth')->group(function () {
         return Inertia::render('Students', [
             'students' => $students,
             'classes' => $classes,
+            'classSubjects' => $classSubjects,
+            'streamSubjects' => $streamSubjects,
+            'streamsByClass' => $streamsByClass,
             'exams' => $exams,
             'filters' => [
                 'class' => $classFilter,
+                'sort' => $sort,
+                'dir' => $dir,
             ],
         ]);
     })->name('students.index');
@@ -2966,12 +4016,53 @@ Route::middleware('auth')->group(function () {
         $data = $request->validate([
             'full_name' => ['required', 'string', 'max:255'],
             'class_level' => ['required', 'string', 'max:255'],
+            'stream' => ['nullable', 'string', 'max:255'],
             'gender' => ['nullable', 'in:M,F'],
             'date_of_birth' => ['nullable', 'date'],
+            'guardian_name' => ['nullable', 'string', 'max:255'],
+            'guardian_phone' => ['nullable', 'string', 'max:255'],
+            'guardian_address' => ['nullable', 'string', 'max:255'],
         ]);
 
         $user = $request->user();
         $school = $user && $user->school_id ? \App\Models\School::find($user->school_id) : \App\Models\School::query()->first();
+
+        $stream = isset($data['stream']) ? trim((string) $data['stream']) : '';
+        if ($stream !== '') {
+            $streamsQuery = \App\Models\SchoolClass::query()
+                ->whereNotNull('school_classes.parent_class_id')
+                ->join('school_classes as parent', 'parent.id', '=', 'school_classes.parent_class_id')
+                ->select([
+                    'parent.name as class_level',
+                    'school_classes.stream as stream',
+                ])
+                ->where('parent.name', $data['class_level'])
+                ->whereNotNull('school_classes.stream')
+                ->where('school_classes.stream', '!=', '');
+
+            if ($user && $user->school_id) {
+                $streamsQuery->where('school_classes.school_id', $user->school_id);
+            }
+
+            $allowedStreams = $streamsQuery
+                ->pluck('stream')
+                ->map(fn ($s) => trim((string) $s))
+                ->filter(fn ($s) => $s !== '')
+                ->unique()
+                ->values()
+                ->all();
+
+            if (! empty($allowedStreams) && ! in_array($stream, $allowedStreams, true)) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'stream' => ['Selected stream is not valid for the chosen class.'],
+                ]);
+            }
+
+            // Normalize trimmed value
+            $data['stream'] = $stream;
+        } else {
+            $data['stream'] = null;
+        }
 
         $prefix = $school && $school->school_code ? $school->school_code : 'SCH01';
 
@@ -2986,8 +4077,12 @@ Route::middleware('auth')->group(function () {
             'exam_number' => $examNumber,
             'full_name' => $data['full_name'],
             'class_level' => $data['class_level'],
+            'stream' => $data['stream'] ?? null,
             'gender' => $data['gender'] ?? null,
             'date_of_birth' => $data['date_of_birth'] ?? null,
+            'guardian_name' => $data['guardian_name'] ?? null,
+            'guardian_phone' => $data['guardian_phone'] ?? null,
+            'guardian_address' => $data['guardian_address'] ?? null,
             'school_id' => $school?->id,
             'academic_year' => $academicYear,
         ]);
@@ -3013,6 +4108,74 @@ Route::middleware('auth')->group(function () {
 
         return redirect()->route('students.index')->with('success', 'Selected students deleted successfully.');
     })->name('students.bulk-delete');
+
+    Route::patch('/students/{student}', function (\Illuminate\Http\Request $request, Student $student) {
+        $user = $request->user();
+
+        if ($user && $user->school_id && $student->school_id && (int) $student->school_id !== (int) $user->school_id) {
+            abort(403);
+        }
+
+        $data = $request->validate([
+            'full_name' => ['required', 'string', 'max:255'],
+            'class_level' => ['required', 'string', 'max:255'],
+            'stream' => ['nullable', 'string', 'max:255'],
+            'gender' => ['nullable', 'string', 'in:M,F'],
+            'date_of_birth' => ['nullable', 'date'],
+            'guardian_name' => ['nullable', 'string', 'max:255'],
+            'guardian_phone' => ['nullable', 'string', 'max:255'],
+            'guardian_address' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $stream = isset($data['stream']) ? trim((string) $data['stream']) : '';
+        if ($stream !== '') {
+            $streamsQuery = \App\Models\SchoolClass::query()
+                ->whereNotNull('school_classes.parent_class_id')
+                ->join('school_classes as parent', 'parent.id', '=', 'school_classes.parent_class_id')
+                ->select([
+                    'parent.name as class_level',
+                    'school_classes.stream as stream',
+                ])
+                ->where('parent.name', $data['class_level'])
+                ->whereNotNull('school_classes.stream')
+                ->where('school_classes.stream', '!=', '');
+
+            if ($user && $user->school_id) {
+                $streamsQuery->where('school_classes.school_id', $user->school_id);
+            }
+
+            $allowedStreams = $streamsQuery
+                ->pluck('stream')
+                ->map(fn ($s) => trim((string) $s))
+                ->filter(fn ($s) => $s !== '')
+                ->unique()
+                ->values()
+                ->all();
+
+            if (! empty($allowedStreams) && ! in_array($stream, $allowedStreams, true)) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'stream' => ['Selected stream is not valid for the chosen class.'],
+                ]);
+            }
+
+            $data['stream'] = $stream;
+        } else {
+            $data['stream'] = null;
+        }
+
+        $student->update([
+            'full_name' => $data['full_name'],
+            'class_level' => $data['class_level'],
+            'stream' => $data['stream'] ?? null,
+            'gender' => $data['gender'] ?? null,
+            'date_of_birth' => $data['date_of_birth'] ?? null,
+            'guardian_name' => $data['guardian_name'] ?? null,
+            'guardian_phone' => $data['guardian_phone'] ?? null,
+            'guardian_address' => $data['guardian_address'] ?? null,
+        ]);
+
+        return redirect()->route('students.index')->with('success', 'Student updated successfully.');
+    })->name('students.update');
 
     Route::post('/students/import-samples', function (\Illuminate\Http\Request $request) {
         $data = $request->validate([
@@ -3069,6 +4232,145 @@ Route::middleware('auth')->group(function () {
 
         return redirect()->route('students.index')->with('success', 'Sample students imported successfully.');
     })->name('students.import-samples');
+
+    Route::get('/students/{student}/results-preview', function (\Illuminate\Http\Request $request, Student $student) {
+        $user = $request->user();
+
+        if ($user && $user->school_id && $student->school_id && (int) $student->school_id !== (int) $user->school_id) {
+            abort(403);
+        }
+
+        $examId = $request->query('exam');
+
+        if (! $examId) {
+            $examId = \App\Models\ExamResult::query()
+                ->where('student_id', $student->id)
+                ->join('exams', 'exams.id', '=', 'exam_results.exam_id')
+                ->orderByDesc('exams.created_at')
+                ->value('exam_results.exam_id');
+        }
+
+        $exam = $examId ? \App\Models\Exam::find($examId) : null;
+
+        $results = [];
+        $summary = [
+            'total' => null,
+            'average' => null,
+        ];
+
+        if ($examId) {
+            $rows = \App\Models\ExamResult::with('subject:id,subject_code,name')
+                ->where('student_id', $student->id)
+                ->where('exam_id', $examId)
+                ->orderBy('subject_id')
+                ->get();
+
+            $results = $rows->map(function (\App\Models\ExamResult $r) {
+                return [
+                    'subject_code' => optional($r->subject)->subject_code,
+                    'subject_name' => optional($r->subject)->name,
+                    'marks' => $r->marks ?? $r->standardized_marks ?? $r->raw_marks,
+                    'grade' => $r->grade,
+                ];
+            })->values()->all();
+
+            $marks = $rows
+                ->map(fn (\App\Models\ExamResult $r) => $r->marks ?? $r->standardized_marks ?? $r->raw_marks)
+                ->filter(fn ($m) => is_numeric($m));
+
+            if ($marks->count() > 0) {
+                $summary['total'] = (float) $marks->sum();
+                $summary['average'] = round((float) $marks->avg(), 2);
+            }
+        }
+
+        return response()->json([
+            'exam' => $exam ? [
+                'id' => $exam->id,
+                'name' => $exam->name,
+                'academic_year' => $exam->academic_year,
+            ] : null,
+            'results' => $results,
+            'summary' => $summary,
+        ]);
+    })->name('students.results-preview');
+
+    Route::get('/students/{student}/behaviour-ratings', function (\Illuminate\Http\Request $request, Student $student) {
+        $user = $request->user();
+
+        if ($user && $user->school_id && $student->school_id && (int) $student->school_id !== (int) $user->school_id) {
+            abort(403);
+        }
+
+        $ratedDate = $request->query('rated_date');
+
+        $baseQuery = \App\Models\StudentBehaviourRating::query()
+            ->where('student_id', $student->id)
+            ->whereNull('exam_id');
+
+        if (! $ratedDate) {
+            $ratedDate = $baseQuery
+                ->orderByDesc('rated_date')
+                ->value('rated_date');
+        }
+
+        $query = \App\Models\StudentBehaviourRating::query()
+            ->where('student_id', $student->id)
+            ->whereNull('exam_id');
+
+        if ($ratedDate) {
+            $query->whereDate('rated_date', $ratedDate);
+        }
+
+        $rows = $query
+            ->orderBy('code')
+            ->get(['code', 'label', 'grade', 'rated_date', 'comment']);
+
+        return response()->json([
+            'rated_date' => $ratedDate,
+            'ratings' => $rows,
+        ]);
+    })->name('students.behaviour-ratings.index');
+
+    Route::post('/students/{student}/behaviour-ratings', function (\Illuminate\Http\Request $request, Student $student) {
+        $user = $request->user();
+
+        if ($user && $user->school_id && $student->school_id && (int) $student->school_id !== (int) $user->school_id) {
+            abort(403);
+        }
+
+        $data = $request->validate([
+            'rated_date' => ['nullable', 'date'],
+            'ratings' => ['required', 'array'],
+            'ratings.*.code' => ['required', 'string', 'max:10'],
+            'ratings.*.label' => ['required', 'string', 'max:255'],
+            'ratings.*.grade' => ['required', 'string', 'max:2'],
+            'ratings.*.comment' => ['nullable', 'string'],
+        ]);
+
+        $ratedDate = $data['rated_date'] ?? now()->toDateString();
+
+        foreach ($data['ratings'] as $row) {
+            \App\Models\StudentBehaviourRating::updateOrCreate(
+                [
+                    'student_id' => $student->id,
+                    'exam_id' => null,
+                    'code' => $row['code'],
+                    'rated_date' => $ratedDate,
+                ],
+                [
+                    'school_id' => $user?->school_id,
+                    'label' => $row['label'],
+                    'grade' => strtoupper($row['grade']),
+                    'rated_date' => $ratedDate,
+                    'comment' => $row['comment'] ?? null,
+                    'created_by' => $user?->id,
+                ],
+            );
+        }
+
+        return response()->json(['ok' => true]);
+    })->name('students.behaviour-ratings.store');
 
     Route::get('/students/promote', function (\Illuminate\Http\Request $request) {
         $school = School::query()->first();
@@ -3206,16 +4508,25 @@ Route::middleware('auth')->group(function () {
     })->name('students.promote');
 
     Route::get('/timetables', function () {
-        $timetables = Timetable::orderByDesc('created_at')->get([
-            'id',
-            'title',
-            'table_no',
-            'name',
-            'class_name',
-            'academic_year',
-            'term',
-            'file_path',
-        ]);
+        $user = request()->user();
+        $schoolId = $user?->school_id;
+
+        $timetables = Timetable::query()
+            ->when($schoolId && Schema::hasColumn('timetables', 'school_id'), function ($q) use ($schoolId) {
+                $q->where('school_id', $schoolId);
+            })
+            ->orderByDesc('created_at')
+            ->get([
+                'id',
+                'school_id',
+                'title',
+                'table_no',
+                'name',
+                'class_name',
+                'academic_year',
+                'term',
+                'file_path',
+            ]);
 
         return Inertia::render('Timetables', [
             'timetables' => $timetables,
@@ -3683,13 +4994,19 @@ Route::middleware('auth')->group(function () {
     })->name('resources.lesson-plans.preview');
 
     Route::get('/timetables/create', function () {
-        $school = School::query()->first();
+        $user = request()->user();
+        $schoolId = $user?->school_id;
+
+        $school = School::query()
+            ->when($schoolId, fn ($q) => $q->where('id', $schoolId))
+            ->first();
 
         if (! $school) {
-            $school = School::create([]);
+            abort(404);
         }
 
         $subjects = Subject::with('teachers')
+            ->when($schoolId && Schema::hasColumn('subjects', 'school_id'), fn ($q) => $q->where('school_id', $schoolId))
             ->orderBy('subject_code')
             ->get()
             ->map(function ($subject) {
@@ -3714,17 +5031,36 @@ Route::middleware('auth')->group(function () {
                 ];
             });
 
-        $classes = SchoolClass::orderBy('level')
-            ->orderBy('stream')
-            ->get([
-                'id',
-                'name',
-                'level',
-                'stream',
+        $classesQuery = SchoolClass::with('subjects:id,subject_code')
+            ->leftJoin('school_classes as parent', 'parent.id', '=', 'school_classes.parent_class_id')
+            ->select([
+                'school_classes.id',
+                'school_classes.name',
+                'school_classes.level',
+                'school_classes.stream',
+                'school_classes.parent_class_id',
+                'parent.name as parent_name',
             ])
-            ->groupBy('level')
-            ->map(function ($group) {
-                return $group->first();
+            ->orderByRaw('CASE WHEN school_classes.parent_class_id IS NULL THEN 0 ELSE 1 END')
+            ->orderBy('parent.name')
+            ->orderBy('school_classes.name');
+
+        if ($schoolId && Schema::hasColumn('school_classes', 'school_id')) {
+            $classesQuery->where('school_classes.school_id', $schoolId);
+        }
+
+        $classes = $classesQuery
+            ->get()
+            ->map(function (SchoolClass $class) {
+                return [
+                    'id' => $class->id,
+                    'name' => $class->name,
+                    'level' => $class->level,
+                    'stream' => $class->stream,
+                    'parent_class_id' => $class->parent_class_id,
+                    'parent_name' => $class->parent_name,
+                    'subject_codes' => $class->subjects->pluck('subject_code')->all(),
+                ];
             })
             ->values();
 
@@ -3736,7 +5072,89 @@ Route::middleware('auth')->group(function () {
         ]);
     })->name('timetables.create');
 
+    Route::get('/timetables/weekly-limits', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+
+        $query = TimetableWeeklyLimit::query();
+        if ($schoolId) {
+            $query->where('school_id', $schoolId);
+        }
+
+        $classId = $request->query('school_class_id');
+        if ($classId) {
+            $query->where('school_class_id', $classId);
+        }
+
+        $limits = $query
+            ->orderBy('school_class_id')
+            ->orderBy('teacher_id')
+            ->orderBy('subject_id')
+            ->get([
+                'id',
+                'school_class_id',
+                'subject_id',
+                'teacher_id',
+                'periods_per_week',
+            ])
+            ->map(function (TimetableWeeklyLimit $row) {
+                return [
+                    'id' => $row->id,
+                    'school_class_id' => $row->school_class_id,
+                    'subject_id' => $row->subject_id,
+                    'teacher_id' => $row->teacher_id,
+                    'periods_per_week' => (int) $row->periods_per_week,
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'limits' => $limits,
+        ]);
+    })->name('timetables.weekly-limits.index');
+
+    Route::post('/timetables/weekly-limits', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+
+        $data = $request->validate([
+            'limits' => ['required', 'array'],
+            'limits.*.school_class_id' => ['required', 'integer', 'exists:school_classes,id'],
+            'limits.*.subject_id' => ['required', 'integer', 'exists:subjects,id'],
+            'limits.*.teacher_id' => ['required', 'integer', 'exists:users,id'],
+            'limits.*.periods_per_week' => ['required', 'integer', 'min:0', 'max:50'],
+        ]);
+
+        $rows = collect($data['limits'])
+            ->map(function (array $row) use ($schoolId) {
+                return [
+                    'school_id' => $schoolId,
+                    'school_class_id' => (int) $row['school_class_id'],
+                    'subject_id' => (int) $row['subject_id'],
+                    'teacher_id' => (int) $row['teacher_id'],
+                    'periods_per_week' => (int) $row['periods_per_week'],
+                    'updated_at' => now(),
+                    'created_at' => now(),
+                ];
+            })
+            ->values()
+            ->all();
+
+        if (! empty($rows)) {
+            TimetableWeeklyLimit::upsert(
+                $rows,
+                ['school_id', 'school_class_id', 'subject_id', 'teacher_id'],
+                ['periods_per_week', 'updated_at']
+            );
+        }
+
+        return response()->json(['success' => true]);
+    })->name('timetables.weekly-limits.save');
+
     Route::post('/timetables', function (Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+
         $data = $request->validate([
             'title' => ['required', 'string', 'max:255'],
             'class_name' => ['nullable', 'string', 'max:255'],
@@ -3746,17 +5164,17 @@ Route::middleware('auth')->group(function () {
         ]);
 
         $timetable = Timetable::create([
+            'school_id' => $schoolId,
             'title' => $data['title'],
             'class_name' => $data['class_name'] ?? null,
             'academic_year' => $data['academic_year'] ?? null,
             'term' => $data['term'] ?? null,
-            'table_no' => $request->input('table_no'),
             'name' => $request->input('name') ?? ($data['type'] ?? null),
         ]);
 
         // Generate a simple PDF version of the timetable header for archiving
         try {
-            $school = School::query()->first();
+            $school = School::query()->when($schoolId, fn ($q) => $q->where('id', $schoolId))->first();
 
             $pdf = Pdf::loadView('timetables.pdf', [
                 'school' => $school,
@@ -3777,6 +5195,12 @@ Route::middleware('auth')->group(function () {
     })->name('timetables.store');
 
     Route::get('/timetables/{timetable}/download', function (Timetable $timetable) {
+        $user = request()->user();
+        $schoolId = $user?->school_id;
+        if ($schoolId && Schema::hasColumn('timetables', 'school_id') && $timetable->school_id && (int) $timetable->school_id !== (int) $schoolId) {
+            abort(403);
+        }
+
         if (! $timetable->file_path) {
             abort(404);
         }
@@ -3885,13 +5309,23 @@ Route::middleware('auth')->group(function () {
     })->name('sitting-plans.destroy');
 
     Route::get('/timetables/{timetable}', function (Timetable $timetable) {
-        $school = School::query()->first();
+        $user = request()->user();
+        $schoolId = $user?->school_id;
+
+        if ($schoolId && Schema::hasColumn('timetables', 'school_id') && $timetable->school_id && (int) $timetable->school_id !== (int) $schoolId) {
+            abort(403);
+        }
+
+        $school = School::query()
+            ->when($schoolId, fn ($q) => $q->where('id', $schoolId))
+            ->first();
 
         if (! $school) {
-            $school = School::create([]);
+            abort(404);
         }
 
         $subjects = Subject::with('teachers')
+            ->when($schoolId && Schema::hasColumn('subjects', 'school_id'), fn ($q) => $q->where('school_id', $schoolId))
             ->orderBy('subject_code')
             ->get()
             ->map(function ($subject) {
@@ -3916,7 +5350,9 @@ Route::middleware('auth')->group(function () {
                 ];
             });
 
-        $classes = SchoolClass::orderBy('level')
+        $classes = SchoolClass::query()
+            ->when($schoolId && Schema::hasColumn('school_classes', 'school_id'), fn ($q) => $q->where('school_id', $schoolId))
+            ->orderBy('level')
             ->orderBy('stream')
             ->get([
                 'id',
@@ -3934,6 +5370,12 @@ Route::middleware('auth')->group(function () {
     })->name('timetables.show');
 
     Route::delete('/timetables/{timetable}', function (Timetable $timetable) {
+        $user = request()->user();
+        $schoolId = $user?->school_id;
+        if ($schoolId && Schema::hasColumn('timetables', 'school_id') && $timetable->school_id && (int) $timetable->school_id !== (int) $schoolId) {
+            abort(403);
+        }
+
         $timetable->delete();
 
         return redirect()->route('timetables.index');
@@ -4033,43 +5475,211 @@ Route::middleware('auth')->group(function () {
             'teaching_classes',
         ]);
 
-        $classesQuery = SchoolClass::orderBy('name');
+        $classesQuery = SchoolClass::query()
+            ->whereNull('parent_class_id')
+            ->orderBy('name');
 
         if ($schoolId) {
             $classesQuery->where('school_id', $schoolId);
         }
 
         $classes = $classesQuery
-            ->get(['id', 'name', 'level', 'stream'])
+            ->get(['id', 'name', 'level'])
+            ->map(function (SchoolClass $class) {
+                return [
+                    'id' => $class->id,
+                    'name' => $class->name,
+                    'level' => $class->level,
+                ];
+            });
+
+        $classSubjectMap = [];
+        $baseClassIds = collect($classes)->pluck('id')->map(fn ($v) => (int) $v)->all();
+        if (! empty($baseClassIds)) {
+            $classSubjectPairs = DB::table('class_subject')
+                ->join('school_classes', 'school_classes.id', '=', 'class_subject.school_class_id')
+                ->when($schoolId, fn ($q) => $q->where('school_classes.school_id', $schoolId))
+                ->whereIn('class_subject.school_class_id', $baseClassIds)
+                ->select(['class_subject.school_class_id', 'class_subject.subject_id'])
+                ->get();
+
+            foreach ($classSubjectPairs as $row) {
+                $cid = (int) $row->school_class_id;
+                if (! isset($classSubjectMap[$cid])) {
+                    $classSubjectMap[$cid] = [];
+                }
+                $classSubjectMap[$cid][] = (int) $row->subject_id;
+            }
+        }
+
+        $allClassesQuery = SchoolClass::query()->orderBy('level')->orderBy('stream')->orderBy('name');
+        if ($schoolId) {
+            $allClassesQuery->where('school_id', $schoolId);
+        }
+
+        $allClasses = $allClassesQuery
+            ->get(['id', 'name', 'level', 'stream', 'parent_class_id'])
             ->map(function (SchoolClass $class) {
                 return [
                     'id' => $class->id,
                     'name' => $class->name,
                     'level' => $class->level,
                     'stream' => $class->stream,
+                    'parent_class_id' => $class->parent_class_id,
                 ];
             });
+
+        $subjectsQuery = Subject::orderBy('subject_code');
+        if ($schoolId && Schema::hasColumn('subjects', 'school_id')) {
+            $subjectsQuery->where('school_id', $schoolId);
+        }
+
+        $subjects = $subjectsQuery
+            ->get(['id', 'subject_code', 'name'])
+            ->map(fn (Subject $s) => [
+                'id' => $s->id,
+                'subject_code' => $s->subject_code,
+                'name' => $s->name,
+            ]);
+
+        $assignmentRows = DB::table('teacher_class_subject')
+            ->join('school_classes', 'school_classes.id', '=', 'teacher_class_subject.school_class_id')
+            ->join('subjects', 'subjects.id', '=', 'teacher_class_subject.subject_id')
+            ->when($schoolId, fn ($q) => $q->where('teacher_class_subject.school_id', $schoolId))
+            ->whereIn('teacher_class_subject.teacher_id', $teachers->pluck('id')->all())
+            ->select([
+                'teacher_class_subject.teacher_id',
+                'teacher_class_subject.school_class_id',
+                'teacher_class_subject.subject_id',
+                'school_classes.name as class_name',
+                'school_classes.level as class_level',
+                'school_classes.stream as class_stream',
+                'school_classes.parent_class_id as parent_class_id',
+                'subjects.subject_code as subject_code',
+                'subjects.name as subject_name',
+            ])
+            ->get();
+
+        $assignmentsByTeacher = $assignmentRows->groupBy('teacher_id');
+
+        $teachers = $teachers->map(function (User $teacher) use ($assignmentsByTeacher) {
+            $rows = $assignmentsByTeacher->get($teacher->id, collect());
+
+            $classLabels = $rows
+                ->map(function ($r) {
+                    $label = trim(($r->class_level ?? '').' '.($r->class_stream ?? ''));
+                    return $label ?: ($r->class_name ?? '');
+                })
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            $subjectCodes = $rows
+                ->map(fn ($r) => $r->subject_code)
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            $classIds = $rows
+                ->map(function ($r) {
+                    $baseId = $r->parent_class_id ?: $r->school_class_id;
+                    return (int) $baseId;
+                })
+                ->unique()
+                ->values()
+                ->all();
+
+            $subjectIds = $rows
+                ->pluck('subject_id')
+                ->unique()
+                ->values()
+                ->map(fn ($v) => (int) $v)
+                ->all();
+
+            $teacher->setAttribute('assigned_classes', $classLabels);
+            $teacher->setAttribute('assigned_subjects', $subjectCodes);
+            $teacher->setAttribute('assigned_class_ids', $classIds);
+            $teacher->setAttribute('assigned_subject_ids', $subjectIds);
+
+            return $teacher;
+        });
 
         return Inertia::render('TeachersIndex', [
             'teachers' => $teachers,
             'classes' => $classes,
+            'allClasses' => $allClasses,
+            'subjects' => $subjects,
+            'classSubjectMap' => $classSubjectMap,
         ]);
     })->name('teachers.index');
+
+    Route::get('/teachers/{teacher}/weekly-limits', function (\Illuminate\Http\Request $request, User $teacher) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+
+        if ($schoolId && $teacher->school_id && (int) $teacher->school_id !== (int) $schoolId) {
+            abort(403);
+        }
+
+        $limits = TimetableWeeklyLimit::query()
+            ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+            ->where('teacher_id', $teacher->id)
+            ->with([
+                'schoolClass:id,name,level,stream,parent_class_id',
+                'subject:id,subject_code,name',
+            ])
+            ->orderBy('school_class_id')
+            ->orderBy('subject_id')
+            ->get()
+            ->map(function (TimetableWeeklyLimit $row) {
+                $class = $row->schoolClass;
+                $classLabel = $class
+                    ? (trim(($class->level ?? '').' '.($class->stream ?? '')) ?: ($class->name ?? ''))
+                    : '';
+
+                return [
+                    'id' => $row->id,
+                    'school_class_id' => $row->school_class_id,
+                    'class_label' => $classLabel,
+                    'subject_id' => $row->subject_id,
+                    'subject_code' => optional($row->subject)->subject_code,
+                    'subject_name' => optional($row->subject)->name,
+                    'periods_per_week' => (int) $row->periods_per_week,
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'teacher' => [
+                'id' => $teacher->id,
+                'name' => $teacher->name,
+            ],
+            'limits' => $limits,
+        ]);
+    })->name('teachers.weekly-limits');
 
     Route::get('/teachers/create', function () {
         return Inertia::render('AddTeacher');
     })->name('teachers.create');
 
     Route::post('/teachers', function (\Illuminate\Http\Request $request) {
+        $schoolId = $request->user()?->school_id;
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
             'phone' => ['required', 'string', 'max:50'],
             'check_number' => ['required', 'string', 'max:100'],
             'teaching_classes' => ['required', 'string', 'max:255'],
+            'class_ids' => ['sometimes', 'array'],
+            'class_ids.*' => ['integer', 'exists:school_classes,id'],
+            'subject_ids' => ['sometimes', 'array'],
+            'subject_ids.*' => ['integer', 'exists:subjects,id'],
         ]);
 
         $teacher = User::create([
+            'school_id' => $schoolId,
             'name' => $validated['name'],
             'email' => $validated['email'],
             'phone' => $validated['phone'],
@@ -4081,20 +5691,88 @@ Route::middleware('auth')->group(function () {
             'password' => bcrypt('12345678'),
         ]);
 
+        $classIds = collect($validated['class_ids'] ?? [])->map(fn ($v) => (int) $v)->filter()->unique()->values();
+        $subjectIds = collect($validated['subject_ids'] ?? [])->map(fn ($v) => (int) $v)->filter()->unique()->values();
+
+        if ($classIds->isNotEmpty() && $subjectIds->isNotEmpty()) {
+            $rows = [];
+            foreach ($classIds as $classId) {
+                foreach ($subjectIds as $subjectId) {
+                    $rows[] = [
+                        'school_id' => $schoolId,
+                        'teacher_id' => $teacher->id,
+                        'school_class_id' => $classId,
+                        'subject_id' => $subjectId,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+                }
+            }
+
+            DB::table('teacher_class_subject')->upsert(
+                $rows,
+                ['school_id', 'teacher_id', 'school_class_id', 'subject_id'],
+                ['updated_at']
+            );
+
+            $teacher->subjects()->syncWithoutDetaching($subjectIds->all());
+        }
+
         return redirect()->route('teachers.index')->with('success', 'Teacher registered successfully.');
     })->name('teachers.store');
 
     Route::put('/teachers/{teacher}', function (\Illuminate\Http\Request $request, User $teacher) {
         abort_unless($teacher->role === 'teacher', 404);
 
+        $schoolId = $request->user()?->school_id;
+        if ($schoolId && $teacher->school_id && (int) $teacher->school_id !== (int) $schoolId) {
+            abort(403);
+        }
+
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'phone' => ['required', 'string', 'max:50'],
             'check_number' => ['required', 'string', 'max:100'],
             'teaching_classes' => ['required', 'string', 'max:255'],
+            'class_ids' => ['sometimes', 'array'],
+            'class_ids.*' => ['integer', 'exists:school_classes,id'],
+            'subject_ids' => ['sometimes', 'array'],
+            'subject_ids.*' => ['integer', 'exists:subjects,id'],
         ]);
 
         $teacher->update($validated);
+
+        $classIds = collect($validated['class_ids'] ?? [])->map(fn ($v) => (int) $v)->filter()->unique()->values();
+        $subjectIds = collect($validated['subject_ids'] ?? [])->map(fn ($v) => (int) $v)->filter()->unique()->values();
+
+        DB::table('teacher_class_subject')
+            ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+            ->where('teacher_id', $teacher->id)
+            ->delete();
+
+        if ($classIds->isNotEmpty() && $subjectIds->isNotEmpty()) {
+            $rows = [];
+            foreach ($classIds as $classId) {
+                foreach ($subjectIds as $subjectId) {
+                    $rows[] = [
+                        'school_id' => $schoolId,
+                        'teacher_id' => $teacher->id,
+                        'school_class_id' => $classId,
+                        'subject_id' => $subjectId,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+                }
+            }
+
+            DB::table('teacher_class_subject')->upsert(
+                $rows,
+                ['school_id', 'teacher_id', 'school_class_id', 'subject_id'],
+                ['updated_at']
+            );
+
+            $teacher->subjects()->syncWithoutDetaching($subjectIds->all());
+        }
 
         return redirect()->route('teachers.index')->with('success', 'Teacher updated successfully.');
     })->name('teachers.update');
@@ -4159,10 +5837,17 @@ Route::middleware('auth')->group(function () {
         $school = $user?->school;
 
         $classesQuery = SchoolClass::with('subjects:id')
-            ->orderBy('name');
+            ->whereNull('parent_class_id')
+            ->orderBy('id');
+
+        $streamsQuery = SchoolClass::with('subjects:id,subject_code')
+            ->whereNotNull('parent_class_id')
+            ->orderBy('parent_class_id')
+            ->orderBy('id');
 
         if ($schoolId) {
             $classesQuery->where('school_id', $schoolId);
+            $streamsQuery->where('school_id', $schoolId);
         }
 
         $classes = $classesQuery
@@ -4177,6 +5862,21 @@ Route::middleware('auth')->group(function () {
                 ];
             });
 
+        $streams = $streamsQuery
+            ->get()
+            ->map(function (SchoolClass $class) {
+                return [
+                    'id' => $class->id,
+                    'name' => $class->name,
+                    'level' => $class->level,
+                    'stream' => $class->stream,
+                    'parent_class_id' => $class->parent_class_id,
+                    'description' => $class->description,
+                    'subject_ids' => $class->subjects->pluck('id')->all(),
+                    'subject_codes' => $class->subjects->pluck('subject_code')->all(),
+                ];
+            });
+
         $subjects = Subject::orderBy('subject_code')->get([
             'id',
             'subject_code',
@@ -4185,6 +5885,7 @@ Route::middleware('auth')->group(function () {
 
         return Inertia::render('Classes', [
             'classes' => $classes,
+            'streams' => $streams,
             'subjects' => $subjects,
             'schoolLevel' => $school?->level ?? '',
         ]);
@@ -4319,8 +6020,24 @@ Route::middleware('auth')->group(function () {
     })->name('classes.assign-subjects.save');
 
     Route::get('/classes/teachers', function () {
-        $classes = SchoolClass::with('teacher')
-            ->orderBy('name')
+        $user = request()->user();
+
+        $classesQuery = SchoolClass::query()
+            ->with('teacher')
+            ->leftJoin('school_classes as parent', 'parent.id', '=', 'school_classes.parent_class_id')
+            ->select([
+                'school_classes.*',
+                'parent.name as parent_name',
+            ])
+            ->orderByRaw('CASE WHEN school_classes.parent_class_id IS NULL THEN 0 ELSE 1 END')
+            ->orderBy('parent.name')
+            ->orderBy('school_classes.name');
+
+        if ($user && $user->school_id) {
+            $classesQuery->where('school_classes.school_id', $user->school_id);
+        }
+
+        $classes = $classesQuery
             ->get()
             ->map(function (SchoolClass $class) {
                 return [
@@ -4328,6 +6045,8 @@ Route::middleware('auth')->group(function () {
                     'name' => $class->name,
                     'level' => $class->level,
                     'stream' => $class->stream,
+                    'parent_class_id' => $class->parent_class_id,
+                    'parent_name' => $class->parent_name,
                     'teacher_id' => $class->teacher_id,
                     'teacher_name' => optional($class->teacher)->name,
                 ];
@@ -4363,9 +6082,17 @@ Route::middleware('auth')->group(function () {
     })->name('classes.assign-teachers.save');
 
     Route::get('/streams', function () {
-        $classes = SchoolClass::with('subjects:id,subject_code')
+        $user = request()->user();
+
+        $classesQuery = SchoolClass::with('subjects:id,subject_code')
             ->orderBy('parent_class_id')
-            ->orderBy('name')
+            ->orderBy('id');
+
+        if ($user && $user->school_id) {
+            $classesQuery->where('school_id', $user->school_id);
+        }
+
+        $classes = $classesQuery
             ->get()
             ->map(function (SchoolClass $class) {
                 return [
@@ -4396,23 +6123,26 @@ Route::middleware('auth')->group(function () {
     Route::post('/streams', function (\Illuminate\Http\Request $request) {
         $data = $request->validate([
             'class_id' => ['required', 'integer', 'exists:school_classes,id'],
-            'stream' => ['required', 'string', 'max:10'],
-            'description' => ['nullable', 'string', 'max:255'],
-            'subject_ids' => ['required', 'array', 'min:7'],
+            'stream' => ['required', 'string', 'max:50'],
+            'subject_ids' => ['required', 'array', 'min:1'],
             'subject_ids.*' => ['integer', 'exists:subjects,id'],
         ]);
 
         $baseClass = SchoolClass::findOrFail($data['class_id']);
 
-        $name = trim(($baseClass->name ?: '') . ' ' . strtoupper($data['stream']));
+        $user = $request->user();
+        if ($user && $user->school_id && $baseClass->school_id && (int) $baseClass->school_id !== (int) $user->school_id) {
+            abort(403);
+        }
+
+        $name = trim(($baseClass->name ?: '') . ' ' . $data['stream']);
 
         $class = SchoolClass::create([
             'school_id' => $baseClass->school_id,
             'parent_class_id' => $baseClass->id,
             'name' => $name,
             'level' => $baseClass->level ?? optional($baseClass->school)->level,
-            'stream' => strtoupper($data['stream']),
-            'description' => $data['description'] ?? null,
+            'stream' => $data['stream'],
         ]);
 
         $class->subjects()->sync($data['subject_ids']);
@@ -4423,23 +6153,30 @@ Route::middleware('auth')->group(function () {
     Route::post('/streams/{class}', function (\Illuminate\Http\Request $request, SchoolClass $class) {
         $data = $request->validate([
             'class_id' => ['required', 'integer', 'exists:school_classes,id'],
-            'stream' => ['required', 'string', 'max:10'],
-            'description' => ['nullable', 'string', 'max:255'],
-            'subject_ids' => ['required', 'array', 'min:7'],
+            'stream' => ['required', 'string', 'max:50'],
+            'subject_ids' => ['required', 'array', 'min:1'],
             'subject_ids.*' => ['integer', 'exists:subjects,id'],
         ]);
 
+        $user = $request->user();
+        if ($user && $user->school_id && $class->school_id && (int) $class->school_id !== (int) $user->school_id) {
+            abort(403);
+        }
+
         $baseClass = SchoolClass::findOrFail($data['class_id']);
 
-        $name = trim(($baseClass->name ?: '') . ' ' . strtoupper($data['stream']));
+        if ($user && $user->school_id && $baseClass->school_id && (int) $baseClass->school_id !== (int) $user->school_id) {
+            abort(403);
+        }
+
+        $name = trim(($baseClass->name ?: '') . ' ' . $data['stream']);
 
         $class->update([
             'school_id' => $baseClass->school_id,
             'parent_class_id' => $baseClass->id,
             'name' => $name,
             'level' => $baseClass->level ?? optional($baseClass->school)->level,
-            'stream' => strtoupper($data['stream']),
-            'description' => $data['description'] ?? null,
+            'stream' => $data['stream'],
         ]);
 
         $class->subjects()->sync($data['subject_ids']);
@@ -4448,6 +6185,11 @@ Route::middleware('auth')->group(function () {
     })->name('streams.update');
 
     Route::delete('/streams/{class}', function (SchoolClass $class) {
+        $user = request()->user();
+        if ($user && $user->school_id && $class->school_id && (int) $class->school_id !== (int) $user->school_id) {
+            abort(403);
+        }
+
         $class->subjects()->detach();
         $class->delete();
 
@@ -4455,22 +6197,24 @@ Route::middleware('auth')->group(function () {
     })->name('streams.destroy');
 
     Route::get('/exams/create', function () {
-        $classes = SchoolClass::orderBy('level')->orderBy('name')->get([
+        $user = request()->user();
+
+        $classesQuery = SchoolClass::query()
+            ->whereNull('parent_class_id')
+            ->orderBy('name');
+
+        if ($user && $user->school_id) {
+            $classesQuery->where('school_id', $user->school_id);
+        }
+
+        $classes = $classesQuery->get([
             'id',
             'name',
-            'level',
-            'stream',
         ]);
 
         $currentYear = AcademicYear::where('is_current', true)->first();
 
-        $classLevels = SchoolClass::select('level')
-            ->distinct()
-            ->whereNotNull('level')
-            ->orderBy('level')
-            ->pluck('level');
-
-        $exams = Exam::with('classes:id,level')
+        $exams = Exam::with('classes:id,name')
             ->orderByDesc('created_at')
             ->get([
                 'id',
@@ -4482,13 +6226,6 @@ Route::middleware('auth')->group(function () {
                 'end_date',
             ])
             ->map(function (Exam $exam) {
-                $levels = $exam->classes
-                    ->pluck('level')
-                    ->filter()
-                    ->unique()
-                    ->values()
-                    ->all();
-
                 return [
                     'id' => $exam->id,
                     'name' => $exam->name,
@@ -4497,13 +6234,13 @@ Route::middleware('auth')->group(function () {
                     'term' => $exam->term,
                     'start_date' => $exam->start_date,
                     'end_date' => $exam->end_date,
-                    'levels' => $levels,
+                    'class_ids' => $exam->classes->pluck('id')->all(),
+                    'class_names' => $exam->classes->pluck('name')->all(),
                 ];
             });
 
         return Inertia::render('CreateExam', [
             'classes' => $classes,
-            'classLevels' => $classLevels,
             'year' => $currentYear?->year ?? date('Y'),
             'exams' => $exams,
         ]);
@@ -4518,8 +6255,8 @@ Route::middleware('auth')->group(function () {
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'term' => ['nullable', 'string', 'max:50'],
             'notes' => ['nullable', 'string'],
-            'levels' => ['nullable', 'array'],
-            'levels.*' => ['string', 'max:100'],
+            'class_ids' => ['nullable', 'array'],
+            'class_ids.*' => ['integer', 'exists:school_classes,id'],
         ]);
 
         $exam = Exam::create([
@@ -4532,12 +6269,8 @@ Route::middleware('auth')->group(function () {
             'notes' => $data['notes'] ?? null,
         ]);
 
-        if (! empty($data['levels'])) {
-            $classIds = SchoolClass::whereIn('level', $data['levels'])
-                ->pluck('id')
-                ->all();
-
-            $exam->classes()->sync($classIds);
+        if (! empty($data['class_ids'])) {
+            $exam->classes()->sync($data['class_ids']);
         }
 
         return redirect()->route('exams.create')->with('success', 'Exam created successfully.');
@@ -4552,8 +6285,8 @@ Route::middleware('auth')->group(function () {
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'term' => ['nullable', 'string', 'max:50'],
             'notes' => ['nullable', 'string'],
-            'levels' => ['nullable', 'array'],
-            'levels.*' => ['string', 'max:100'],
+            'class_ids' => ['nullable', 'array'],
+            'class_ids.*' => ['integer', 'exists:school_classes,id'],
         ]);
 
         $exam->update([
@@ -4566,17 +6299,11 @@ Route::middleware('auth')->group(function () {
             'notes' => $data['notes'] ?? null,
         ]);
 
-        if (array_key_exists('levels', $data)) {
-            $levels = $data['levels'] ?? [];
-
-            if (! empty($levels)) {
-                $classIds = SchoolClass::whereIn('level', $levels)
-                    ->pluck('id')
-                    ->all();
-
+        if (array_key_exists('class_ids', $data)) {
+            $classIds = $data['class_ids'] ?? [];
+            if (! empty($classIds)) {
                 $exam->classes()->sync($classIds);
             } else {
-                // If levels key is present but empty, detach all classes
                 $exam->classes()->detach();
             }
         }
@@ -4590,19 +6317,66 @@ Route::middleware('auth')->group(function () {
         return back()->with('success', 'Exam deleted.');
     })->name('exams.destroy');
 
-    Route::get('/exams/{exam}/results', function (Exam $exam) {
-        $allResults = ExamResult::where('exam_id', $exam->id)
-            ->with(['student:id,exam_number,full_name,gender', 'subject:id,subject_code'])
-            ->get();
+    Route::get('/exams/{exam}/results', function (\Illuminate\Http\Request $request, Exam $exam) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+        $schoolName = $schoolId
+            ? (\App\Models\School::query()->where('id', $schoolId)->value('name'))
+            : null;
+
+        $selectedClassId = $request->query('class');
+        $view = $request->query('view', 'compact');
+        $view = in_array($view, ['compact', 'wide'], true) ? $view : 'compact';
+        $exam->load('classes:id,name');
+
+        $assignedClasses = $exam->classes
+            ->map(function (SchoolClass $class) {
+                return [
+                    'id' => $class->id,
+                    'name' => $class->name,
+                ];
+            })
+            ->values();
+
+        $selectedClass = null;
+        if ($selectedClassId) {
+            $selectedClass = $exam->classes->firstWhere('id', (int) $selectedClassId);
+        }
+
+        $allResultsQuery = ExamResult::where('exam_id', $exam->id)
+            ->with(['student:id,exam_number,full_name,gender,class_level', 'subject:id,subject_code,name'])
+            ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId));
+
+        if ($selectedClass) {
+            $allResultsQuery->whereHas('student', function ($q) use ($selectedClass) {
+                $q->where('class_level', $selectedClass->name);
+            });
+        }
+
+        $allResults = $allResultsQuery->get();
 
         if ($allResults->isEmpty()) {
             return Inertia::render('ExamResultsPreview', [
                 'exam' => $exam,
+                'schoolName' => $schoolName,
+                'classes' => $assignedClasses,
+                'filters' => [
+                    'class' => $selectedClass ? $selectedClass->id : null,
+                    'view' => $view,
+                ],
+                'subjectCodes' => [],
                 'students' => [],
                 'centreSummary' => null,
                 'subjectSummary' => [],
             ]);
         }
+
+        $subjectCodes = $allResults
+            ->pluck('subject.subject_code')
+            ->filter()
+            ->unique()
+            ->sort()
+            ->values();
 
         $schemes = GradingScheme::all();
 
@@ -4616,17 +6390,103 @@ Route::middleware('auth')->group(function () {
             });
         };
 
+        $fallbackGradeForMark = function (?int $mark): ?string {
+            if ($mark === null) {
+                return null;
+            }
+
+            return match (true) {
+                $mark >= 75 => 'A',
+                $mark >= 65 => 'B',
+                $mark >= 45 => 'C',
+                $mark >= 30 => 'D',
+                default => 'F',
+            };
+        };
+
+        $pointsForGrade = function (?string $grade): ?int {
+            if (! $grade) {
+                return null;
+            }
+
+            $g = strtoupper(trim($grade));
+
+            return match ($g) {
+                'A' => 1,
+                'B' => 2,
+                'C' => 3,
+                'D' => 4,
+                'F' => 5,
+                default => null,
+            };
+        };
+
+        $divisionBucket = function (?string $division) {
+            if (! $division) {
+                return null;
+            }
+
+            $d = strtoupper(trim($division));
+            if (in_array($d, ['I', 'II', 'III', 'IV', '0'], true)) {
+                return $d;
+            }
+
+            if (str_contains($d, 'DIVISION I')) {
+                return 'I';
+            }
+            if (str_contains($d, 'DIVISION II')) {
+                return 'II';
+            }
+            if (str_contains($d, 'DIVISION III')) {
+                return 'III';
+            }
+            if (str_contains($d, 'DIVISION IV')) {
+                return 'IV';
+            }
+            if (str_contains($d, 'DIVISION 0') || $d === 'DIVISION 0') {
+                return '0';
+            }
+
+            return null;
+        };
+
+        $divisionForPoints = function (?int $pointsTotal): ?string {
+            if ($pointsTotal === null) {
+                return null;
+            }
+
+            return match (true) {
+                $pointsTotal >= 7 && $pointsTotal <= 17 => 'I',
+                $pointsTotal >= 18 && $pointsTotal <= 21 => 'II',
+                $pointsTotal >= 22 && $pointsTotal <= 25 => 'III',
+                $pointsTotal >= 26 && $pointsTotal <= 33 => 'IV',
+                $pointsTotal >= 34 => '0',
+                default => null,
+            };
+        };
+
         // Per-student rows (for detailed table) + per-student division
         $students = $allResults
             ->groupBy('student_id')
-            ->map(function ($rows) use ($gradeForMark) {
+            ->map(function ($rows) use ($gradeForMark, $divisionBucket, $divisionForPoints, $pointsForGrade, $fallbackGradeForMark) {
                 /** @var \App\Models\ExamResult $first */
                 $first = $rows->first();
                 $student = $first->student;
-                $subjects = $rows->map(function (ExamResult $res) {
+                $subjects = $rows->map(function (ExamResult $res) use ($gradeForMark, $pointsForGrade, $fallbackGradeForMark) {
+                    $scheme = $gradeForMark($res->marks);
+
+                    $grade = $res->grade ?? $scheme?->grade ?? $fallbackGradeForMark($res->marks);
+                    $points = $res->points ?? $scheme?->points;
+                    if ($points === null) {
+                        $points = $pointsForGrade($grade);
+                    }
+
                     return [
                         'code' => $res->subject->subject_code,
                         'marks' => $res->marks,
+                        'grade' => $grade,
+                        'points' => $points,
+                        'display_grade' => $grade ? strtoupper((string) $grade) : 'X',
                     ];
                 })->values();
 
@@ -4635,32 +6495,45 @@ Route::middleware('auth')->group(function () {
                 $count = $validMarks->count();
                 $average = $count > 0 ? round($total / $count, 1) : null;
 
-                // Simple division & points: sum of scheme points, division from average mark
+                // Points: sum from per-subject points (saved from Data Entry). Fallback to scheme points if needed.
                 $pointsArr = [];
                 foreach ($rows as $res) {
                     $scheme = $gradeForMark($res->marks);
-                    if ($scheme && $scheme->points !== null) {
-                        $pointsArr[] = $scheme->points;
+                    $grade = $res->grade ?? $scheme?->grade ?? $fallbackGradeForMark($res->marks);
+
+                    $p = $res->points;
+                    if ($p === null) {
+                        $p = $scheme?->points;
+                    }
+                    if ($p === null) {
+                        $p = $pointsForGrade($grade);
+                    }
+                    if ($p !== null) {
+                        $pointsArr[] = (int) $p;
                     }
                 }
                 $pointsTotal = ! empty($pointsArr) ? array_sum($pointsArr) : null;
 
                 $divisionCode = null;
+                $overallGrade = null;
                 if ($average !== null) {
                     $avgScheme = $gradeForMark((int) round($average));
-                    if ($avgScheme && $avgScheme->division) {
-                        $divisionCode = $avgScheme->division;
-                    } elseif ($avgScheme) {
-                        // Fallback mapping by grade
-                        $grade = strtoupper($avgScheme->grade);
-                        $divisionCode = match ($grade) {
-                            'A' => 'Division I',
-                            'B' => 'Division II',
-                            'C' => 'Division III',
-                            'D' => 'Division IV',
-                            default => 'Division 0',
-                        };
-                    }
+                    $overallGrade = $avgScheme?->grade ? strtoupper((string) $avgScheme->grade) : $fallbackGradeForMark((int) round($average));
+                }
+
+                // Prefer points-based division (per provided mapping). Fallback to scheme/grade mapping if needed.
+                $divisionCode = $divisionForPoints($pointsTotal);
+                if ($divisionCode === null && isset($avgScheme) && $avgScheme && $avgScheme->division) {
+                    $divisionCode = $divisionBucket($avgScheme->division);
+                }
+                if ($divisionCode === null && $overallGrade !== null) {
+                    $divisionCode = match ($overallGrade) {
+                        'A' => 'I',
+                        'B' => 'II',
+                        'C' => 'III',
+                        'D' => 'IV',
+                        default => '0',
+                    };
                 }
 
                 return [
@@ -4669,6 +6542,7 @@ Route::middleware('auth')->group(function () {
                     'gender' => $student->gender,
                     'subjects' => $subjects,
                     'total' => $count > 0 ? $total : null,
+                    'grade' => $overallGrade,
                     'average' => $average,
                     'division' => $divisionCode,
                     'points' => $pointsTotal,
@@ -4684,7 +6558,7 @@ Route::middleware('auth')->group(function () {
         $centreAverage = $validMarksAll->isNotEmpty() ? round($validMarksAll->avg(), 2) : null;
 
         $allPoints = [];
-        $perStudentHasFail = [];
+        $failedCount = 0;
         $divisionSummary = [
             'F' => ['I' => 0, 'II' => 0, 'III' => 0, 'IV' => 0, '0' => 0],
             'M' => ['I' => 0, 'II' => 0, 'III' => 0, 'IV' => 0, '0' => 0],
@@ -4701,21 +6575,8 @@ Route::middleware('auth')->group(function () {
             }
 
             // Determine division bucket for summary
-            $divLabel = $row['division'] ?? null;
-            $bucket = null;
-            if ($divLabel) {
-                if (str_contains($divLabel, 'Division I')) {
-                    $bucket = 'I';
-                } elseif (str_contains($divLabel, 'Division II')) {
-                    $bucket = 'II';
-                } elseif (str_contains($divLabel, 'Division III')) {
-                    $bucket = 'III';
-                } elseif (str_contains($divLabel, 'Division IV')) {
-                    $bucket = 'IV';
-                } else {
-                    $bucket = '0';
-                }
-            }
+            $div = $row['division'] ?? null;
+            $bucket = in_array($div, ['I', 'II', 'III', 'IV', '0'], true) ? $div : null;
 
             if ($bucket) {
                 $divisionSummary[$sexKey][$bucket]++;
@@ -4723,14 +6584,12 @@ Route::middleware('auth')->group(function () {
             }
 
             if ($bucket === '0') {
-                $perStudentHasFail[$idx] = true;
+                $failedCount++;
             }
         }
 
         $centreGpa = ! empty($allPoints) ? round(array_sum($allPoints) / count($allPoints), 3) : null;
 
-        $failedStudents = collect($perStudentHasFail)->keys();
-        $failedCount = $failedStudents->count();
         $passedCount = $totalCandidates - $failedCount;
 
         $centreSummary = [
@@ -4745,24 +6604,29 @@ Route::middleware('auth')->group(function () {
         // Subject summary metrics
         $subjectSummary = $allResults
             ->groupBy('subject_id')
-            ->map(function ($rows, $subjectId) use ($gradeForMark) {
+            ->map(function ($rows, $subjectId) use ($gradeForMark, $fallbackGradeForMark, $pointsForGrade) {
                 /** @var \App\Models\ExamResult $first */
                 $first = $rows->first();
                 $subject = $first->subject;
 
-                $sat = $rows->count();
+                $sat = $rows->filter(fn (ExamResult $r) => $r->marks !== null || $r->grade !== null)->count();
                 $pass = 0;
                 $points = [];
 
                 foreach ($rows as $res) {
                     $scheme = $gradeForMark($res->marks);
-                    if ($scheme) {
-                        if ($scheme->points !== null) {
-                            $points[] = $scheme->points;
-                        }
-                        if (strtoupper($scheme->grade) !== 'F') {
-                            $pass++;
-                        }
+                    $grade = $res->grade ?? $scheme?->grade ?? $fallbackGradeForMark($res->marks);
+                    $p = $res->points ?? $scheme?->points;
+                    if ($p === null) {
+                        $p = $pointsForGrade($grade);
+                    }
+
+                    if ($p !== null) {
+                        $points[] = (int) $p;
+                    }
+
+                    if ($grade !== null && strtoupper((string) $grade) !== 'F') {
+                        $pass++;
                     }
                 }
 
@@ -4772,14 +6636,16 @@ Route::middleware('auth')->group(function () {
                 // Simple competency text based on GPA
                 $competency = null;
                 if ($gpa !== null) {
-                    if ($gpa <= 2.0) {
-                        $competency = 'Grade B (Very Good)';
-                    } elseif ($gpa <= 3.0) {
-                        $competency = 'Grade C (Good)';
-                    } elseif ($gpa <= 4.0) {
-                        $competency = 'Grade D (Satisfactory)';
+                    if ($gpa < 2.0) {
+                        $competency = 'Bora sana (Excellent)';
+                    } elseif ($gpa < 3.0) {
+                        $competency = 'Vizuri sana (Very Good)';
+                    } elseif ($gpa < 4.0) {
+                        $competency = 'Vizuri (Good)';
+                    } elseif ($gpa < 5.0) {
+                        $competency = 'Inaridhisha (Satisfactory)';
                     } else {
-                        $competency = 'Grade F (Fail)';
+                        $competency = 'Feli (Fail)';
                     }
                 }
 
@@ -4797,6 +6663,13 @@ Route::middleware('auth')->group(function () {
 
         return Inertia::render('ExamResultsPreview', [
             'exam' => $exam,
+            'schoolName' => $schoolName,
+            'classes' => $assignedClasses,
+            'filters' => [
+                'class' => $selectedClass ? $selectedClass->id : null,
+                'view' => $view,
+            ],
+            'subjectCodes' => $subjectCodes,
             'students' => $students,
             'centreSummary' => $centreSummary,
             'subjectSummary' => $subjectSummary,
@@ -4806,6 +6679,10 @@ Route::middleware('auth')->group(function () {
     Route::get('/exams/marks', [MarksController::class, 'index'])->name('exams.marks');
 
     Route::post('/exams/marks/save', [MarksController::class, 'store'])->name('exams.marks.save');
+
+    Route::post('/exams/marks/save-cell', [MarksController::class, 'saveCell'])->name('exams.marks.save-cell');
+
+    Route::get('/exams/marks/live', [MarksController::class, 'live'])->name('exams.marks.live');
 
     Route::get('/students/{student}/marks', function (\Illuminate\Http\Request $request, Student $student) {
         $user = $request->user();

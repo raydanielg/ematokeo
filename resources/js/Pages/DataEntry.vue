@@ -1,7 +1,7 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head, router } from '@inertiajs/vue3';
-import { reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 const props = defineProps({
     exams: {
@@ -28,6 +28,10 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
+    streamSubjectsByStream: {
+        type: Object,
+        default: () => ({}),
+    },
     filters: {
         type: Object,
         default: () => ({ exam: null, class: null }),
@@ -38,6 +42,28 @@ const marksGrid = reactive({});
 
 const isSaving = ref(false);
 const showSaved = ref(false);
+const pendingSaves = ref(0);
+
+const bulkIsSaving = ref(false);
+
+const bulkSaveTotal = ref(0);
+const bulkSaveDone = ref(0);
+const bulkSaveError = ref('');
+
+const bulkSavePercent = computed(() => {
+    if (!bulkIsSaving.value || bulkSaveTotal.value <= 0) return 0;
+    const pct = Math.round((bulkSaveDone.value / bulkSaveTotal.value) * 100);
+    if (pct < 0) return 0;
+    if (pct > 100) return 100;
+    return pct;
+});
+
+const dirtyCells = reactive({});
+const saveTimers = reactive({});
+
+const lastSyncAt = ref(null);
+const isSyncing = ref(false);
+let pollTimer = null;
 
 const showStandardizeModal = ref(false);
 const standardizeValue = ref('');
@@ -48,6 +74,205 @@ const invalidMarkMessage = ref('');
 const showMarksHelpModal = ref(false);
 const invalidCells = reactive({});
 const showClearAllModal = ref(false);
+
+const selectedClassName = computed(() => {
+    const clsId = props.filters.class;
+    if (!clsId) return '';
+    const item = (props.classes || []).find((c) => String(c.id) === String(clsId));
+    return item ? item.name : String(clsId);
+});
+
+const csrfToken = () => document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+
+const cellKey = (studentId, subjectId) => `${studentId}-${subjectId}`;
+
+const studentById = computed(() => {
+    const map = new Map();
+    (props.students || []).forEach((s) => map.set(String(s.id), s));
+    return map;
+});
+
+const isCellDisabled = (studentId, subjectId) => {
+    const student = studentById.value.get(String(studentId));
+    if (!student) return false;
+
+    const stream = student.stream ? String(student.stream).trim() : '';
+    if (!stream) return false;
+
+    const allowed = props.streamSubjectsByStream && Object.prototype.hasOwnProperty.call(props.streamSubjectsByStream, stream)
+        ? props.streamSubjectsByStream[stream]
+        : null;
+
+    if (!Array.isArray(allowed) || allowed.length === 0) {
+        // If stream subjects were not configured, do not block entry.
+        return false;
+    }
+
+    return !allowed.map((x) => String(x)).includes(String(subjectId));
+};
+
+const markDirty = (studentId, subjectId, value = true) => {
+    const key = cellKey(studentId, subjectId);
+    if (value) {
+        dirtyCells[key] = true;
+        return;
+    }
+    if (Object.prototype.hasOwnProperty.call(dirtyCells, key)) {
+        delete dirtyCells[key];
+    }
+};
+
+const applyRemoteMark = (studentId, subjectId, marks) => {
+    const key = cellKey(studentId, subjectId);
+    if (dirtyCells[key]) return;
+    marksGrid[key] = marks === null || marks === undefined ? '' : String(marks);
+};
+
+const saveCell = async (studentId, subjectId) => {
+    if (!props.filters.exam || !props.filters.class) return;
+
+    const key = cellKey(studentId, subjectId);
+    const raw = marksGrid[key];
+    const value = raw === '' || raw === undefined ? null : Number(raw);
+
+    if (!isMarkValid(raw)) return;
+
+    pendingSaves.value += 1;
+    isSaving.value = true;
+
+    try {
+        const res = await fetch(route('exams.marks.save-cell'), {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-TOKEN': csrfToken(),
+            },
+            body: JSON.stringify({
+                exam_id: props.filters.exam,
+                class_id: props.filters.class,
+                student_id: studentId,
+                subject_id: subjectId,
+                marks: value === null ? null : Number(value),
+            }),
+        });
+
+        if (!res.ok) {
+            // Keep the user's typed value in place; show a soft warning
+            invalidMarkMessage.value = `Save failed (${res.status}). Please try again.`;
+            showInvalidPopover.value = true;
+            return;
+        }
+
+        const data = await res.json();
+        applyRemoteMark(studentId, subjectId, data.marks);
+        markDirty(studentId, subjectId, false);
+
+        if (data.updated_at) {
+            lastSyncAt.value = data.updated_at;
+        }
+    } catch (e) {
+        invalidMarkMessage.value = 'Could not save mark. Please check your connection.';
+        showInvalidPopover.value = true;
+    } finally {
+        pendingSaves.value = Math.max(0, pendingSaves.value - 1);
+        if (pendingSaves.value === 0) {
+            isSaving.value = false;
+            showSaved.value = true;
+            setTimeout(() => {
+                showSaved.value = false;
+            }, 900);
+        }
+    }
+};
+
+const scheduleSaveCell = (studentId, subjectId, delayMs = 700) => {
+    const key = cellKey(studentId, subjectId);
+    if (saveTimers[key]) {
+        clearTimeout(saveTimers[key]);
+    }
+    saveTimers[key] = setTimeout(() => {
+        saveCell(studentId, subjectId);
+        delete saveTimers[key];
+    }, delayMs);
+};
+
+const fetchLiveUpdates = async () => {
+    if (isSyncing.value) return;
+    if (!props.filters.exam || !props.filters.class) return;
+
+    isSyncing.value = true;
+    try {
+        const params = new URLSearchParams();
+        params.set('exam', String(props.filters.exam));
+        params.set('class', String(props.filters.class));
+        if (lastSyncAt.value) params.set('since', String(lastSyncAt.value));
+
+        const url = route('exams.marks.live') + `?${params.toString()}`;
+        const res = await fetch(url, {
+            credentials: 'same-origin',
+            headers: {
+                Accept: 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        });
+
+        if (!res.ok) return;
+
+        const data = await res.json();
+        if (Array.isArray(data.rows)) {
+            data.rows.forEach((r) => {
+                applyRemoteMark(r.student_id, r.subject_id, r.marks);
+            });
+        }
+        if (data.max_updated_at) {
+            lastSyncAt.value = data.max_updated_at;
+        } else if (data.server_time) {
+            lastSyncAt.value = data.server_time;
+        }
+    } finally {
+        isSyncing.value = false;
+    }
+};
+
+const startPolling = () => {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(fetchLiveUpdates, 4000);
+};
+
+const stopPolling = () => {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
+};
+
+watch(
+    () => [props.filters.exam, props.filters.class],
+    () => {
+        // reset sync cursor when switching exam/class
+        lastSyncAt.value = null;
+        stopPolling();
+        if (props.filters.exam && props.filters.class) {
+            fetchLiveUpdates();
+            startPolling();
+        }
+    },
+    { immediate: true },
+);
+
+onMounted(() => {
+    if (props.filters.exam && props.filters.class) {
+        startPolling();
+    }
+});
+
+onBeforeUnmount(() => {
+    stopPolling();
+    Object.values(saveTimers).forEach((t) => {
+        try { clearTimeout(t); } catch (_) {}
+    });
+});
 
 props.existingMarks.forEach((row) => {
     const key = `${row.student_id}-${row.subject_id}`;
@@ -90,9 +315,14 @@ const getMark = (studentId, subjectId) => {
 
 const setMark = (studentId, subjectId, value) => {
     const key = `${studentId}-${subjectId}`;
+    if (isCellDisabled(studentId, subjectId)) {
+        return;
+    }
     const numeric = value === '' ? '' : Number(value);
     if (numeric === '' || (Number.isInteger(numeric) && numeric >= 0 && numeric <= 100)) {
         marksGrid[key] = value;
+        markDirty(studentId, subjectId, true);
+        scheduleSaveCell(studentId, subjectId);
     }
 };
 
@@ -119,6 +349,9 @@ const computeRowTotals = (studentId) => {
     let total = 0;
     let count = 0;
     props.subjects.forEach((subject) => {
+        if (isCellDisabled(studentId, subject.id)) {
+            return;
+        }
         const key = `${studentId}-${subject.id}`;
         const raw = marksGrid[key];
         const num = raw === '' || raw === undefined ? null : Number(raw);
@@ -172,6 +405,9 @@ const computeRowDivisionAndPoints = (studentId) => {
     const points = [];
 
     props.subjects.forEach((subject) => {
+        if (isCellDisabled(studentId, subject.id)) {
+            return;
+        }
         const key = `${studentId}-${subject.id}`;
         const raw = marksGrid[key];
         const num = raw === '' || raw === undefined ? null : Number(raw);
@@ -231,6 +467,10 @@ const isCellInvalid = (studentId, subjectId) => {
 };
 
 const handleEnterOnMark = (studentId, subjectId, event) => {
+    if (isCellDisabled(studentId, subjectId)) {
+        focusNextCell(studentId, subjectId);
+        return;
+    }
     const value = event.target.value;
 
     if (!isMarkValid(value)) {
@@ -244,10 +484,14 @@ const handleEnterOnMark = (studentId, subjectId, event) => {
 
     setCellInvalid(studentId, subjectId, false);
     showInvalidPopover.value = false;
+    scheduleSaveCell(studentId, subjectId, 0);
     focusNextCell(studentId, subjectId);
 };
 
 const handleBlurOnMark = (studentId, subjectId, event) => {
+    if (isCellDisabled(studentId, subjectId)) {
+        return;
+    }
     const value = event.target.value;
 
     if (!isMarkValid(value)) {
@@ -261,6 +505,7 @@ const handleBlurOnMark = (studentId, subjectId, event) => {
 
     setCellInvalid(studentId, subjectId, false);
     showInvalidPopover.value = false;
+    scheduleSaveCell(studentId, subjectId, 0);
 };
 
 const openMarksHelp = () => {
@@ -295,39 +540,108 @@ const clearAllMarks = () => {
 const saveMarks = () => {
     if (!props.filters.exam || !props.filters.class) return;
 
-    const rows = props.students.map((student) => {
-        const marks = [];
-        props.subjects.forEach((subject) => {
-            const key = `${student.id}-${subject.id}`;
-            const raw = marksGrid[key];
-            const value = raw === '' || raw === undefined ? null : Number(raw);
-            marks.push({ subject_id: subject.id, marks: value });
-        });
-        return {
-            student_id: student.id,
-            marks,
-        };
+    const entries = [];
+    Object.keys(dirtyCells).forEach((key) => {
+        if (!dirtyCells[key]) return;
+        const parts = String(key).split('-');
+        if (parts.length !== 2) return;
+
+        const studentId = Number(parts[0]);
+        const subjectId = Number(parts[1]);
+        if (!studentId || !subjectId) return;
+
+        if (isCellDisabled(studentId, subjectId)) return;
+
+        const raw = marksGrid[key];
+        if (!isMarkValid(raw)) return;
+
+        const value = raw === '' || raw === undefined ? null : Number(raw);
+        entries.push({ student_id: studentId, subject_id: subjectId, marks: value, key });
     });
 
-    isSaving.value = true;
-    router.post(
-        '/exams/marks/save',
-        {
-            exam_id: props.filters.exam,
-            class_id: props.filters.class,
-            rows,
-        },
-        {
-            preserveScroll: true,
-            onFinish: () => {
-                isSaving.value = false;
-                showSaved.value = true;
-                setTimeout(() => {
-                    showSaved.value = false;
-                }, 1800);
+    if (!entries.length) {
+        showSaved.value = true;
+        setTimeout(() => {
+            showSaved.value = false;
+        }, 1000);
+        return;
+    }
+
+    const chunkSize = 200;
+    const chunks = [];
+    for (let i = 0; i < entries.length; i += chunkSize) {
+        chunks.push(entries.slice(i, i + chunkSize));
+    }
+
+    const postChunk = async (chunk) => {
+        const rowsByStudent = new Map();
+        chunk.forEach((e) => {
+            if (!rowsByStudent.has(e.student_id)) rowsByStudent.set(e.student_id, []);
+            rowsByStudent.get(e.student_id).push({ subject_id: e.subject_id, marks: e.marks });
+        });
+
+        const rows = Array.from(rowsByStudent.entries()).map(([student_id, marks]) => ({ student_id, marks }));
+
+        const res = await fetch('/exams/marks/save', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-TOKEN': csrfToken(),
             },
-        },
-    );
+            body: JSON.stringify({
+                exam_id: props.filters.exam,
+                class_id: props.filters.class,
+                rows,
+                save_snapshot: false,
+            }),
+        });
+
+        if (!res.ok) {
+            let msg = '';
+            try {
+                const err = await res.json();
+                msg = err?.message || '';
+            } catch (_) {
+                msg = '';
+            }
+            throw new Error(msg || `Save failed (${res.status})`);
+        }
+    };
+
+    const run = async () => {
+        bulkSaveError.value = '';
+        bulkSaveTotal.value = entries.length;
+        bulkSaveDone.value = 0;
+        isSaving.value = true;
+        bulkIsSaving.value = true;
+
+        try {
+            for (const chunk of chunks) {
+                await postChunk(chunk);
+                bulkSaveDone.value += chunk.length;
+                chunk.forEach((e) => {
+                    if (dirtyCells[e.key]) delete dirtyCells[e.key];
+                });
+            }
+
+            showSaved.value = true;
+            setTimeout(() => {
+                showSaved.value = false;
+            }, 1400);
+        } catch (e) {
+            bulkSaveError.value = e?.message ? String(e.message) : 'Save failed.';
+        } finally {
+            isSaving.value = false;
+            bulkIsSaving.value = false;
+            bulkSaveTotal.value = 0;
+            bulkSaveDone.value = 0;
+        }
+    };
+
+    run();
 };
 
 const openStandardization = () => {
@@ -339,17 +653,79 @@ const openStandardization = () => {
 const applyStandardization = () => {
     if (isStandardizing.value) return;
 
-    const bonus = standardizeValue.value === '' ? null : Number(standardizeValue.value);
-
-    // bonus is how many marks to add to weaker students (0-25 recommended)
-    if (bonus === null || Number.isNaN(bonus) || !Number.isInteger(bonus) || bonus < 0 || bonus > 100) {
-        return;
-    }
+    const input = String(standardizeValue.value ?? '').trim();
+    const bonus = input === '' ? null : Number(input);
 
     isStandardizing.value = true;
 
+    const clampInt = (n) => {
+        const x = Math.round(Number(n));
+        if (Number.isNaN(x)) return 0;
+        if (x < 0) return 0;
+        if (x > 100) return 100;
+        return x;
+    };
+
+    const rand = (min, max) => {
+        return min + Math.random() * (max - min);
+    };
+
+    const randn = () => {
+        // Box-Muller
+        let u = 0;
+        let v = 0;
+        while (u === 0) u = Math.random();
+        while (v === 0) v = Math.random();
+        return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+    };
+
+    const pickBand = () => {
+        // Weighted distribution: fail/average/good/excellent
+        const r = Math.random();
+        if (r < 0.15) return [0, 29];
+        if (r < 0.60) return [30, 54];
+        if (r < 0.90) return [55, 74];
+        return [75, 100];
+    };
+
+    if (bonus === null) {
+        const abilityByStudent = new Map();
+        props.students.forEach((student) => {
+            const [min, max] = pickBand();
+            const base = rand(min, max);
+            abilityByStudent.set(String(student.id), base);
+        });
+
+        props.students.forEach((student) => {
+            const base = abilityByStudent.get(String(student.id)) ?? 50;
+            props.subjects.forEach((subject) => {
+                if (isCellDisabled(student.id, subject.id)) {
+                    return;
+                }
+                // Subject difficulty + per-cell noise
+                const subjectShift = randn() * 4;
+                const noise = randn() * 7;
+                const mark = clampInt(base + subjectShift + noise);
+                setMark(student.id, subject.id, String(mark));
+            });
+        });
+
+        isStandardizing.value = false;
+        showStandardizeModal.value = false;
+        return;
+    }
+
+    // bonus is how many marks to add to weaker students (0-25 recommended)
+    if (Number.isNaN(bonus) || !Number.isInteger(bonus) || bonus < 0 || bonus > 100) {
+        isStandardizing.value = false;
+        return;
+    }
+
     props.students.forEach((student) => {
         props.subjects.forEach((subject) => {
+            if (isCellDisabled(student.id, subject.id)) {
+                return;
+            }
             const key = `${student.id}-${subject.id}`;
             const raw = marksGrid[key];
 
@@ -705,11 +1081,18 @@ const applyStandardization = () => {
                         </p>
                     </div>
                 </div>
-                <div class="flex items-center justify-between text-[11px] text-gray-600">
+                <div class="flex flex-wrap items-center gap-2 text-[11px] text-gray-600">
+                    <span>
+                        Exam:
+                        <span class="font-semibold text-gray-800">
+                            {{ filters.exam || '—' }}
+                        </span>
+                    </span>
+                    <span class="text-gray-300">|</span>
                     <span>
                         Class:
                         <span class="font-semibold text-gray-800">
-                            {{ filters.class || '—' }}
+                            {{ selectedClassName || '—' }}
                         </span>
                     </span>
                 </div>
@@ -759,8 +1142,12 @@ const applyStandardization = () => {
                                         type="text"
                                         inputmode="numeric"
                                         placeholder="-"
+                                        :disabled="isCellDisabled(student.id, subject.id)"
                                         :class="[
                                             'w-12 rounded px-1 py-0.5 text-[11px] text-center focus:outline-none focus:ring-emerald-500',
+                                            isCellDisabled(student.id, subject.id)
+                                                ? 'cursor-not-allowed border border-gray-200 bg-gray-100 text-gray-400'
+                                                : '',
                                             isCellInvalid(student.id, subject.id)
                                                 ? 'border border-red-400 bg-red-50 focus:border-red-500'
                                                 : 'border border-gray-300 focus:border-emerald-500',
@@ -809,10 +1196,10 @@ const applyStandardization = () => {
                     Standardization
                 </h3>
                 <p class="mb-3 text-[11px] text-gray-500">
-                    Enter a single mark (0-100) to apply to all students and all subjects in this class for the selected exam.
+                    Leave blank to generate realistic random marks (0-100) with a pass/fail balance. Or enter a bonus (0-100) to add to weaker marks.
                 </p>
                 <div class="mb-4">
-                    <label class="mb-1 block font-medium">Standard mark</label>
+                    <label class="mb-1 block font-medium">Bonus (optional)</label>
                     <input
                         v-model="standardizeValue"
                         type="number"
@@ -848,9 +1235,25 @@ const applyStandardization = () => {
                 v-if="isSaving || showSaved"
                 class="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-[11px] shadow-lg ring-1 ring-gray-200"
             >
-                <div v-if="isSaving" class="flex items-center gap-2 text-gray-600">
-                    <span class="inline-flex h-3 w-3 animate-spin rounded-full border border-emerald-500 border-t-transparent"></span>
-                    <span>Saving marks...</span>
+                <div v-if="isSaving" class="flex flex-col gap-1 text-gray-600">
+                    <div class="flex items-center gap-2">
+                        <span class="inline-flex h-3 w-3 animate-spin rounded-full border border-emerald-500 border-t-transparent"></span>
+                        <span v-if="bulkIsSaving">Saving marks... {{ bulkSavePercent }}%</span>
+                        <span v-else>Saving mark...</span>
+                    </div>
+
+                    <div v-if="bulkIsSaving" class="w-52">
+                        <div class="h-1.5 w-full overflow-hidden rounded-full bg-gray-100 ring-1 ring-gray-200">
+                            <div
+                                class="h-1.5 bg-emerald-600"
+                                :style="{ width: bulkSavePercent + '%' }"
+                            ></div>
+                        </div>
+                        <div class="mt-1 flex justify-between text-[10px] text-gray-500">
+                            <span>{{ bulkSaveDone }}/{{ bulkSaveTotal }}</span>
+                            <span v-if="bulkSaveError" class="text-red-600">{{ bulkSaveError }}</span>
+                        </div>
+                    </div>
                 </div>
                 <div v-else class="flex items-center gap-2 text-emerald-700">
                     <span class="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-100 text-[9px] font-bold">✓</span>

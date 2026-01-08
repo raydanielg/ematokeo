@@ -1,7 +1,7 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head, useForm, router } from '@inertiajs/vue3';
-import { computed, ref, onMounted } from 'vue';
+import { computed, ref, onMounted, watch } from 'vue';
 
 const props = defineProps({
     school: {
@@ -26,7 +26,7 @@ const form = useForm({
     type: 'class',
     title: props.timetable?.title || '',
     class_name: props.timetable?.class_name || '',
-    academic_year: props.timetable?.academic_year || '',
+    academic_year: props.timetable?.academic_year || String(new Date().getFullYear()),
     term: props.timetable?.term || '',
     start_time: '07:30',
     end_time: '16:00',
@@ -62,63 +62,237 @@ const teacherBySubject = computed(() => {
 
 const days = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'];
 
-const levelToForm = (level) => {
+const levelToForm = (value) => {
     const map = {
         1: 'I',
         2: 'II',
         3: 'III',
         4: 'IV',
+        5: 'V',
+        6: 'VI',
+        7: 'VII',
     };
 
-    if (!level) return '';
+    if (value === null || value === undefined) return '';
 
-    return map[level] || String(level);
+    const s = String(value).trim();
+    if (s === '') return '';
+
+    const n = Number(s);
+    if (!Number.isNaN(n) && map[n]) {
+        return map[n];
+    }
+
+    const upper = s.toUpperCase();
+
+    if (/^[IVXLCDM]+$/.test(upper)) {
+        return upper;
+    }
+
+    const match = upper.match(/\b(?:FORM|CLASS|STD|STANDARD)\s*([IVXLCDM]+|\d+)\b/);
+    if (match) {
+        const token = match[1];
+        const tokenNum = Number(token);
+        if (!Number.isNaN(tokenNum) && map[tokenNum]) {
+            return map[tokenNum];
+        }
+
+        if (/^[IVXLCDM]+$/.test(token)) {
+            return token;
+        }
+    }
+
+    return '';
 };
 
-const forms = computed(() => {
+const romanToNumber = (roman) => {
+    if (!roman) return null;
+
+    const s = String(roman).toUpperCase().trim();
+    if (!s) return null;
+
+    const map = { I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000 };
+    let total = 0;
+    let prev = 0;
+
+    for (let i = s.length - 1; i >= 0; i -= 1) {
+        const val = map[s[i]];
+        if (!val) return null;
+
+        if (val < prev) {
+            total -= val;
+        } else {
+            total += val;
+            prev = val;
+        }
+    }
+
+    return total;
+};
+
+const getFormOrder = (c) => {
+    const roman = getClassForm(c);
+    if (!roman) return Number.POSITIVE_INFINITY;
+
+    const num = romanToNumber(roman);
+    return num === null ? Number.POSITIVE_INFINITY : num;
+};
+
+const getClassForm = (c) => {
+    return levelToForm(c?.parent_name) || levelToForm(c?.level) || levelToForm(c?.name);
+};
+
+const getClassLabel = (c) => {
+    const parentName = (c?.parent_name || '').trim();
+    if (parentName) return parentName;
+
+    const name = (c?.name || '').trim();
+    if (name && /\b(?:FORM|CLASS|STD|STANDARD)\b/i.test(name)) {
+        return name;
+    }
+
+    const level = (c?.level || '').trim();
+    if (level && /\b(?:FORM|CLASS|STD|STANDARD)\b/i.test(level)) {
+        return level;
+    }
+
+    const form = getClassForm(c);
+    if (form) return `Form ${form}`;
+
+    return level || name;
+};
+
+const timetableClasses = computed(() => {
+    const all = Array.isArray(props.classes) ? props.classes : [];
+
+    const streamsByParent = new Map();
+    all.forEach((c) => {
+        if (!c || !c.parent_class_id) return;
+        const stream = c.stream ? String(c.stream).trim() : '';
+        if (!stream) return;
+
+        if (!streamsByParent.has(c.parent_class_id)) {
+            streamsByParent.set(c.parent_class_id, []);
+        }
+
+        streamsByParent.get(c.parent_class_id).push(c);
+    });
+
+    const result = [];
+
+    // Prefer stream rows if a base class has streams; otherwise include the base class itself
+    all.filter((c) => !c?.parent_class_id).forEach((base) => {
+        const streams = streamsByParent.get(base.id) || [];
+        if (streams.length) {
+            streams
+                .slice()
+                .sort((a, b) => String(a.stream || '').localeCompare(String(b.stream || '')))
+                .forEach((s) => result.push(s));
+            return;
+        }
+
+        result.push(base);
+    });
+
+    // Add orphan streams (in case parent not present in payload)
+    const baseIds = new Set(all.filter((c) => !c?.parent_class_id).map((c) => c.id));
+    all.filter((c) => c?.parent_class_id && !baseIds.has(c.parent_class_id)).forEach((c) => result.push(c));
+
+    const seen = new Set();
+    const unique = result.filter((c) => {
+        const id = c?.id;
+        if (id === null || id === undefined) return false;
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+    });
+
+    return unique.sort((a, b) => {
+        const orderA = getFormOrder(a);
+        const orderB = getFormOrder(b);
+        if (orderA !== orderB) return orderA - orderB;
+
+        const streamA = (a?.stream ? String(a.stream) : '').toUpperCase();
+        const streamB = (b?.stream ? String(b.stream) : '').toUpperCase();
+        const streamCmp = streamA.localeCompare(streamB);
+        if (streamCmp !== 0) return streamCmp;
+
+        return (a?.id || 0) - (b?.id || 0);
+    });
+});
+
+const classLabels = computed(() => {
     const unique = new Set();
 
-    (props.classes || []).forEach((c) => {
-        if (c.level) {
-            unique.add(levelToForm(c.level));
+    timetableClasses.value.forEach((c) => {
+        const label = getClassLabel(c);
+        if (label) {
+            unique.add(label);
         }
     });
 
     if (unique.size === 0) {
-        return ['I', 'II', 'III', 'IV'];
+        return ['Form I', 'Form II', 'Form III', 'Form IV'];
     }
 
-    return Array.from(unique.values());
+    const list = Array.from(unique.values());
+
+    return list.sort((a, b) => {
+        const fa = levelToForm(a);
+        const fb = levelToForm(b);
+        const na = romanToNumber(fa) ?? Number.POSITIVE_INFINITY;
+        const nb = romanToNumber(fb) ?? Number.POSITIVE_INFINITY;
+        if (na !== nb) return na - nb;
+        return String(a).localeCompare(String(b));
+    });
 });
 
 const streams = computed(() => {
     const unique = new Set();
 
-    (props.classes || []).forEach((c) => {
-        if (c.stream) {
-            unique.add(String(c.stream).toUpperCase());
+    timetableClasses.value.forEach((c) => {
+        const stream = c.stream ? String(c.stream).toUpperCase().trim() : '';
+        if (!stream) return;
+
+        if (selectedClass.value !== 'ALL') {
+            const label = getClassLabel(c);
+            if (label && label !== selectedClass.value) {
+                return;
+            }
         }
+
+        unique.add(stream);
     });
 
     if (unique.size === 0) {
-        return ['A'];
+        return [];
     }
 
     return Array.from(unique.values());
 });
 
-const selectedForm = ref('ALL');
+const selectedClass = ref('ALL');
 const selectedStream = ref('ALL');
+
+watch(selectedClass, () => {
+    if (selectedStream.value === 'ALL') {
+        return;
+    }
+
+    if (!streams.value.includes(selectedStream.value)) {
+        selectedStream.value = 'ALL';
+    }
+});
 
 const headerClassName = computed(() => {
     // When a specific form and stream are selected, show that combination
-    if (selectedForm.value !== 'ALL' && selectedStream.value !== 'ALL') {
-        return `Form ${selectedForm.value} ${selectedStream.value}`;
+    if (selectedClass.value !== 'ALL' && selectedStream.value !== 'ALL') {
+        return `${selectedClass.value} ${selectedStream.value}`;
     }
 
     // When only a specific form is selected, treat it as a class-level view
-    if (selectedForm.value !== 'ALL') {
-        return `Form ${selectedForm.value}`;
+    if (selectedClass.value !== 'ALL') {
+        return `${selectedClass.value}`;
     }
 
     // Otherwise fall back to the manually entered class name or blanks
@@ -127,6 +301,31 @@ const headerClassName = computed(() => {
 
 // schedule[day][formIndex][slotIndex] = { subject, teacher }
 const schedule = ref({});
+
+const scheduleStorageKey = computed(() => {
+    const schoolId = props.school?.id ?? 'school';
+    return `timetable_schedule_v1_${schoolId}`;
+});
+
+const loadScheduleFromStorage = () => {
+    try {
+        const raw = window.localStorage.getItem(scheduleStorageKey.value);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return null;
+        return parsed;
+    } catch {
+        return null;
+    }
+};
+
+const saveScheduleToStorage = () => {
+    try {
+        window.localStorage.setItem(scheduleStorageKey.value, JSON.stringify(schedule.value || {}));
+    } catch {
+        // ignore storage failures
+    }
+};
 
 const generateSampleTimetable = () => {
     const next = {};
@@ -144,14 +343,20 @@ const generateSampleTimetable = () => {
 
         // Build one row per actual class from the database so that
         // only existing streams/levels are shown in the timetable.
-        (props.classes || []).forEach((c) => {
-            const formLabel = levelToForm(c.level);
-            const streamLabel = c.stream ? String(c.stream).toUpperCase() : '';
+        timetableClasses.value.forEach((c) => {
+            const formLabel = getClassForm(c);
+            const classLabel = getClassLabel(c);
+            const streamLabel = c.stream ? String(c.stream).toUpperCase().trim() : '';
+
+            const classSubjectCodes = Array.isArray(c.subject_codes) && c.subject_codes.length
+                ? c.subject_codes
+                : codes;
 
             const row = {
                 form: formLabel,
+                class_label: classLabel,
                 stream: streamLabel,
-                class_name: c.name || `${formLabel} ${streamLabel}`.trim(),
+                class_name: c.name || `${classLabel} ${streamLabel}`.trim(),
                 slots: [],
             };
 
@@ -159,7 +364,7 @@ const generateSampleTimetable = () => {
             // Choose subjects randomly from the pool so that each regenerate
             // gives a slightly different distribution per class and per day.
             for (let i = 0; i < 8; i += 1) {
-                const subject = codes[Math.floor(Math.random() * codes.length)];
+                const subject = classSubjectCodes[Math.floor(Math.random() * classSubjectCodes.length)];
                 row.slots.push({
                     subject,
                     teacher: teachers[subject] || '',
@@ -171,9 +376,60 @@ const generateSampleTimetable = () => {
     });
 
     schedule.value = next;
+    saveScheduleToStorage();
+};
+
+const getFilteredRows = (day) => {
+    const rows = schedule.value[day] || [];
+
+    return rows
+        .map((row, originalIndex) => ({ row, originalIndex }))
+        .filter(({ row }) =>
+            (selectedClass.value === 'ALL' || row.class_label === selectedClass.value) &&
+            (selectedStream.value === 'ALL' || row.stream === selectedStream.value)
+        );
+};
+
+const getGroupedRows = (day) => {
+    const filtered = getFilteredRows(day);
+    const groups = [];
+    const indexByKey = new Map();
+
+    filtered.forEach((item) => {
+        const label = item.row.class_label || item.row.form || '';
+        const key = label.trim() || 'UNKNOWN';
+
+        if (!indexByKey.has(key)) {
+            indexByKey.set(key, groups.length);
+            groups.push({ key, label, rows: [] });
+        }
+
+        groups[indexByKey.get(key)].rows.push(item);
+    });
+
+    return groups.sort((a, b) => {
+        const fa = levelToForm(a.label);
+        const fb = levelToForm(b.label);
+
+        const oa = romanToNumber(fa) ?? Number.POSITIVE_INFINITY;
+        const ob = romanToNumber(fb) ?? Number.POSITIVE_INFINITY;
+        if (oa !== ob) return oa - ob;
+
+        return String(a.label || '').localeCompare(String(b.label || ''));
+    });
+};
+
+const getGroupedRowCount = (day) => {
+    return getGroupedRows(day).reduce((sum, g) => sum + g.rows.length, 0);
 };
 
 onMounted(() => {
+    const stored = loadScheduleFromStorage();
+    if (stored) {
+        schedule.value = stored;
+        return;
+    }
+
     generateSampleTimetable();
 });
 
@@ -191,6 +447,137 @@ const saveTimetable = () => {
 const printTimetable = () => {
     window.print();
 };
+
+const showLimitationsModal = ref(false);
+const selectedLimitClassId = ref('');
+const limitsLoading = ref(false);
+const limitsSaving = ref(false);
+const limitsByKey = ref({});
+
+const csrfToken = () => {
+    return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+};
+
+const teacherSubjectRows = computed(() => {
+    const rows = [];
+
+    (props.subjects || []).forEach((s) => {
+        const teachers = Array.isArray(s.teachers) ? s.teachers : [];
+        teachers.forEach((t) => {
+            if (!t?.id) return;
+            rows.push({
+                teacher_id: t.id,
+                teacher_name: t.name,
+                teacher_initials: t.initials,
+                subject_id: s.id,
+                subject_code: s.subject_code,
+                subject_name: s.name,
+            });
+        });
+    });
+
+    return rows.sort((a, b) => {
+        const tc = String(a.teacher_name || '').localeCompare(String(b.teacher_name || ''));
+        if (tc !== 0) return tc;
+        return String(a.subject_code || '').localeCompare(String(b.subject_code || ''));
+    });
+});
+
+const limitationClassOptions = computed(() => {
+    return timetableClasses.value.map((c) => {
+        const label = getClassLabel(c) || c.name || '';
+        const stream = c.stream ? String(c.stream).toUpperCase().trim() : '';
+        const display = stream ? `${label} ${stream}` : label;
+
+        return {
+            id: String(c.id),
+            display,
+        };
+    });
+});
+
+const limitKey = (teacherId, subjectId) => `${teacherId}:${subjectId}`;
+
+const loadLimits = async () => {
+    if (!selectedLimitClassId.value) {
+        limitsByKey.value = {};
+        return;
+    }
+
+    limitsLoading.value = true;
+    try {
+        const res = await fetch(
+            `${route('timetables.weekly-limits.index')}?school_class_id=${encodeURIComponent(selectedLimitClassId.value)}`,
+            {
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    Accept: 'application/json',
+                },
+                credentials: 'same-origin',
+            }
+        );
+
+        const json = await res.json();
+        const map = {};
+        (json?.limits || []).forEach((row) => {
+            map[limitKey(row.teacher_id, row.subject_id)] = row.periods_per_week;
+        });
+        limitsByKey.value = map;
+    } catch {
+        limitsByKey.value = {};
+    } finally {
+        limitsLoading.value = false;
+    }
+};
+
+const saveLimits = async () => {
+    if (!selectedLimitClassId.value) return;
+
+    limitsSaving.value = true;
+    try {
+        const limits = teacherSubjectRows.value
+            .map((row) => {
+                const key = limitKey(row.teacher_id, row.subject_id);
+                const val = limitsByKey.value[key];
+                return {
+                    school_class_id: Number(selectedLimitClassId.value),
+                    subject_id: row.subject_id,
+                    teacher_id: row.teacher_id,
+                    periods_per_week: val === '' || val === null || val === undefined ? 0 : Number(val),
+                };
+            })
+            .filter((r) => Number.isFinite(r.periods_per_week) && r.periods_per_week >= 0);
+
+        await fetch(route('timetables.weekly-limits.save'), {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': csrfToken(),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ limits }),
+        });
+
+        showLimitationsModal.value = false;
+    } finally {
+        limitsSaving.value = false;
+    }
+};
+
+watch(showLimitationsModal, (open) => {
+    if (!open) return;
+    if (!selectedLimitClassId.value && limitationClassOptions.value.length) {
+        selectedLimitClassId.value = limitationClassOptions.value[0].id;
+    }
+    loadLimits();
+});
+
+watch(selectedLimitClassId, () => {
+    if (!showLimitationsModal.value) return;
+    loadLimits();
+});
 
 const draggedCell = ref(null);
 
@@ -245,6 +632,8 @@ const onDrop = (day, rowIndex, slotIndex) => {
     fromRow.slots[from.slotIndex] = toRow.slots[slotIndex];
     toRow.slots[slotIndex] = tmp;
 
+    saveScheduleToStorage();
+
     draggedCell.value = null;
 };
 </script>
@@ -287,17 +676,18 @@ const onDrop = (day, rowIndex, slotIndex) => {
                     <div class="flex flex-wrap items-center gap-2">
                         <span class="font-semibold">View class:</span>
                         <select
-                            v-model="selectedForm"
+                            v-model="selectedClass"
                             class="rounded border border-gray-300 bg-white px-1 py-0.5 text-[9px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
                         >
-                            <option value="ALL">All Forms</option>
-                            <option v-for="f in forms" :key="f" :value="f">Form {{ f }}</option>
+                            <option value="ALL">All Classes</option>
+                            <option v-for="c in classLabels" :key="c" :value="c">{{ c }}</option>
                         </select>
                         <select
                             v-model="selectedStream"
                             class="rounded border border-gray-300 bg-white px-1 py-0.5 text-[9px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
                         >
                             <option value="ALL">All Streams</option>
+                            <option v-if="!streams.length" value="" disabled>No streams</option>
                             <option v-for="s in streams" :key="s" :value="s">Stream {{ s }}</option>
                         </select>
                     </div>
@@ -309,6 +699,13 @@ const onDrop = (day, rowIndex, slotIndex) => {
                             @click="generateSampleTimetable"
                         >
                             Regenerate Sample Timetable
+                        </button>
+                        <button
+                            type="button"
+                            class="rounded-md bg-white px-2 py-1 text-[10px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
+                            @click="showLimitationsModal = true"
+                        >
+                            Limitations &amp; More
                         </button>
                         <button
                             type="button"
@@ -352,10 +749,9 @@ const onDrop = (day, rowIndex, slotIndex) => {
                         </div>
                         <div class="text-[9px] text-gray-700">
                             Mwaka: <span class="font-semibold">{{ form.academic_year || '____' }}</span>
-                            <span v-if="selectedForm !== 'ALL'">
+                            <span v-if="selectedClass !== 'ALL'">
                                 · Darasa: <span class="font-semibold">{{ headerClassName }}</span>
                             </span>
-                            · Kipindi: <span class="font-semibold">{{ form.term || '____' }}</span>
                         </div>
                     </div>
 
@@ -384,10 +780,10 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                         DAY
                                     </th>
                                     <th class="w-10 border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
-                                        FORM
+                                        CLASS
                                     </th>
                                     <th class="w-12 border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
-                                        CLASS
+                                        STREAM
                                     </th>
                                     <th class="w-20 border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
                                         07:00 - 07:30 AM
@@ -433,29 +829,28 @@ const onDrop = (day, rowIndex, slotIndex) => {
                             <tbody>
                                 <!-- One block per day (Monday-Friday), each with 4 rows (Form I-IV) -->
                                 <template v-for="day in days" :key="day">
-                                    <tr
-                                        v-for="(row, rowIndex) in (schedule[day] || []).filter((r) =>
-                                            (selectedForm === 'ALL' || r.form === selectedForm) &&
-                                            (selectedStream === 'ALL' || r.stream === selectedStream)
-                                        )"
-                                        :key="`${day}-${row.form}-${row.stream}-${rowIndex}`"
-                                    >
-                                        <td
-                                            v-if="rowIndex === 0"
-                                            class="border border-slate-300 bg-sky-100 px-1 py-4 text-center text-[10px] font-semibold uppercase text-sky-900"
-                                            :rowspan="(schedule[day] || []).filter((r) =>
-                                                (selectedForm === 'ALL' || r.form === selectedForm) &&
-                                                (selectedStream === 'ALL' || r.stream === selectedStream)
-                                            ).length || 1"
+                                    <template v-for="(group, groupIndex) in getGroupedRows(day)" :key="`${day}-${group.key}`">
+                                        <tr
+                                            v-for="({ row, originalIndex }, rowIndex) in group.rows"
+                                            :key="`${day}-${group.key}-${row.stream}-${originalIndex}`"
                                         >
-                                            {{ day }}
-                                        </td>
-                                        <td class="border border-slate-300 bg-slate-50 px-1 py-1 text-center font-semibold">
-                                            {{ row.form }}
-                                        </td>
-                                        <td class="border border-slate-300 bg-slate-50 px-1 py-1 text-center">
-                                            {{ row.stream }}
-                                        </td>
+                                            <td
+                                                v-if="groupIndex === 0 && rowIndex === 0"
+                                                class="border border-slate-300 bg-sky-100 px-1 py-4 text-center text-[10px] font-semibold uppercase text-sky-900"
+                                                :rowspan="getGroupedRowCount(day) || 1"
+                                            >
+                                                {{ day }}
+                                            </td>
+                                            <td
+                                                v-if="rowIndex === 0"
+                                                class="border border-slate-300 bg-slate-50 px-1 py-1 text-center font-semibold"
+                                                :rowspan="group.rows.length"
+                                            >
+                                                {{ group.label || row.class_label || row.form }}
+                                            </td>
+                                            <td class="border border-slate-300 bg-slate-50 px-1 py-1 text-center">
+                                                {{ row.stream }}
+                                            </td>
                                         <td class="border border-slate-300 bg-sky-50 px-1 py-1 text-center">
                                             <div class="font-semibold">ARRIVAL &amp; CLEANING</div>
                                         </td>
@@ -469,9 +864,9 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             :key="`am-${index}`"
                                             class="border border-slate-300 bg-emerald-50 px-1 py-1 text-center"
                                             :draggable="isDraggableSlot(day, index)"
-                                            @dragstart="isDraggableSlot(day, index) && onDragStart(day, rowIndex, index)"
+                                            @dragstart="isDraggableSlot(day, index) && onDragStart(day, originalIndex, index)"
                                             @dragover.prevent
-                                            @drop="isDraggableSlot(day, index) && onDrop(day, rowIndex, index)"
+                                            @drop="isDraggableSlot(day, index) && onDrop(day, originalIndex, index)"
                                         >
                                             <div>{{ slot.subject }}</div>
                                             <div class="text-[8px] text-gray-600">{{ slot.teacher }}</div>
@@ -489,9 +884,9 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             :key="`mid-${index}`"
                                             class="border border-slate-300 bg-indigo-50 px-1 py-1 text-center"
                                             :draggable="isDraggableSlot(day, 3 + index)"
-                                            @dragstart="isDraggableSlot(day, 3 + index) && onDragStart(day, rowIndex, 3 + index)"
+                                            @dragstart="isDraggableSlot(day, 3 + index) && onDragStart(day, originalIndex, 3 + index)"
                                             @dragover.prevent
-                                            @drop="isDraggableSlot(day, 3 + index) && onDrop(day, rowIndex, 3 + index)"
+                                            @drop="isDraggableSlot(day, 3 + index) && onDrop(day, originalIndex, 3 + index)"
                                         >
                                             <template v-if="day === 'FRIDAY' && index === 2">
                                                 <div class="font-semibold text-orange-700">MEWAKA</div>
@@ -522,9 +917,9 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                                             : 'bg-indigo-50',
                                             ]"
                                             :draggable="isDraggableSlot(day, 6 + index)"
-                                            @dragstart="isDraggableSlot(day, 6 + index) && onDragStart(day, rowIndex, 6 + index)"
+                                            @dragstart="isDraggableSlot(day, 6 + index) && onDragStart(day, originalIndex, 6 + index)"
                                             @dragover.prevent
-                                            @drop="isDraggableSlot(day, 6 + index) && onDrop(day, rowIndex, 6 + index)"
+                                            @drop="isDraggableSlot(day, 6 + index) && onDrop(day, originalIndex, 6 + index)"
                                         >
                                             <template v-if="day === 'WEDNESDAY'">
                                                 <div>RELIGION</div>
@@ -545,7 +940,8 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                         <td class="border border-slate-300 bg-emerald-200 px-1 py-1 text-center font-semibold text-emerald-900">
                                             REMEDIAL
                                         </td>
-                                    </tr>
+                                        </tr>
+                                    </template>
                                     <!-- Separator between days -->
                                     <tr>
                                         <td :colspan="5 + 8 + 2 + 1" class="h-1 bg-yellow-300"></td>
@@ -707,6 +1103,111 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                 Generate &amp; Save Timetable
                             </button>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Limitations modal -->
+            <div
+                v-if="showLimitationsModal"
+                class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6 sm:px-0"
+            >
+                <div
+                    class="max-h-full w-full max-w-4xl overflow-y-auto rounded-xl bg-white p-5 text-xs text-gray-700 shadow-lg ring-1 ring-gray-200"
+                >
+                    <div class="mb-3 flex items-center justify-between">
+                        <div>
+                            <h3 class="text-sm font-semibold text-gray-800">
+                                Limitations &amp; More
+                            </h3>
+                            <p class="mt-0.5 text-[11px] text-gray-500">
+                                Weka vipindi kwa wiki kwa kila mwalimu na somo kwa darasa/stream.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            class="text-[11px] text-gray-500 hover:text-gray-700"
+                            @click="showLimitationsModal = false"
+                        >
+                            Close
+                        </button>
+                    </div>
+
+                    <div class="mb-3 flex flex-wrap items-end gap-3">
+                        <div>
+                            <label class="mb-1 block text-[11px] font-medium">Class / Stream</label>
+                            <select
+                                v-model="selectedLimitClassId"
+                                class="w-64 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                            >
+                                <option value="" disabled>Select class</option>
+                                <option v-for="c in limitationClassOptions" :key="c.id" :value="c.id">
+                                    {{ c.display }}
+                                </option>
+                            </select>
+                        </div>
+
+                        <div v-if="limitsLoading" class="text-[11px] text-gray-500">Loading...</div>
+                    </div>
+
+                    <div class="overflow-hidden rounded-lg border border-gray-200">
+                        <table class="min-w-full border-collapse text-[11px]">
+                            <thead>
+                                <tr class="bg-gray-50 text-left">
+                                    <th class="border-b border-gray-200 px-3 py-2">Teacher</th>
+                                    <th class="border-b border-gray-200 px-3 py-2">Subject</th>
+                                    <th class="border-b border-gray-200 px-3 py-2">Periods / Week</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-if="!teacherSubjectRows.length">
+                                    <td colspan="3" class="px-3 py-3 text-center text-[11px] text-gray-500">
+                                        No teacher-subject mappings found.
+                                    </td>
+                                </tr>
+
+                                <tr v-for="row in teacherSubjectRows" :key="`${row.teacher_id}-${row.subject_id}`" class="hover:bg-gray-50">
+                                    <td class="border-b border-gray-100 px-3 py-2">
+                                        <div class="font-medium text-gray-800">{{ row.teacher_name }}</div>
+                                        <div class="text-[10px] text-gray-500">{{ row.teacher_initials }}</div>
+                                    </td>
+                                    <td class="border-b border-gray-100 px-3 py-2">
+                                        <div class="font-medium text-gray-800">{{ row.subject_code }}</div>
+                                        <div class="text-[10px] text-gray-500">{{ row.subject_name }}</div>
+                                    </td>
+                                    <td class="border-b border-gray-100 px-3 py-2">
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            max="50"
+                                            class="w-24 rounded-md border border-gray-300 px-2 py-1 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                            :disabled="!selectedLimitClassId"
+                                            :value="limitsByKey[limitKey(row.teacher_id, row.subject_id)] ?? 0"
+                                            @input="(e) => { limitsByKey[limitKey(row.teacher_id, row.subject_id)] = e.target.value; }"
+                                        />
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="mt-4 flex items-center justify-end gap-2">
+                        <button
+                            type="button"
+                            class="rounded-md bg-gray-100 px-3 py-1.5 text-[11px] font-medium text-gray-700 hover:bg-gray-200"
+                            :disabled="limitsSaving"
+                            @click="showLimitationsModal = false"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            class="inline-flex items-center rounded-md bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
+                            :disabled="limitsSaving || !selectedLimitClassId"
+                            @click="saveLimits"
+                        >
+                            {{ limitsSaving ? 'Saving...' : 'Save Limitations' }}
+                        </button>
                     </div>
                 </div>
             </div>

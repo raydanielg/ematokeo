@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Exam;
 use App\Models\ExamResult;
+use App\Models\ExamStudentResult;
 use App\Models\School;
 use App\Models\SchoolClass;
 use App\Models\Student;
@@ -12,13 +13,112 @@ use App\Models\GradingScheme;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
+use Illuminate\Support\Carbon;
 
 class MarksController extends Controller
 {
+    protected function upsertStudentSummary(int $examId, int $studentId, ?int $schoolId, ?string $academicYear, $schemes): void
+    {
+        $gradeForMark = function ($mark) use ($schemes) {
+            if ($mark === null) {
+                return null;
+            }
+
+            $intMark = (int) round($mark);
+
+            return $schemes->first(function (GradingScheme $s) use ($intMark) {
+                return $intMark >= $s->min_mark && $intMark <= $s->max_mark;
+            });
+        };
+
+        $divisionBucket = function (?string $division) {
+            if (! $division) {
+                return null;
+            }
+
+            $d = strtoupper(trim($division));
+            if (in_array($d, ['I', 'II', 'III', 'IV', '0'], true)) {
+                return $d;
+            }
+
+            if (str_contains($d, 'DIVISION I')) {
+                return 'I';
+            }
+            if (str_contains($d, 'DIVISION II')) {
+                return 'II';
+            }
+            if (str_contains($d, 'DIVISION III')) {
+                return 'III';
+            }
+            if (str_contains($d, 'DIVISION IV')) {
+                return 'IV';
+            }
+            if (str_contains($d, 'DIVISION 0') || $d === 'DIVISION 0') {
+                return '0';
+            }
+
+            return null;
+        };
+
+        $results = ExamResult::query()
+            ->where('exam_id', $examId)
+            ->where('student_id', $studentId)
+            ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+            ->get(['marks']);
+
+        $validMarks = $results->pluck('marks')->filter(fn ($m) => $m !== null);
+        $count = $validMarks->count();
+
+        $total = $count > 0 ? (int) $validMarks->sum() : null;
+        $average = $count > 0 ? round(((float) $validMarks->sum()) / $count, 2) : null;
+
+        $pointsArr = [];
+        foreach ($validMarks as $m) {
+            $scheme = $gradeForMark($m);
+            if ($scheme && $scheme->points !== null) {
+                $pointsArr[] = $scheme->points;
+            }
+        }
+        $pointsTotal = ! empty($pointsArr) ? (int) array_sum($pointsArr) : null;
+
+        $overallGrade = null;
+        $divisionCode = null;
+        if ($average !== null) {
+            $avgScheme = $gradeForMark((int) round($average));
+            $overallGrade = $avgScheme?->grade ? strtoupper((string) $avgScheme->grade) : null;
+
+            if ($avgScheme && $avgScheme->division) {
+                $divisionCode = $divisionBucket($avgScheme->division);
+            } elseif ($overallGrade !== null) {
+                $divisionCode = match ($overallGrade) {
+                    'A' => 'I',
+                    'B' => 'II',
+                    'C' => 'III',
+                    'D' => 'IV',
+                    default => '0',
+                };
+            }
+        }
+
+        $summary = ExamStudentResult::firstOrNew([
+            'exam_id' => $examId,
+            'student_id' => $studentId,
+            'school_id' => $schoolId,
+        ]);
+
+        $summary->academic_year = $academicYear;
+        $summary->total = $total;
+        $summary->average = $average;
+        $summary->grade = $overallGrade;
+        $summary->division = $divisionCode;
+        $summary->points = $pointsTotal;
+        $summary->save();
+    }
+
     public function index(Request $request)
     {
         $examId = $request->query('exam');
-        $classLevel = $request->query('class');
+        $classId = $request->query('class');
         $user = $request->user();
 
         $exams = Exam::orderByDesc('created_at')->get(['id', 'name', 'academic_year', 'type']);
@@ -33,35 +133,49 @@ class MarksController extends Controller
         $students = collect();
         $subjects = collect();
         $existingMarks = collect();
+        $streamSubjectsByStream = [];
 
         if ($examId) {
-            $exam = Exam::with('classes')->find($examId);
+            $exam = Exam::with('classes:id,name')->find($examId);
 
             if ($exam) {
-                // Distinct class levels (e.g. Form I, Form II) attached to this exam
+                // Classes attached to this exam (base classes)
                 $classes = $exam->classes
-                    ->pluck('level')
-                    ->filter()
-                    ->unique()
-                    ->values()
-                    ->map(function ($level) {
+                    ->map(function (SchoolClass $class) {
                         return [
-                            'id' => $level,
-                            'name' => $level,
-                            'level' => $level,
+                            'id' => $class->id,
+                            'name' => $class->name,
                         ];
-                    });
+                    })
+                    ->values();
 
-                if ($classLevel) {
-                    // All classes (streams) for this level that sit for this exam
-                    $classesForLevel = $exam->classes
-                        ->where('level', $classLevel)
-                        ->values();
+                if ($classId) {
+                    $selectedBase = $exam->classes->firstWhere('id', (int) $classId);
 
-                    if ($classesForLevel->isNotEmpty()) {
-                        // Subjects: union of all subjects across streams for this level, sorted by code
+                    if ($selectedBase) {
+                        $classIdsForExam = collect([$selectedBase->id]);
+
+                        // Include streams (children) of this base class
+                        $streamIds = SchoolClass::query()
+                            ->where('parent_class_id', $selectedBase->id)
+                            ->pluck('id');
+                        $classIdsForExam = $classIdsForExam->merge($streamIds)->unique()->values();
+
+                        // Stream -> subject_ids mapping (used to disable inputs for non-studied subjects)
+                        $streamSubjectsByStream = SchoolClass::with('subjects:id')
+                            ->where('parent_class_id', $selectedBase->id)
+                            ->get()
+                            ->filter(fn (SchoolClass $c) => $c->stream !== null && trim((string) $c->stream) !== '')
+                            ->mapWithKeys(function (SchoolClass $c) {
+                                return [
+                                    (string) $c->stream => $c->subjects->pluck('id')->all(),
+                                ];
+                            })
+                            ->all();
+
+                        // Subjects: union of subjects across base class and its streams
                         $subjectIds = SchoolClass::with('subjects:id,subject_code')
-                            ->whereIn('id', $classesForLevel->pluck('id'))
+                            ->whereIn('id', $classIdsForExam)
                             ->get()
                             ->flatMap(function (SchoolClass $class) {
                                 return $class->subjects;
@@ -77,11 +191,9 @@ class MarksController extends Controller
                             ];
                         });
 
-                        // Students: all students in this level across all streams,
-                        // limited to the current school. We avoid over-filtering by academic_year
-                        // here because some schools may not have set it consistently on students.
+                        // Students in the selected base class (across streams)
                         $studentsQuery = Student::query()
-                            ->where('class_level', $classLevel)
+                            ->where('class_level', $selectedBase->name)
                             ->orderBy('exam_number');
 
                         if ($user && $user->school_id) {
@@ -93,6 +205,7 @@ class MarksController extends Controller
                             'exam_number',
                             'full_name',
                             'gender',
+                            'stream',
                         ]);
 
                         if ($students->isNotEmpty() && $subjects->isNotEmpty()) {
@@ -123,10 +236,11 @@ class MarksController extends Controller
             'students' => $students,
             'subjects' => $subjects,
             'existingMarks' => $existingMarks,
+            'streamSubjectsByStream' => $streamSubjectsByStream,
             'gradingSchemes' => $gradingSchemes,
             'filters' => [
                 'exam' => $examId,
-                'class' => $classLevel,
+                'class' => $classId,
             ],
         ]);
     }
@@ -135,17 +249,19 @@ class MarksController extends Controller
     {
         $data = $request->validate([
             'exam_id' => ['required', 'integer', 'exists:exams,id'],
-            'class_id' => ['required', 'string', 'max:100'],
+            'class_id' => ['required', 'integer', 'exists:school_classes,id'],
             'rows' => ['required', 'array'],
             'rows.*.student_id' => ['required', 'integer', 'exists:students,id'],
-            'rows.*.marks' => ['required', 'array'],
+            'rows.*.marks' => ['array'],
             'rows.*.marks.*.subject_id' => ['required', 'integer', 'exists:subjects,id'],
             'rows.*.marks.*.marks' => ['nullable', 'integer', 'min:0', 'max:100'],
+            'save_snapshot' => ['sometimes', 'boolean'],
         ]);
 
         $user = $request->user();
         $exam = Exam::find($data['exam_id']);
         $schoolId = $user?->school_id;
+        $saveSnapshot = (bool) ($data['save_snapshot'] ?? false);
 
         // Preload grading schemes once for efficient grade/points lookup
         $schemes = GradingScheme::all();
@@ -163,6 +279,9 @@ class MarksController extends Controller
         };
 
         foreach ($data['rows'] as $row) {
+            if (empty($row['marks']) || !is_array($row['marks'])) {
+                continue;
+            }
             foreach ($row['marks'] as $entry) {
                 $marksValue = $entry['marks'];
                 $scheme = $gradeForMark($marksValue);
@@ -195,31 +314,47 @@ class MarksController extends Controller
                 $result->save();
             }
 
+            $this->upsertStudentSummary(
+                (int) $data['exam_id'],
+                (int) $row['student_id'],
+                $schoolId ? (int) $schoolId : null,
+                $exam?->academic_year,
+                $schemes
+            );
+
             // Persist a per-student snapshot file under a stable folder structure
-            $student = Student::find($row['student_id']);
+            if ($saveSnapshot) {
+                $student = Student::find($row['student_id']);
 
-            if ($student) {
-                $school = $user && $user->school_id ? School::find($user->school_id) : null;
-                $schoolCode = $school && $school->school_code ? $school->school_code : 'SCH';
+                if ($student) {
+                    $school = $user && $user->school_id ? School::find($user->school_id) : null;
+                    $schoolCode = $school && $school->school_code ? $school->school_code : 'SCH';
 
-                $folder = "schools/{$schoolCode}/students/{$student->exam_number}";
+                    $folder = "schools/{$schoolCode}/students/{$student->exam_number}";
 
-                $snapshot = [
-                    'student' => [
-                        'id' => $student->id,
-                        'exam_number' => $student->exam_number,
-                        'full_name' => $student->full_name,
-                    ],
-                    'exam' => [
-                        'id' => $exam?->id,
-                        'name' => $exam?->name,
-                        'academic_year' => $exam?->academic_year,
-                    ],
-                    'marks' => $row['marks'],
-                ];
+                    $snapshot = [
+                        'student' => [
+                            'id' => $student->id,
+                            'exam_number' => $student->exam_number,
+                            'full_name' => $student->full_name,
+                        ],
+                        'exam' => [
+                            'id' => $exam?->id,
+                            'name' => $exam?->name,
+                            'academic_year' => $exam?->academic_year,
+                        ],
+                        'marks' => $row['marks'],
+                    ];
 
-                Storage::put("{$folder}/marks_{$exam->id}.json", json_encode($snapshot, JSON_PRETTY_PRINT));
+                    Storage::put("{$folder}/marks_{$exam->id}.json", json_encode($snapshot, JSON_PRETTY_PRINT));
+                }
             }
+        }
+
+        if ($request->wantsJson() || $request->expectsJson() || $request->ajax()) {
+            return response()->json([
+                'ok' => true,
+            ]);
         }
 
         return redirect()
@@ -228,5 +363,192 @@ class MarksController extends Controller
                 'class' => $data['class_id'],
             ])
             ->with('success', 'Marks saved successfully.');
+    }
+
+    public function saveCell(Request $request)
+    {
+        $data = $request->validate([
+            'exam_id' => ['required', 'integer', 'exists:exams,id'],
+            'class_id' => ['required', 'integer', 'exists:school_classes,id'],
+            'student_id' => ['required', 'integer', 'exists:students,id'],
+            'subject_id' => ['required', 'integer', 'exists:subjects,id'],
+            'marks' => ['nullable', 'integer', 'min:0', 'max:100'],
+        ]);
+
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+
+        $exam = Exam::with('classes:id,name')->find($data['exam_id']);
+        if (! $exam) {
+            abort(404);
+        }
+
+        // Ensure the selected base class belongs to the exam assignment
+        $selectedBase = $exam->classes->firstWhere('id', (int) $data['class_id']);
+        if (! $selectedBase) {
+            abort(403);
+        }
+
+        // Ensure student belongs to this base class (by class_level name)
+        $student = Student::find($data['student_id']);
+        if (! $student) {
+            abort(404);
+        }
+
+        if ($schoolId && $student->school_id && (int) $student->school_id !== (int) $schoolId) {
+            abort(403);
+        }
+
+        if ($student->class_level !== $selectedBase->name) {
+            abort(403);
+        }
+
+        // Preload grading schemes once for efficient grade/points lookup
+        $schemes = GradingScheme::all();
+        $gradeForMark = function ($mark) use ($schemes) {
+            if ($mark === null) {
+                return null;
+            }
+
+            $intMark = (int) round($mark);
+
+            return $schemes->first(function (GradingScheme $s) use ($intMark) {
+                return $intMark >= $s->min_mark && $intMark <= $s->max_mark;
+            });
+        };
+
+        $scheme = $gradeForMark($data['marks']);
+
+        $result = ExamResult::firstOrNew([
+            'exam_id' => $data['exam_id'],
+            'student_id' => $data['student_id'],
+            'subject_id' => $data['subject_id'],
+            'school_id' => $schoolId,
+        ]);
+
+        if (! $result->exists) {
+            $result->raw_marks = $data['marks'];
+        } elseif ($result->exists && $result->raw_marks === null) {
+            $result->raw_marks = $result->marks;
+        }
+
+        $result->marks = $data['marks'];
+        $result->standardized_marks = $data['marks'];
+        $result->grade = $scheme?->grade;
+        $result->points = $scheme?->points;
+        $result->school_id = $schoolId;
+        $result->academic_year = $exam->academic_year;
+        $result->save();
+
+        $this->upsertStudentSummary(
+            (int) $data['exam_id'],
+            (int) $data['student_id'],
+            $schoolId ? (int) $schoolId : null,
+            $exam?->academic_year,
+            $schemes
+        );
+
+        return response()->json([
+            'ok' => true,
+            'student_id' => $result->student_id,
+            'subject_id' => $result->subject_id,
+            'marks' => $result->marks,
+            'updated_at' => $result->updated_at?->toISOString(),
+        ]);
+    }
+
+    public function live(Request $request)
+    {
+        $data = $request->validate([
+            'exam' => ['required', 'integer', 'exists:exams,id'],
+            'class' => ['required', 'integer', 'exists:school_classes,id'],
+            'since' => ['nullable', 'date'],
+        ]);
+
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+
+        $exam = Exam::with('classes:id,name')->find($data['exam']);
+        if (! $exam) {
+            abort(404);
+        }
+
+        $selectedBase = $exam->classes->firstWhere('id', (int) $data['class']);
+        if (! $selectedBase) {
+            abort(403);
+        }
+
+        $studentsQuery = Student::query()
+            ->where('class_level', $selectedBase->name)
+            ->orderBy('exam_number');
+
+        if ($schoolId) {
+            $studentsQuery->where('school_id', $schoolId);
+        }
+
+        $studentIds = $studentsQuery->pluck('id');
+
+        $classIdsForExam = collect([$selectedBase->id]);
+        $streamIds = SchoolClass::query()
+            ->where('parent_class_id', $selectedBase->id)
+            ->pluck('id');
+        $classIdsForExam = $classIdsForExam->merge($streamIds)->unique()->values();
+
+        $subjectIds = SchoolClass::with('subjects:id')
+            ->whereIn('id', $classIdsForExam)
+            ->get()
+            ->flatMap(fn (SchoolClass $c) => $c->subjects)
+            ->unique('id')
+            ->pluck('id')
+            ->values();
+
+        $since = null;
+        if (! empty($data['since'])) {
+            try {
+                $since = Carbon::parse($data['since']);
+            } catch (\Throwable $e) {
+                $since = null;
+            }
+        }
+
+        $query = ExamResult::query()
+            ->where('exam_id', $exam->id)
+            ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+            ->when($studentIds->isNotEmpty(), fn ($q) => $q->whereIn('student_id', $studentIds))
+            ->when($subjectIds->isNotEmpty(), fn ($q) => $q->whereIn('subject_id', $subjectIds));
+
+        if ($since) {
+            $query->where('updated_at', '>', $since);
+        }
+
+        $rows = $query
+            ->orderBy('updated_at')
+            ->limit(500)
+            ->get([
+                'student_id',
+                'subject_id',
+                'marks',
+                'updated_at',
+            ])
+            ->map(function (ExamResult $r) {
+                return [
+                    'student_id' => $r->student_id,
+                    'subject_id' => $r->subject_id,
+                    'marks' => $r->marks,
+                    'updated_at' => $r->updated_at?->toISOString(),
+                ];
+            })
+            ->values();
+
+        $maxUpdatedAt = $rows->isNotEmpty()
+            ? $rows->max('updated_at')
+            : now()->toISOString();
+
+        return response()->json([
+            'ok' => true,
+            'rows' => $rows,
+            'server_time' => now()->toISOString(),
+            'max_updated_at' => $maxUpdatedAt,
+        ]);
     }
 }

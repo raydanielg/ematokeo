@@ -1,8 +1,7 @@
 <script setup>
 import { Head } from '@inertiajs/vue3'
 import { onMounted } from 'vue'
-import Header from '@/Components/Header.vue'
-import Footer from '@/Components/Footer.vue'
+import AuthLayout from '@/Layouts/AuthLayout.vue'
 
 onMounted(() => {
   // Redirect to dashboard after 3 seconds
@@ -14,19 +13,8 @@ onMounted(() => {
 
 <template>
   <Head title="Account Created Successfully" />
-  <div class="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-emerald-50 flex flex-col">
-    <!-- Header -->
-    <Header>
-      <template #auth>
-        <nav class="flex items-center gap-3">
-          <!-- Empty for success page -->
-        </nav>
-      </template>
-    </Header>
-
-    <main class="flex-1 w-full flex items-center justify-center px-4 py-12">
-      <div class="w-full max-w-md">
-        <div class="rounded-3xl bg-white/80 backdrop-blur-xl border border-emerald-200/60 shadow-2xl p-8 sm:p-12 text-center">
+  <AuthLayout :compact="true">
+        <div class="text-center">
           <!-- Success Animation Container -->
           <div class="mb-8 flex justify-center">
             <div class="relative w-32 h-32">
@@ -61,10 +49,5 @@ onMounted(() => {
             <div class="w-2 h-2 rounded-full bg-emerald-600 animate-bounce" style="animation-delay: 0.4s;"></div>
           </div>
         </div>
-      </div>
-    </main>
-
-    <!-- Footer -->
-    <Footer />
-  </div>
+  </AuthLayout>
 </template>

@@ -270,7 +270,7 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
 
 <template>
     <div>
-        <div class="min-h-screen bg-gray-100">
+        <div class="min-h-screen bg-slate-50">
             <nav class="border-b border-emerald-900/40 bg-emerald-900 text-emerald-50 print:hidden">
                 <!-- Primary Navigation Menu -->
                 <div class="px-4 sm:px-6 lg:px-8">
@@ -648,7 +648,7 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
 
                         <!-- Page Heading -->
                         <header
-                            class="bg-white shadow"
+                            class="border-b border-slate-200 bg-slate-50/80 backdrop-blur"
                             v-if="$slots.header"
                         >
                             <div class="px-4 py-6 sm:px-6 lg:px-8">

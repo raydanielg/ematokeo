@@ -1,7 +1,7 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head, router } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 
 const props = defineProps({
     years: {
@@ -24,6 +24,30 @@ const props = defineProps({
 });
 
 const showPreview = ref(false);
+
+const showStudentModal = ref(false);
+const studentLoading = ref(false);
+const studentError = ref(null);
+const studentDetails = ref(null);
+const showAllStudentSubjects = ref(false);
+
+const enteredSubjectsCount = computed(() => {
+    const subs = studentDetails.value?.subjects || [];
+    return subs.filter((s) => s?.entered).length;
+});
+
+const totalSubjectsCount = computed(() => {
+    const subs = studentDetails.value?.subjects || [];
+    return subs.length;
+});
+
+const visibleStudentSubjects = computed(() => {
+    const subs = studentDetails.value?.subjects || [];
+    if (showAllStudentSubjects.value) {
+        return subs;
+    }
+    return subs.filter((s) => s?.entered);
+});
 
 const onYearChange = (event) => {
     const year = event.target.value || null;
@@ -49,6 +73,46 @@ const openPreview = () => {
 
 const closePreview = () => {
     showPreview.value = false;
+};
+
+const closeStudentModal = () => {
+    showStudentModal.value = false;
+    studentDetails.value = null;
+    studentError.value = null;
+    studentLoading.value = false;
+    showAllStudentSubjects.value = false;
+};
+
+const openStudentModal = async (row) => {
+    if (!row?.student_id || !props.filters?.exam) {
+        return;
+    }
+
+    showStudentModal.value = true;
+    studentLoading.value = true;
+    studentError.value = null;
+    studentDetails.value = null;
+    showAllStudentSubjects.value = false;
+
+    try {
+        const url = route('results.student-details', { exam: props.filters.exam, student: row.student_id });
+        const res = await fetch(url, {
+            headers: {
+                Accept: 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+            studentError.value = data?.message || 'Failed to load student results.';
+            return;
+        }
+        studentDetails.value = data;
+    } catch (e) {
+        studentError.value = 'Failed to load student results.';
+    } finally {
+        studentLoading.value = false;
+    }
 };
 
 const printPreview = () => {
@@ -163,7 +227,13 @@ const printPreview = () => {
                                 {{ row.exam_number }}
                             </td>
                             <td class="px-3 py-1.5 align-top">
-                                {{ row.full_name }}
+                                <button
+                                    type="button"
+                                    class="text-left font-semibold text-emerald-700 hover:underline"
+                                    @click="openStudentModal(row)"
+                                >
+                                    {{ row.full_name }}
+                                </button>
                             </td>
                             <td class="px-3 py-1.5 align-top">
                                 {{ row.class_level || '—' }}
@@ -282,7 +352,13 @@ const printPreview = () => {
                                         {{ row.exam_number }}
                                     </td>
                                     <td class="border border-emerald-100 px-2 py-1 bg-white">
-                                        {{ row.full_name }}
+                                        <button
+                                            type="button"
+                                            class="text-left font-semibold text-emerald-700 hover:underline"
+                                            @click="openStudentModal(row)"
+                                        >
+                                            {{ row.full_name }}
+                                        </button>
                                     </td>
                                     <td class="border border-emerald-100 px-2 py-1 bg-white">
                                         {{ row.class_level || '—' }}
@@ -302,6 +378,133 @@ const printPreview = () => {
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </div>
+        </transition>
+
+        <transition name="fade">
+            <div
+                v-if="showStudentModal"
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-8"
+            >
+                <div class="max-h-full w-full max-w-3xl overflow-y-auto rounded-xl bg-white p-6 text-xs text-gray-800 shadow-xl">
+                    <div class="mb-4 flex items-center justify-between">
+                        <div>
+                            <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-800">
+                                Student Results
+                            </h3>
+                            <p class="mt-0.5 text-[11px] text-gray-500">
+                                Detailed subject results for the selected exam.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            class="rounded-md bg-gray-100 px-3 py-1.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-200"
+                            @click="closeStudentModal"
+                        >
+                            Close
+                        </button>
+                    </div>
+
+                    <div v-if="studentLoading" class="py-10 text-center text-[11px] text-gray-500">
+                        Loading student results...
+                    </div>
+
+                    <div v-else-if="studentError" class="rounded-md bg-red-50 px-3 py-2 text-[11px] text-red-700 ring-1 ring-red-100">
+                        {{ studentError }}
+                    </div>
+
+                    <div v-else-if="studentDetails" class="space-y-3">
+                        <div class="rounded-md bg-gray-50 px-3 py-2 text-[11px] text-gray-700 ring-1 ring-gray-100">
+                            <div class="font-semibold text-gray-900">
+                                {{ studentDetails.student?.full_name }}
+                            </div>
+                            <div class="mt-0.5 text-gray-600">
+                                Exam No: <span class="font-medium">{{ studentDetails.student?.exam_number }}</span>
+                                <span class="mx-1">|</span>
+                                Class: <span class="font-medium">{{ studentDetails.student?.class_level }}</span>
+                                <span class="mx-1">|</span>
+                                Sex: <span class="font-medium">{{ studentDetails.student?.gender ?? '—' }}</span>
+                            </div>
+                            <div class="mt-1 text-gray-600">
+                                Total: <span class="font-semibold">{{ studentDetails.summary?.total ?? '—' }}</span>
+                                <span class="mx-1">|</span>
+                                Avg: <span class="font-semibold">{{ studentDetails.summary?.average ?? '—' }}</span>
+                                <span class="mx-1">|</span>
+                                Points: <span class="font-semibold">{{ studentDetails.summary?.points ?? '—' }}</span>
+                                <span class="mx-1">|</span>
+                                Div: <span class="font-semibold">{{ studentDetails.summary?.division ?? '—' }}</span>
+                            </div>
+                            <div class="mt-1 text-[10px] text-gray-500">
+                                Entered: <span class="font-semibold">{{ enteredSubjectsCount }}</span>/<span class="font-semibold">{{ totalSubjectsCount }}</span> subjects
+                            </div>
+                            <div v-if="studentDetails.summary?.points === null" class="mt-1 text-[10px] text-gray-500">
+                                Points/Division are based on available captured subjects. If fewer than 7 subjects have marks/points, points total is not shown.
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-between">
+                            <div class="text-[11px] font-semibold text-gray-700">Subjects</div>
+                            <button
+                                type="button"
+                                class="rounded-md bg-gray-100 px-3 py-1.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-200"
+                                @click="showAllStudentSubjects = !showAllStudentSubjects"
+                            >
+                                {{ showAllStudentSubjects ? 'Show Entered Only' : 'Show All' }}
+                            </button>
+                        </div>
+
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full border-collapse text-[11px]">
+                                <thead>
+                                    <tr class="bg-gray-50 text-gray-600">
+                                        <th class="border-b border-gray-200 px-3 py-1.5 text-left">Code</th>
+                                        <th class="border-b border-gray-200 px-3 py-1.5 text-left">Subject</th>
+                                        <th class="border-b border-gray-200 px-3 py-1.5 text-center">Marks</th>
+                                        <th class="border-b border-gray-200 px-3 py-1.5 text-center">GRD</th>
+                                        <th class="border-b border-gray-200 px-3 py-1.5 text-center">PTS</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-if="!visibleStudentSubjects.length">
+                                        <td colspan="5" class="px-3 py-4 text-center text-[11px] text-gray-400">
+                                            No entered subject results found.
+                                        </td>
+                                    </tr>
+                                    <tr
+                                        v-for="(subj, idx) in visibleStudentSubjects"
+                                        :key="subj.code || idx"
+                                        class="border-b border-gray-100 text-gray-700 odd:bg-white even:bg-gray-50"
+                                    >
+                                        <td class="px-3 py-1.5 align-top font-mono">{{ subj.code }}</td>
+                                        <td class="px-3 py-1.5 align-top">{{ subj.name }}</td>
+                                        <td class="px-3 py-1.5 align-top text-center">
+                                            <span v-if="subj.entered">{{ subj.marks ?? '—' }}</span>
+                                            <span v-else class="text-gray-400">Not entered</span>
+                                        </td>
+                                        <td class="px-3 py-1.5 align-top text-center">
+                                            <span class="font-semibold">{{ subj.grade ?? '—' }}</span>
+                                            <span
+                                                v-if="subj.entered && !subj?.saved?.grade && subj?.computed?.grade"
+                                                class="ml-1 rounded bg-amber-50 px-1 py-0.5 text-[9px] font-semibold text-amber-700 ring-1 ring-amber-100"
+                                            >
+                                                calc
+                                            </span>
+                                        </td>
+                                        <td class="px-3 py-1.5 align-top text-center">
+                                            <span class="font-semibold">{{ subj.points ?? '—' }}</span>
+                                            <span
+                                                v-if="subj.entered && (subj?.saved?.points === null || subj?.saved?.points === undefined) && subj?.computed?.points !== null && subj?.computed?.points !== undefined"
+                                                class="ml-1 rounded bg-amber-50 px-1 py-0.5 text-[9px] font-semibold text-amber-700 ring-1 ring-amber-100"
+                                            >
+                                                calc
+                                            </span>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>

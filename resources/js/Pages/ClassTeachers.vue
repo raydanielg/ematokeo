@@ -1,7 +1,7 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head, router } from '@inertiajs/vue3';
-import { reactive } from 'vue';
+import { computed, reactive } from 'vue';
 
 const props = defineProps({
     classes: {
@@ -20,10 +20,47 @@ const rows = reactive(
         name: c.name,
         level: c.level,
         stream: c.stream,
+        parent_class_id: c.parent_class_id,
+        parent_name: c.parent_name,
         teacher_id: c.teacher_id,
         teacher_name: c.teacher_name,
     })),
 );
+
+const groupedRows = computed(() => {
+    const parents = new Map();
+    const childrenByParent = new Map();
+
+    rows.forEach((r) => {
+        const parentId = r.parent_class_id ? String(r.parent_class_id) : '';
+        if (!parentId) {
+            parents.set(String(r.id), r);
+            return;
+        }
+        if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, []);
+        childrenByParent.get(parentId).push(r);
+    });
+
+    // Preserve backend ordering (base classes first then streams)
+    const result = [];
+    rows.forEach((r) => {
+        if (r.parent_class_id) return;
+        const key = String(r.id);
+        result.push({ type: 'base', row: r });
+        const kids = childrenByParent.get(key) || [];
+        kids.forEach((k) => result.push({ type: 'stream', row: k }));
+    });
+
+    // If some streams exist without their base loaded, still show them
+    rows.forEach((r) => {
+        if (!r.parent_class_id) return;
+        const parentId = String(r.parent_class_id);
+        if (parents.has(parentId)) return;
+        result.push({ type: 'stream', row: r });
+    });
+
+    return result;
+});
 
 const saveAssignments = () => {
     const payload = rows.map((r) => ({
@@ -78,22 +115,36 @@ const saveAssignments = () => {
                             </td>
                         </tr>
                         <tr
-                            v-for="row in rows"
-                            :key="row.id"
+                            v-for="item in groupedRows"
+                            :key="item.row.id"
                             class="border-b border-gray-100 text-xs text-gray-700 hover:bg-gray-50"
                         >
                             <td class="px-3 py-2 align-top">
-                                {{ row.name }}
+                                <div class="flex flex-col">
+                                    <span
+                                        class="font-medium text-gray-800"
+                                        :class="item.type === 'stream' ? 'pl-5' : ''"
+                                    >
+                                        <span v-if="item.type === 'stream'" class="mr-1 text-gray-400">↳</span>
+                                        {{ item.type === 'stream' ? (item.row.parent_name || item.row.name) : item.row.name }}
+                                        <span v-if="item.type === 'stream' && item.row.stream" class="text-gray-500">
+                                            - {{ item.row.stream }}
+                                        </span>
+                                    </span>
+                                    <span v-if="item.row.parent_name" class="text-[10px] text-gray-500" :class="item.type === 'stream' ? 'pl-5' : ''">
+                                        Base: {{ item.row.parent_name }}
+                                    </span>
+                                </div>
                             </td>
                             <td class="px-3 py-2 align-top">
                                 <div class="flex flex-col text-[11px] text-gray-700">
-                                    <span>{{ row.level || '—' }}</span>
-                                    <span v-if="row.stream" class="text-[10px] text-gray-500">Stream: {{ row.stream }}</span>
+                                    <span>{{ item.row.level || '—' }}</span>
+                                    <span v-if="item.row.stream" class="text-[10px] text-gray-500">Stream: {{ item.row.stream }}</span>
                                 </div>
                             </td>
                             <td class="px-3 py-2 align-top">
                                 <select
-                                    v-model="row.teacher_id"
+                                    v-model="item.row.teacher_id"
                                     class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
                                 >
                                     <option :value="null">-- Select teacher --</option>
