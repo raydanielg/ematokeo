@@ -800,7 +800,7 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 ->join('teacher_class_subject as tcs', 'tcs.school_class_id', '=', 'school_classes.id')
                 ->where('tcs.teacher_id', $teacherId)
                 ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
-                ->select('school_classes.id', 'school_classes.level', 'school_classes.stream', 'school_classes.school_id')
+                ->select('school_classes.id', 'school_classes.name', 'school_classes.level', 'school_classes.stream', 'school_classes.school_id')
                 ->distinct();
 
             $assignedClasses = $assignedClassesQuery->get();
@@ -808,6 +808,9 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
             $classOptions = $assignedClasses
                 ->map(function ($c) {
                     $level = trim((string) ($c->level ?? ''));
+                    if ($level === '') {
+                        $level = trim((string) ($c->name ?? ''));
+                    }
                     $stream = trim((string) ($c->stream ?? ''));
 
                     if ($level === '') {
@@ -892,7 +895,12 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 ->join('school_classes as sc', 'sc.id', '=', 'tcs.school_class_id')
                 ->where('tcs.teacher_id', $teacherId)
                 ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
-                ->where('sc.level', $student->class_level)
+                ->where(function ($qb) use ($student) {
+                    $qb->where('sc.level', $student->class_level)
+                        ->orWhere(function ($qb2) use ($student) {
+                            $qb2->whereNull('sc.level')->where('sc.name', $student->class_level);
+                        });
+                })
                 ->whereRaw('COALESCE(sc.stream, "") = COALESCE(?, "")', [$student->stream])
                 ->exists();
 
