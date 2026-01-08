@@ -572,6 +572,60 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
     })->name('change-password.update');
 
     Route::middleware(['teacher_password_changed'])->group(function () {
+        Route::get('/my-details', function (\Illuminate\Http\Request $request) {
+            $user = $request->user();
+            $schoolId = $user?->school_id;
+            $teacherId = $user?->id;
+
+            $rows = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
+                ->join('subjects as sub', 'sub.id', '=', 'tcs.subject_id')
+                ->join('school_classes as sc', 'sc.id', '=', 'tcs.school_class_id')
+                ->where('tcs.teacher_id', $teacherId)
+                ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
+                ->orderBy('sub.subject_code')
+                ->orderBy('sc.name')
+                ->get([
+                    'sub.id as subject_id',
+                    'sub.subject_code as subject_code',
+                    'sub.name as subject_name',
+                    'sc.name as class_name',
+                    'sc.level as class_level',
+                    'sc.stream as class_stream',
+                ]);
+
+            $assignments = $rows
+                ->groupBy('subject_id')
+                ->map(function ($group) {
+                    $first = $group->first();
+                    $classes = $group->map(function ($r) {
+                        $labelBase = trim((string) ($r->class_level ?? ''));
+                        if ($labelBase === '') {
+                            $labelBase = trim((string) ($r->class_name ?? ''));
+                        }
+                        $stream = trim((string) ($r->class_stream ?? ''));
+                        $label = $stream !== '' ? ($labelBase . ' - ' . $stream) : $labelBase;
+
+                        return [
+                            'name' => $label,
+                            'stream' => $stream !== '' ? $stream : null,
+                        ];
+                    })->unique('name')->values();
+
+                    return [
+                        'subject_id' => $first->subject_id,
+                        'subject_code' => $first->subject_code,
+                        'subject_name' => $first->subject_name,
+                        'classes' => $classes,
+                    ];
+                })
+                ->values();
+
+            return Inertia::render('Teacher/Details', [
+                'teacher' => $user?->only(['id', 'name', 'username', 'email', 'phone', 'check_number']),
+                'assignments' => $assignments,
+            ]);
+        })->name('details');
+
         Route::get('/exams', function (\Illuminate\Http\Request $request) {
             $user = $request->user();
             $schoolId = $user?->school_id;

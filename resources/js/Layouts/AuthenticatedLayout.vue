@@ -87,7 +87,7 @@ const userSidebarSections = [
     {
         key: 'profile',
         title: 'Profile',
-        items: ['My Account', 'Change Password', 'Logout'],
+        items: ['My Details', 'Change Password', 'Logout'],
     },
 ];
 
@@ -312,6 +312,7 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
     if (sectionKey === 'hostels' && itemName === 'Allocation') return route('hostel-allocations.index');
     if (sectionKey === 'hostels' && itemName === 'Hostel Reports') return route('hostel-reports.index');
     if (sectionKey === 'profile' && itemName === 'My Account') return route('profile.edit');
+    if (sectionKey === 'profile' && itemName === 'My Details') return route('teacher.details');
     if (sectionKey === 'profile' && itemName === 'Change Password') {
         return isTeacher.value ? route('teacher.change-password') : route('profile.edit');
     }
