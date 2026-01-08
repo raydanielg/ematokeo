@@ -221,6 +221,7 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
     if (sectionKey === 'dashboard' && itemName === 'Recent Activities') return route('recent-activities');
     if (sectionKey === 'teachers' && itemName === 'View Teachers') return route('teachers.index');
     if (sectionKey === 'teachers' && itemName === 'Add Teacher') return route('teachers.create');
+    if (sectionKey === 'teachers' && itemName === 'Roles & Permissions') return route('roles.index');
     if (sectionKey === 'students' && (itemName === 'View Students' || itemName === 'Add Student')) return route('students.index');
     if (sectionKey === 'students' && itemName === 'Promote Students') return route('students.promote');
     if (sectionKey === 'classes' && itemName === 'Manage Classes') return route('classes.index');

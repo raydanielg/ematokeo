@@ -616,8 +616,59 @@ Route::middleware('auth')->group(function () {
         ]);
     })->name('statistics');
 
+    Route::get('/roles', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+
+        $usersQuery = User::query()->where('role', '!=', 'admin')->orderBy('name');
+        if ($schoolId) {
+            $usersQuery->where('school_id', $schoolId);
+        }
+
+        $users = $usersQuery->get(['id', 'name', 'email', 'phone', 'role', 'is_active']);
+
+        $roles = DB::table('roles')
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get(['key', 'name', 'is_default']);
+
+        return Inertia::render('RolesIndex', [
+            'users' => $users,
+            'roles' => $roles,
+        ]);
+    })->name('roles.index');
+
+    Route::post('/roles/assign', function (\Illuminate\Http\Request $request) {
+        $data = $request->validate([
+            'user_id' => ['required', 'integer', 'exists:users,id'],
+            'role' => ['required', 'string'],
+        ]);
+
+        $acting = $request->user();
+        $schoolId = $acting?->school_id;
+
+        $target = User::findOrFail($data['user_id']);
+        if ($schoolId && $target->school_id && (int) $target->school_id !== (int) $schoolId) {
+            abort(403);
+        }
+
+        $allowedRoles = DB::table('roles')->pluck('key')->all();
+        if (! in_array($data['role'], $allowedRoles, true)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'role' => ['Selected role is invalid.'],
+            ]);
+        }
+
+        $target->role = $data['role'] ?: 'teacher';
+        $target->save();
+
+        return back()->with('success', 'Role updated successfully.');
+    })->name('roles.assign');
+
     Route::get('/hostel-students', function () {
         $user = request()->user();
+        $schoolId = $user?->school_id;
+
         $currentYear = AcademicYear::where('is_current', true)->value('year');
 
         $query = HostelAllocation::with([
