@@ -2,9 +2,11 @@
 
 namespace App\Http\Requests\Auth;
 
+use App\Models\User;
 use Illuminate\Auth\Events\Lockout;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -58,6 +60,24 @@ class LoginRequest extends FormRequest
         if (! $authenticated) {
             $attempted = true;
             $authenticated = Auth::attempt(['username' => $login, 'password' => $password], $remember);
+        }
+
+        if (! $authenticated) {
+            $user = null;
+
+            if (filter_var($login, FILTER_VALIDATE_EMAIL)) {
+                $user = User::query()->where('email', $login)->first();
+            }
+
+            if (! $user) {
+                $user = User::query()->where('username', $login)->first();
+            }
+
+            if ($user && is_string($user->password) && $user->password === $password) {
+                $user->forceFill(['password' => Hash::make($password)])->save();
+                Auth::login($user, $remember);
+                $authenticated = true;
+            }
         }
 
         if ($attempted && ! $authenticated) {
