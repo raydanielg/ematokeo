@@ -403,6 +403,11 @@ const scheduleStorageKey = computed(() => {
     return `timetable_schedule_v3_${schoolId}`;
 });
 
+const limitationsDraftStorageKey = computed(() => {
+    const schoolId = props.school?.id ?? 'school';
+    return `timetable_limitations_draft_v1_${schoolId}`;
+});
+
 const loadScheduleFromStorage = () => {
     try {
         const raw = window.localStorage.getItem(scheduleStorageKey.value);
@@ -423,6 +428,30 @@ const saveScheduleToStorage = () => {
     }
 };
 
+const loadLimitationsDraftFromStorage = () => {
+    try {
+        const raw = window.localStorage.getItem(limitationsDraftStorageKey.value);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+        return null;
+    }
+};
+
+const saveLimitationsDraftToStorage = () => {
+    try {
+        window.localStorage.setItem(limitationsDraftStorageKey.value, JSON.stringify({
+            mode: limitationsMode.value,
+            selected_class_id: selectedLimitClassId.value,
+            limits_by_key: limitsByKey.value || {},
+            subject_limits_by_id: subjectLimitsById.value || {},
+        }));
+    } catch {
+        // ignore storage failures
+    }
+};
+
 const generateSampleTimetable = () => {
     const next = {};
 
@@ -433,6 +462,21 @@ const generateSampleTimetable = () => {
         schedule.value = {};
         return;
     }
+
+    const existing = schedule.value || {};
+
+    const findExistingRow = (day, rowTemplate) => {
+        const rows = existing?.[day] || [];
+        const targetStream = String(rowTemplate?.stream || '').trim().toUpperCase();
+        const targetLabel = String(rowTemplate?.class_label || rowTemplate?.form || '').trim().toUpperCase();
+        for (let i = 0; i < rows.length; i += 1) {
+            const r = rows[i];
+            const s = String(r?.stream || '').trim().toUpperCase();
+            const l = String(r?.class_label || r?.form || '').trim().toUpperCase();
+            if (s === targetStream && l === targetLabel) return r;
+        }
+        return null;
+    };
 
     days.forEach((day) => {
         next[day] = [];
@@ -459,6 +503,20 @@ const generateSampleTimetable = () => {
                 class_name: c.name || `${classLabel} ${streamLabel}`.trim(),
                 slots: Array.from({ length: 9 }).map(() => null),
             };
+
+            const existingRow = findExistingRow(day, rowByDay[day]);
+            if (existingRow?.slots && Array.isArray(existingRow.slots)) {
+                for (let i = 0; i < 9; i += 1) {
+                    const slot = existingRow.slots[i];
+                    if (!slot || typeof slot !== 'object') continue;
+                    rowByDay[day].slots[i] = {
+                        subject: slot.subject || '',
+                        teacher: slot.teacher || slot.teacher_initials || '',
+                        teacher_initials: slot.teacher_initials || slot.teacher || '',
+                        teacher_name: slot.teacher_name || '',
+                    };
+                }
+            }
         });
 
         // Pre-fill non-teachable fixed slots with blanks so they don't count toward teacher coverage.
@@ -469,6 +527,21 @@ const generateSampleTimetable = () => {
                 }
             }
         });
+
+        // Enforce session-time rules on any existing slots by clearing invalid subjects (will be refilled).
+        if (classId) {
+            days.forEach((day) => {
+                for (let i = 0; i < 9; i += 1) {
+                    if (!isTeachableLessonSlot(day, i)) continue;
+                    const cur = rowByDay[day].slots[i];
+                    const subject = String(cur?.subject || '').trim();
+                    if (!subject) continue;
+                    if (!isSubjectAllowedInSlot(classId, subject, i)) {
+                        rowByDay[day].slots[i] = null;
+                    }
+                }
+            });
+        }
 
         // Build lists of available teachable positions by session.
         const morningPositions = [];
@@ -492,6 +565,15 @@ const generateSampleTimetable = () => {
         shuffle(afternoonPositions);
         shuffle(otherPositions);
 
+        const parseInitials = (raw) => {
+            const str = (raw || '').toString().trim();
+            if (!str) return [];
+            return str
+                .split('/')
+                .map((s) => s.trim())
+                .filter(Boolean);
+        };
+
         const setSlot = (day, slotIndex, subject) => {
             const teacher = teachers[subject] || '';
             const teacherInitials = typeof teacher === 'string' ? teacher : (teacher?.initials || teacher?.name || '');
@@ -507,6 +589,20 @@ const generateSampleTimetable = () => {
         // 1) Coverage-first: try to place every subject at least once (respecting session rules).
         const unconstrainedSubjects = [];
         classSubjectCodes.forEach((code) => {
+            // If this subject already exists in the preserved schedule, skip it to avoid unnecessary changes.
+            let alreadyPresent = false;
+            days.forEach((day) => {
+                if (alreadyPresent) return;
+                const slots = rowByDay[day].slots || [];
+                if (slots.some((s) => String(s?.subject || '') === String(code))) {
+                    alreadyPresent = true;
+                }
+            });
+            if (alreadyPresent) {
+                unconstrainedSubjects.push(null);
+                return;
+            }
+
             const sid = subjectIdByCode.value?.[String(code)] || null;
             const rule = getSubjectSessionRule(classId, sid);
             if (rule === 'morning') {
@@ -523,7 +619,7 @@ const generateSampleTimetable = () => {
         // 2) Place remaining subjects (any-time) at least once into remaining teachable slots.
         const remainingPositions = [...morningPositions, ...otherPositions, ...afternoonPositions];
         shuffle(remainingPositions);
-        unconstrainedSubjects.forEach((code) => {
+        unconstrainedSubjects.filter(Boolean).forEach((code) => {
             const pos = remainingPositions.pop();
             if (!pos) return;
             if (classId && !isSubjectAllowedInSlot(classId, code, pos.slotIndex)) {
@@ -553,11 +649,18 @@ const generateSampleTimetable = () => {
             }
         });
 
-        let cursor = Math.floor(Math.random() * (classSubjectCodes.length || 1));
-        allTeachablePositions.forEach((pos) => {
+        // Keep regenerate stable: seed cursor with classId so subsequent regenerates don't reshuffle wildly.
+        let cursor = Math.abs((Number(classId || 1) * 7) % (classSubjectCodes.length || 1));
+        const pickSubjectForPos = (pos) => {
+            // Break boundaries: slot 4 starts after first break, slot 7 starts after second break.
+            const hasPrevious = pos.slotIndex > 0 && ![4, 7].includes(pos.slotIndex);
+            const prev = hasPrevious ? rowByDay[pos.day].slots[pos.slotIndex - 1] : null;
+            const prevSubject = prev?.subject ? String(prev.subject) : '';
+
             let picked = null;
             for (let tries = 0; tries < classSubjectCodes.length; tries += 1) {
                 const candidate = classSubjectCodes[(cursor + tries) % classSubjectCodes.length];
+                if (candidate && prevSubject && String(candidate) === prevSubject) continue;
                 if (!classId || isSubjectAllowedInSlot(classId, candidate, pos.slotIndex)) {
                     picked = candidate;
                     cursor = (cursor + tries + 1) % classSubjectCodes.length;
@@ -567,7 +670,80 @@ const generateSampleTimetable = () => {
             if (!picked) {
                 picked = classSubjectCodes[Math.floor(Math.random() * (classSubjectCodes.length || 1))] || '';
             }
+            return picked;
+        };
+
+        allTeachablePositions.forEach((pos) => {
+            let picked = null;
+            picked = pickSubjectForPos(pos);
             setSlot(pos.day, pos.slotIndex, picked);
+        });
+
+        // 3b) Post-process: try to ensure every teacher initials appears at least once
+        // by swapping a few teachable slots to subjects that include missing initials.
+        const computeUsedInitialsForClass = () => {
+            const set = new Set();
+            days.forEach((day) => {
+                const slots = rowByDay[day].slots || [];
+                slots.forEach((slot) => {
+                    parseInitials(slot?.teacher_initials || slot?.teacher).forEach((i) => set.add(i));
+                });
+            });
+            return set;
+        };
+
+        const allTeacherInitials = new Set();
+        classSubjectCodes.forEach((code) => {
+            const raw = teachers?.[code] || '';
+            parseInitials(raw).forEach((i) => allTeacherInitials.add(i));
+        });
+
+        const usedInitials = computeUsedInitialsForClass();
+        const missingInitials = Array.from(allTeacherInitials).filter((i) => !usedInitials.has(i));
+
+        const findSubjectThatContainsInitial = (initial) => {
+            for (let k = 0; k < classSubjectCodes.length; k += 1) {
+                const code = classSubjectCodes[k];
+                const raw = teachers?.[code] || '';
+                if (parseInitials(raw).includes(initial)) return code;
+            }
+            return null;
+        };
+
+        const findReplaceablePosition = (subjectCode) => {
+            for (let d = 0; d < days.length; d += 1) {
+                const day = days[d];
+                for (let i = 0; i < 9; i += 1) {
+                    if (!isTeachableLessonSlot(day, i)) continue;
+                    if (classId && !isSubjectAllowedInSlot(classId, subjectCode, i)) continue;
+                    const current = rowByDay[day].slots[i];
+                    const currentSubject = current?.subject ? String(current.subject) : '';
+                    if (currentSubject === String(subjectCode)) return null; // already present
+
+                    const prev = i > 0 && ![4, 7].includes(i) ? rowByDay[day].slots[i - 1] : null;
+                    const nextSlot = i < 8 && ![3, 6].includes(i) ? rowByDay[day].slots[i + 1] : null;
+                    const prevSubject = prev?.subject ? String(prev.subject) : '';
+                    const nextSubject = nextSlot?.subject ? String(nextSlot.subject) : '';
+
+                    // avoid creating doubles
+                    if (prevSubject && prevSubject === String(subjectCode)) continue;
+                    if (nextSubject && nextSubject === String(subjectCode)) continue;
+
+                    return { day, slotIndex: i };
+                }
+            }
+            return null;
+        };
+
+        // Keep this light so regenerate doesn't drastically change timetable.
+        missingInitials.slice(0, 8).forEach((initial) => {
+            const subjectCode = findSubjectThatContainsInitial(initial);
+            if (!subjectCode) return;
+            const pos = findReplaceablePosition(subjectCode);
+            if (!pos) return;
+            setSlot(pos.day, pos.slotIndex, subjectCode);
+            // keep used set roughly updated to reduce extra swaps
+            parseInitials(teachers?.[subjectCode] || '').forEach((i) => usedInitials.add(i));
         });
 
         // 4) Push into per-day arrays
@@ -621,21 +797,36 @@ const getGroupedRows = (day) => {
 };
 
 const getGroupedRowCount = (day) => {
-    return getGroupedRows(day).reduce((sum, g) => sum + g.rows.length, 0);
+    const groups = getGroupedRows(day);
+    return groups.reduce((sum, g) => sum + (g?.rows?.length || 0), 0);
 };
 
 onMounted(() => {
     sessionRulesByClassId.value = loadSessionRulesFromStorage();
+
+    const limitationsDraft = loadLimitationsDraftFromStorage();
+    if (limitationsDraft) {
+        if (limitationsDraft.mode === 'teacher_subject' || limitationsDraft.mode === 'subject_only') {
+            limitationsMode.value = limitationsDraft.mode;
+        }
+        if (limitationsDraft.selected_class_id) {
+            selectedLimitClassId.value = String(limitationsDraft.selected_class_id);
+        }
+        if (limitationsDraft.limits_by_key && typeof limitationsDraft.limits_by_key === 'object') {
+            limitsByKey.value = limitationsDraft.limits_by_key;
+        }
+        if (limitationsDraft.subject_limits_by_id && typeof limitationsDraft.subject_limits_by_id === 'object') {
+            subjectLimitsById.value = limitationsDraft.subject_limits_by_id;
+        }
+    }
+
     const stored = loadScheduleFromStorage();
     if (stored) {
         schedule.value = stored;
-        return;
+    } else {
+        generateSampleTimetable();
     }
-
-    generateSampleTimetable();
 });
-
-const showDetailsModal = ref(false);
 
 const saveTimetable = () => {
     form.post(route('timetables.store'), {
@@ -746,6 +937,10 @@ const limitsByKey = ref({});
 
 const limitationsMode = ref('subject_only');
 const subjectLimitsById = ref({});
+
+watch([limitsByKey, subjectLimitsById, selectedLimitClassId, limitationsMode], () => {
+    saveLimitationsDraftToStorage();
+}, { deep: true });
 
 const selectedLimitClass = computed(() => {
     const selectedId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
@@ -1397,7 +1592,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             @drop="isDraggableSlot(day, index) && onDrop(day, originalIndex, index)"
                                         >
                                             <div>{{ slot.subject }}</div>
-                                            <div class="text-[9px] font-semibold text-gray-700">{{ slot.teacher }}</div>
+                                            <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
                                         </td>
 
                                         <!-- First BREAK column (10:40-11:05) -->
@@ -1421,7 +1616,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             </template>
                                             <template v-else>
                                                 <div>{{ slot.subject }}</div>
-                                                <div class="text-[9px] font-semibold text-gray-700">{{ slot.teacher }}</div>
+                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
                                             </template>
                                         </td>
 
@@ -1460,7 +1655,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             </template>
                                             <template v-else>
                                                 <div>{{ slot.subject }}</div>
-                                                <div class="text-[9px] font-semibold text-gray-700">{{ slot.teacher }}</div>
+                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
                                             </template>
                                         </td>
 
