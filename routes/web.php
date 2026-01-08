@@ -572,6 +572,222 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
     })->name('change-password.update');
 
     Route::middleware(['teacher_password_changed'])->group(function () {
+        Route::get('/exams', function (\Illuminate\Http\Request $request) {
+            $user = $request->user();
+            $schoolId = $user?->school_id;
+
+            $q = trim((string) $request->query('q', ''));
+
+            $examsQuery = \App\Models\Exam::query()->orderByDesc('created_at');
+            if ($q !== '') {
+                $examsQuery->where(function ($qb) use ($q) {
+                    $qb->where('name', 'like', "%{$q}%")
+                        ->orWhere('type', 'like', "%{$q}%")
+                        ->orWhere('academic_year', 'like', "%{$q}%");
+                });
+            }
+
+            $exams = $examsQuery->get(['id', 'name', 'academic_year', 'type']);
+
+            return Inertia::render('Teacher/Exams', [
+                'exams' => $exams,
+                'filters' => [
+                    'q' => $q,
+                ],
+            ]);
+        })->name('exams.index');
+
+        Route::get('/exams/marks', function (\Illuminate\Http\Request $request) {
+            $user = $request->user();
+            $schoolId = $user?->school_id;
+            $teacherId = $user?->id;
+
+            $examId = $request->query('exam');
+            $classId = $request->query('class');
+            $subjectId = $request->query('subject');
+
+            $exams = \App\Models\Exam::orderByDesc('created_at')->get(['id', 'name', 'academic_year', 'type']);
+
+            $classes = collect();
+            $subjects = collect();
+            $students = collect();
+            $existingMarks = collect();
+
+            if ($examId) {
+                $exam = \App\Models\Exam::with('classes:id,name')->find($examId);
+
+                if ($exam) {
+                    $teacherBaseClassIds = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
+                        ->join('school_classes as sc', 'sc.id', '=', 'tcs.school_class_id')
+                        ->where('tcs.teacher_id', $teacherId)
+                        ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
+                        ->whereNull('sc.parent_class_id')
+                        ->distinct()
+                        ->pluck('sc.id');
+
+                    $classes = $exam->classes
+                        ->filter(fn (\App\Models\SchoolClass $c) => $teacherBaseClassIds->contains($c->id))
+                        ->map(fn (\App\Models\SchoolClass $c) => ['id' => $c->id, 'name' => $c->name])
+                        ->values();
+
+                    if ($classId) {
+                        $selectedBase = $exam->classes->firstWhere('id', (int) $classId);
+                        if ($selectedBase && $teacherBaseClassIds->contains($selectedBase->id)) {
+                            $allowedSubjectIds = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
+                                ->where('tcs.teacher_id', $teacherId)
+                                ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
+                                ->where(function ($qb) use ($selectedBase) {
+                                    $qb->where('tcs.school_class_id', $selectedBase->id)
+                                        ->orWhereIn('tcs.school_class_id', function ($sub) use ($selectedBase) {
+                                            $sub->select('id')->from('school_classes')->where('parent_class_id', $selectedBase->id);
+                                        });
+                                })
+                                ->distinct()
+                                ->pluck('tcs.subject_id');
+
+                            $subjects = \App\Models\Subject::query()
+                                ->whereIn('id', $allowedSubjectIds)
+                                ->orderBy('subject_code')
+                                ->get(['id', 'subject_code'])
+                                ->map(fn (\App\Models\Subject $s) => ['id' => $s->id, 'code' => $s->subject_code])
+                                ->values();
+
+                            if ($subjectId && $allowedSubjectIds->contains((int) $subjectId)) {
+                                $studentsQuery = \App\Models\Student::query()
+                                    ->where('class_level', $selectedBase->name)
+                                    ->orderBy('exam_number')
+                                    ->orderBy('full_name');
+
+                                if ($schoolId) {
+                                    $studentsQuery->where('school_id', $schoolId);
+                                }
+
+                                $students = $studentsQuery->get([
+                                    'id',
+                                    'exam_number',
+                                    'full_name',
+                                    'stream',
+                                ]);
+
+                                if ($students->isNotEmpty()) {
+                                    $existingMarks = \App\Models\ExamResult::query()
+                                        ->where('exam_id', $exam->id)
+                                        ->whereIn('student_id', $students->pluck('id'))
+                                        ->where('subject_id', (int) $subjectId)
+                                        ->when($schoolId, fn ($qb) => $qb->where('school_id', $schoolId))
+                                        ->get(['student_id', 'subject_id', 'marks']);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            return Inertia::render('Teacher/EnterMarks', [
+                'exams' => $exams,
+                'classes' => $classes,
+                'subjects' => $subjects,
+                'students' => $students,
+                'existingMarks' => $existingMarks,
+                'filters' => [
+                    'exam' => $examId,
+                    'class' => $classId,
+                    'subject' => $subjectId,
+                ],
+            ]);
+        })->name('exams.marks');
+
+        Route::post('/exams/marks/save-cell', function (\Illuminate\Http\Request $request) {
+            $data = $request->validate([
+                'exam_id' => ['required', 'integer', 'exists:exams,id'],
+                'class_id' => ['required', 'integer', 'exists:school_classes,id'],
+                'subject_id' => ['required', 'integer', 'exists:subjects,id'],
+                'student_id' => ['required', 'integer', 'exists:students,id'],
+                'marks' => ['nullable', 'integer', 'min:0', 'max:100'],
+            ]);
+
+            $user = $request->user();
+            $schoolId = $user?->school_id;
+            $teacherId = $user?->id;
+
+            $exam = \App\Models\Exam::with('classes:id,name')->find($data['exam_id']);
+            if (! $exam) {
+                abort(404);
+            }
+
+            $selectedBase = $exam->classes->firstWhere('id', (int) $data['class_id']);
+            if (! $selectedBase) {
+                abort(403);
+            }
+
+            $allowedSubject = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
+                ->where('tcs.teacher_id', $teacherId)
+                ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
+                ->where('tcs.subject_id', (int) $data['subject_id'])
+                ->where(function ($qb) use ($selectedBase) {
+                    $qb->where('tcs.school_class_id', $selectedBase->id)
+                        ->orWhereIn('tcs.school_class_id', function ($sub) use ($selectedBase) {
+                            $sub->select('id')->from('school_classes')->where('parent_class_id', $selectedBase->id);
+                        });
+                })
+                ->exists();
+
+            if (! $allowedSubject) {
+                abort(403);
+            }
+
+            $student = \App\Models\Student::find($data['student_id']);
+            if (! $student) {
+                abort(404);
+            }
+
+            if ($schoolId && $student->school_id && (int) $student->school_id !== (int) $schoolId) {
+                abort(403);
+            }
+
+            if ($student->class_level !== $selectedBase->name) {
+                abort(403);
+            }
+
+            $schemes = \App\Models\GradingScheme::all();
+            $scheme = null;
+            if ($data['marks'] !== null) {
+                $intMark = (int) round($data['marks']);
+                $scheme = $schemes->first(function (\App\Models\GradingScheme $s) use ($intMark) {
+                    return $intMark >= $s->min_mark && $intMark <= $s->max_mark;
+                });
+            }
+
+            $result = \App\Models\ExamResult::firstOrNew([
+                'exam_id' => $data['exam_id'],
+                'student_id' => $data['student_id'],
+                'subject_id' => $data['subject_id'],
+                'school_id' => $schoolId,
+            ]);
+
+            if (! $result->exists) {
+                $result->raw_marks = $data['marks'];
+            } elseif ($result->exists && $result->raw_marks === null) {
+                $result->raw_marks = $result->marks;
+            }
+
+            $result->marks = $data['marks'];
+            $result->standardized_marks = $data['marks'];
+            $result->grade = $scheme?->grade;
+            $result->points = $scheme?->points;
+            $result->school_id = $schoolId;
+            $result->academic_year = $exam->academic_year;
+            $result->save();
+
+            return response()->json([
+                'ok' => true,
+                'student_id' => $result->student_id,
+                'subject_id' => $result->subject_id,
+                'marks' => $result->marks,
+                'updated_at' => $result->updated_at?->toISOString(),
+            ]);
+        })->name('exams.marks.save-cell');
+
         Route::get('/students', function (\Illuminate\Http\Request $request) {
             $user = $request->user();
             $schoolId = $user?->school_id;

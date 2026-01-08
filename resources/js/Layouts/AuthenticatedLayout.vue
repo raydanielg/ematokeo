@@ -163,7 +163,7 @@ const teacherSidebarSections = [
     {
         key: 'exams',
         title: 'Exams',
-        items: ['Enter Marks'],
+        items: ['My Exams', 'Enter Marks'],
     },
     {
         key: 'results',
@@ -279,7 +279,8 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
     if (sectionKey === 'subjects' && itemName === 'Add Subject') return route('subjects.create');
     if (sectionKey === 'subjects' && itemName === 'Assign Teachers') return route('subjects.assign-teachers');
     if (sectionKey === 'exams' && itemName === 'Create Exam') return route('exams.create');
-    if (sectionKey === 'exams' && itemName === 'Enter Marks') return route('exams.marks');
+    if (sectionKey === 'exams' && itemName === 'My Exams') return isTeacher.value ? route('teacher.exams.index') : route('exams.create');
+    if (sectionKey === 'exams' && itemName === 'Enter Marks') return isTeacher.value ? route('teacher.exams.marks') : route('exams.marks');
     if (sectionKey === 'results' && itemName === 'Process Results') return route('results.process');
     if (sectionKey === 'results' && itemName === 'Class Performance') return route('results.class');
     if (sectionKey === 'results' && itemName === 'Subject Performance') return route('results.subject');
