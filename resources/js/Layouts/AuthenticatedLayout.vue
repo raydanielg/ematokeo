@@ -168,12 +168,12 @@ const teacherSidebarSections = [
     {
         key: 'results',
         title: 'Results',
-        items: ['Class Performance', 'Subject Performance'],
+        items: ['All Results', 'Class Performance', 'Subject Performance'],
     },
     {
         key: 'timetables',
         title: 'Timetables',
-        items: ['Class Timetables', 'All Timetables'],
+        items: ['My Timetable'],
     },
     {
         key: 'notifications',
@@ -282,20 +282,26 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
     if (sectionKey === 'exams' && itemName === 'My Exams') return isTeacher.value ? route('teacher.exams.index') : route('exams.create');
     if (sectionKey === 'exams' && itemName === 'Enter Marks') return isTeacher.value ? route('teacher.exams.marks') : route('exams.marks');
     if (sectionKey === 'results' && itemName === 'Process Results') return route('results.process');
-    if (sectionKey === 'results' && itemName === 'Class Performance') return route('results.class');
-    if (sectionKey === 'results' && itemName === 'Subject Performance') return route('results.subject');
+    if (sectionKey === 'results' && itemName === 'All Results') return isTeacher.value ? route('teacher.results.index') : route('results.process');
+    if (sectionKey === 'results' && itemName === 'Class Performance') return isTeacher.value ? route('teacher.results.class') : route('results.class');
+    if (sectionKey === 'results' && itemName === 'Subject Performance') return isTeacher.value ? route('teacher.results.subject') : route('results.subject');
     if (sectionKey === 'results' && itemName === 'Ranking') return route('results.ranking');
     if (sectionKey === 'results' && itemName === 'Publish Results') return route('results.publish');
     if (sectionKey === 'reports' && itemName === 'Student Report Card') return route('reports.students.index');
     if (sectionKey === 'reports' && itemName === 'Class Report') return route('reports.classes.index');
     if (sectionKey === 'reports' && itemName === 'School Report') return route('reports.school');
-    if (sectionKey === 'timetables' && (itemName === 'Class Timetables' || itemName === 'All Timetables')) return route('timetables.index');
+    if (sectionKey === 'timetables' && itemName === 'My Timetable') return route('teacher.timetables.my');
+    if (sectionKey === 'timetables' && (itemName === 'Class Timetables' || itemName === 'All Timetables')) {
+        return isTeacher.value ? route('teacher.timetables.my') : route('timetables.index');
+    }
     if (sectionKey === 'timetables' && itemName === 'Create Timetable') return route('timetables.create');
     if (sectionKey === 'timetables' && itemName === 'Invigilation Timetable') return route('timetables.invigilation');
     if (sectionKey === 'timetables' && itemName === 'Sitting Plan') return route('sitting-plans.index');
     if (sectionKey === 'timetables' && itemName === 'Resources') return route('resources.index');
     if (sectionKey === 'timetables' && itemName === 'Topics') return route('topics.index');
-    if (sectionKey === 'notifications' && itemName === 'Announcements') return route('announcements.index');
+    if (sectionKey === 'notifications' && itemName === 'Announcements') {
+        return isTeacher.value ? route('teacher.announcements.index') : route('announcements.index');
+    }
     if (sectionKey === 'notifications' && itemName === 'Results Alerts (SMS/Email)') return route('notifications.sms');
     if (sectionKey === 'notifications' && itemName === 'Calendar') return route('calendar');
     if (sectionKey === 'settings' && itemName === 'School Information') return route('settings.school-information');
