@@ -6256,20 +6256,6 @@ Route::middleware('auth')->group(function () {
         return redirect()->route('teachers.index')->with('success', 'Teacher updated successfully.');
     })->name('teachers.update');
 
-    Route::get('/teachers', function () {
-        $user = request()->user();
-        $schoolId = $user?->school_id;
-
-        $teachers = User::query()
-            ->where('role', 'teacher')
-            ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
-            ->get();
-
-        return Inertia::render('Teachers', [
-            'teachers' => $teachers,
-        ]);
-    })->name('teachers.index');
-
     Route::delete('/teachers/{teacher}', function (User $teacher) {
         abort_unless($teacher->role === 'teacher', 404);
 
