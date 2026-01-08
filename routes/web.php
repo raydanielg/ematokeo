@@ -6573,6 +6573,48 @@ Route::middleware('auth')->group(function () {
             })
             ->values();
 
+        $teacherAssignments = [];
+        try {
+            $rows = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
+                ->join('users as u', 'u.id', '=', 'tcs.teacher_id')
+                ->join('subjects as s', 's.id', '=', 'tcs.subject_id')
+                ->when($schoolId, fn ($q) => $q->where('tcs.school_id', $schoolId))
+                ->get([
+                    'tcs.school_class_id',
+                    's.subject_code',
+                    'u.name as teacher_name',
+                ]);
+
+            foreach ($rows as $r) {
+                $classId = (string) $r->school_class_id;
+                $code = (string) $r->subject_code;
+
+                $parts = preg_split('/\s+/', trim((string) $r->teacher_name));
+                $initials = collect($parts)
+                    ->filter()
+                    ->map(fn ($p) => Str::upper(mb_substr($p, 0, 1)))
+                    ->implode('');
+
+                if (! isset($teacherAssignments[$classId])) {
+                    $teacherAssignments[$classId] = [];
+                }
+                if (! isset($teacherAssignments[$classId][$code])) {
+                    $teacherAssignments[$classId][$code] = [];
+                }
+                if ($initials !== '' && ! in_array($initials, $teacherAssignments[$classId][$code], true)) {
+                    $teacherAssignments[$classId][$code][] = $initials;
+                }
+            }
+
+            foreach ($teacherAssignments as $classId => $bySubject) {
+                foreach ($bySubject as $code => $list) {
+                    $teacherAssignments[$classId][$code] = implode('/', $list);
+                }
+            }
+        } catch (\Throwable $e) {
+            $teacherAssignments = [];
+        }
+
         return Inertia::render('CreateTimetable', [
             'school' => $school,
             'timetable' => null,
