@@ -551,7 +551,7 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
 });
 
 // Teacher Routes
-Route::middleware(['auth', 'verified', 'teacher'])->prefix('teacher')->name('teacher.')->group(function () {
+Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->name('teacher.')->group(function () {
     Route::get('/change-password', function () {
         return Inertia::render('Teacher/ChangePassword');
     })->name('change-password');
@@ -572,10 +572,15 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('teacher')->name('tea
     })->name('change-password.update');
 
     Route::middleware(['teacher_password_changed'])->group(function () {
-        Route::get('/dashboard', function () {
+        Route::get('/', function () {
             return Inertia::render('Teacher/Dashboard');
         })->name('dashboard');
     });
+});
+
+Route::middleware(['auth', 'verified', 'teacher'])->group(function () {
+    Route::redirect('/teacher/dashboard', '/panel/teachers', 302);
+    Route::redirect('/teacher/change-password', '/panel/teachers/change-password', 302);
 });
 
 Route::middleware('auth')->group(function () {
