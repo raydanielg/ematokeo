@@ -22,6 +22,26 @@ const props = defineProps({
     },
 });
 
+const selectedLimitClassSessionRules = computed(() => {
+    const classId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
+    if (!Number.isFinite(classId) || !classId) return {};
+    return sessionRulesByClassId.value?.[String(classId)] || {};
+});
+
+const setSelectedLimitSubjectSessionRule = (subjectId, rule) => {
+    const classId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
+    if (!Number.isFinite(classId) || !classId) return;
+    if (!sessionRulesByClassId.value[String(classId)]) {
+        sessionRulesByClassId.value[String(classId)] = {};
+    }
+    if (rule === 'morning' || rule === 'afternoon') {
+        sessionRulesByClassId.value[String(classId)][String(subjectId)] = rule;
+    } else {
+        delete sessionRulesByClassId.value[String(classId)][String(subjectId)];
+    }
+    saveSessionRulesToStorage();
+};
+
 const form = useForm({
     type: 'class',
     title: props.timetable?.title || '',
@@ -46,15 +66,30 @@ const typeLabel = computed(() => {
 
 const subjectPool = computed(() => (props.subjects || []).map((s) => s.subject_code));
 
+const subjectIdByCode = computed(() => {
+    const map = {};
+    (props.subjects || []).forEach((s) => {
+        if (!s?.subject_code || !s?.id) return;
+        map[String(s.subject_code)] = Number(s.id);
+    });
+    return map;
+});
+
 const teacherBySubject = computed(() => {
     const map = {};
 
     (props.subjects || []).forEach((s) => {
-        const firstTeacher = (s.teachers || [])[0];
+        const teachers = Array.isArray(s.teachers) ? s.teachers : [];
+        if (!s?.subject_code || !teachers.length) return;
 
-        if (firstTeacher) {
-            map[s.subject_code] = firstTeacher.initials || firstTeacher.name;
-        }
+        const parts = teachers
+            .map((t) => String(t?.initials || '').trim() || simpleTeacherName(t?.name) || String(t?.name || '').trim())
+            .filter(Boolean);
+
+        if (!parts.length) return;
+
+        const unique = Array.from(new Set(parts));
+        map[s.subject_code] = unique.join('/');
     });
 
     return map;
@@ -302,6 +337,67 @@ const headerClassName = computed(() => {
 // schedule[day][formIndex][slotIndex] = { subject, teacher }
 const schedule = ref({});
 
+const sessionRulesStorageKey = computed(() => {
+    const schoolId = props.school?.id ?? 'school';
+    return `timetable_subject_session_rules_v1_${schoolId}`;
+});
+
+const sessionRulesByClassId = ref({});
+
+const loadSessionRulesFromStorage = () => {
+    try {
+        const raw = window.localStorage.getItem(sessionRulesStorageKey.value);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
+};
+
+const saveSessionRulesToStorage = () => {
+    try {
+        window.localStorage.setItem(sessionRulesStorageKey.value, JSON.stringify(sessionRulesByClassId.value || {}));
+    } catch {
+        // ignore storage failures
+    }
+};
+
+const getSlotSession = (slotIndex) => {
+    if (slotIndex >= 0 && slotIndex <= 3) return 'morning';
+    if (slotIndex >= 7 && slotIndex <= 8) return 'afternoon';
+    return 'other';
+};
+
+const getSubjectSessionRule = (schoolClassId, subjectId) => {
+    if (!schoolClassId || !subjectId) return 'any';
+    const classMap = sessionRulesByClassId.value?.[String(schoolClassId)] || {};
+    const val = classMap?.[String(subjectId)];
+    return val === 'morning' || val === 'afternoon' ? val : 'any';
+};
+
+const isSubjectAllowedInSlot = (schoolClassId, subjectCode, slotIndex) => {
+    const subjectId = subjectIdByCode.value?.[String(subjectCode)] || null;
+    const rule = getSubjectSessionRule(schoolClassId, subjectId);
+    const slotSession = getSlotSession(slotIndex);
+    if (rule === 'any') return true;
+    return slotSession === rule;
+};
+
+const isTeachableLessonSlot = (day, slotIndex) => {
+    // Afternoon slots are fixed activities on Wed/Thu/Fri
+    if (slotIndex >= 7 && slotIndex <= 8) {
+        return !['WEDNESDAY', 'THURSDAY', 'FRIDAY'].includes(day);
+    }
+
+    // Friday last mid slot is MEWAKA (fixed)
+    if (day === 'FRIDAY' && slotIndex === 6) {
+        return false;
+    }
+
+    return true;
+};
+
 const scheduleStorageKey = computed(() => {
     const schoolId = props.school?.id ?? 'school';
     return `timetable_schedule_v3_${schoolId}`;
@@ -340,43 +436,143 @@ const generateSampleTimetable = () => {
 
     days.forEach((day) => {
         next[day] = [];
+    });
 
-        // Build one row per actual class from the database so that
-        // only existing streams/levels are shown in the timetable.
-        timetableClasses.value.forEach((c) => {
-            const formLabel = getClassForm(c);
-            const classLabel = getClassLabel(c);
-            const streamLabel = c.stream ? String(c.stream).toUpperCase().trim() : '';
+    // Build one row per actual class from the database so that
+    // only existing streams/levels are shown in the timetable.
+    timetableClasses.value.forEach((c) => {
+        const classId = c?.id ? Number(c.id) : null;
+        const formLabel = getClassForm(c);
+        const classLabel = getClassLabel(c);
+        const streamLabel = c.stream ? String(c.stream).toUpperCase().trim() : '';
 
-            const classSubjectCodes = Array.isArray(c.subject_codes) && c.subject_codes.length
-                ? c.subject_codes
-                : codes;
+        const classSubjectCodes = Array.isArray(c.subject_codes) && c.subject_codes.length
+            ? c.subject_codes
+            : codes;
 
-            const row = {
+        const rowByDay = {};
+        days.forEach((day) => {
+            rowByDay[day] = {
                 form: formLabel,
                 class_label: classLabel,
                 stream: streamLabel,
                 class_name: c.name || `${classLabel} ${streamLabel}`.trim(),
-                slots: [],
+                slots: Array.from({ length: 9 }).map(() => null),
             };
+        });
 
-            // 9 academic slots per row (4 before break, 5 after), index 0-8
-            // Choose subjects randomly from the pool so that each regenerate
-            // gives a slightly different distribution per class and per day.
+        // Pre-fill non-teachable fixed slots with blanks so they don't count toward teacher coverage.
+        days.forEach((day) => {
             for (let i = 0; i < 9; i += 1) {
-                const subject = classSubjectCodes[Math.floor(Math.random() * classSubjectCodes.length)];
-                const teacher = teachers[subject] || '';
-                const teacherInitials = typeof teacher === 'string' ? teacher : (teacher?.initials || teacher?.name || '');
-                const teacherName = typeof teacher === 'string' ? teacher : (teacher?.name || teacher?.initials || '');
-                row.slots.push({
-                    subject,
-                    teacher: teacherInitials,
-                    teacher_initials: teacherInitials,
-                    teacher_name: teacherName,
-                });
+                if (!isTeachableLessonSlot(day, i)) {
+                    rowByDay[day].slots[i] = { subject: '', teacher: '', teacher_initials: '', teacher_name: '' };
+                }
             }
+        });
 
-            next[day].push(row);
+        // Build lists of available teachable positions by session.
+        const morningPositions = [];
+        const afternoonPositions = [];
+        const otherPositions = [];
+
+        days.forEach((day) => {
+            for (let i = 0; i < 9; i += 1) {
+                if (!isTeachableLessonSlot(day, i)) continue;
+                const session = getSlotSession(i);
+                const pos = { day, slotIndex: i };
+                if (session === 'morning') morningPositions.push(pos);
+                else if (session === 'afternoon') afternoonPositions.push(pos);
+                else otherPositions.push(pos);
+            }
+        });
+
+        // Simple shuffle for variation.
+        const shuffle = (arr) => arr.sort(() => Math.random() - 0.5);
+        shuffle(morningPositions);
+        shuffle(afternoonPositions);
+        shuffle(otherPositions);
+
+        const setSlot = (day, slotIndex, subject) => {
+            const teacher = teachers[subject] || '';
+            const teacherInitials = typeof teacher === 'string' ? teacher : (teacher?.initials || teacher?.name || '');
+            const teacherName = typeof teacher === 'string' ? teacher : (teacher?.name || teacher?.initials || '');
+            rowByDay[day].slots[slotIndex] = {
+                subject,
+                teacher: teacherInitials,
+                teacher_initials: teacherInitials,
+                teacher_name: teacherName,
+            };
+        };
+
+        // 1) Coverage-first: try to place every subject at least once (respecting session rules).
+        const unconstrainedSubjects = [];
+        classSubjectCodes.forEach((code) => {
+            const sid = subjectIdByCode.value?.[String(code)] || null;
+            const rule = getSubjectSessionRule(classId, sid);
+            if (rule === 'morning') {
+                const pos = morningPositions.pop();
+                if (pos) setSlot(pos.day, pos.slotIndex, code);
+            } else if (rule === 'afternoon') {
+                const pos = afternoonPositions.pop();
+                if (pos) setSlot(pos.day, pos.slotIndex, code);
+            } else {
+                unconstrainedSubjects.push(code);
+            }
+        });
+
+        // 2) Place remaining subjects (any-time) at least once into remaining teachable slots.
+        const remainingPositions = [...morningPositions, ...otherPositions, ...afternoonPositions];
+        shuffle(remainingPositions);
+        unconstrainedSubjects.forEach((code) => {
+            const pos = remainingPositions.pop();
+            if (!pos) return;
+            if (classId && !isSubjectAllowedInSlot(classId, code, pos.slotIndex)) {
+                // try to find any other slot that fits
+                let foundIndex = -1;
+                for (let j = remainingPositions.length - 1; j >= 0; j -= 1) {
+                    if (isSubjectAllowedInSlot(classId, code, remainingPositions[j].slotIndex)) {
+                        foundIndex = j;
+                        break;
+                    }
+                }
+                if (foundIndex === -1) return;
+                const swapPos = remainingPositions.splice(foundIndex, 1)[0];
+                setSlot(swapPos.day, swapPos.slotIndex, code);
+                return;
+            }
+            setSlot(pos.day, pos.slotIndex, code);
+        });
+
+        // 3) Fill every remaining teachable slot using rotation, respecting session rules.
+        const allTeachablePositions = [];
+        days.forEach((day) => {
+            for (let i = 0; i < 9; i += 1) {
+                if (!isTeachableLessonSlot(day, i)) continue;
+                if (rowByDay[day].slots[i] !== null) continue;
+                allTeachablePositions.push({ day, slotIndex: i });
+            }
+        });
+
+        let cursor = Math.floor(Math.random() * (classSubjectCodes.length || 1));
+        allTeachablePositions.forEach((pos) => {
+            let picked = null;
+            for (let tries = 0; tries < classSubjectCodes.length; tries += 1) {
+                const candidate = classSubjectCodes[(cursor + tries) % classSubjectCodes.length];
+                if (!classId || isSubjectAllowedInSlot(classId, candidate, pos.slotIndex)) {
+                    picked = candidate;
+                    cursor = (cursor + tries + 1) % classSubjectCodes.length;
+                    break;
+                }
+            }
+            if (!picked) {
+                picked = classSubjectCodes[Math.floor(Math.random() * (classSubjectCodes.length || 1))] || '';
+            }
+            setSlot(pos.day, pos.slotIndex, picked);
+        });
+
+        // 4) Push into per-day arrays
+        days.forEach((day) => {
+            next[day].push(rowByDay[day]);
         });
     });
 
@@ -429,6 +625,7 @@ const getGroupedRowCount = (day) => {
 };
 
 onMounted(() => {
+    sessionRulesByClassId.value = loadSessionRulesFromStorage();
     const stored = loadScheduleFromStorage();
     if (stored) {
         schedule.value = stored;
@@ -469,8 +666,13 @@ const usedTeacherInitials = computed(() => {
     Object.values(data).forEach((rows) => {
         (rows || []).forEach((row) => {
             (row?.slots || []).forEach((slot) => {
-                const initials = (slot?.teacher_initials || slot?.teacher || '').toString().trim();
-                if (initials) set.add(initials);
+                const raw = (slot?.teacher_initials || slot?.teacher || '').toString().trim();
+                if (!raw) return;
+                raw
+                    .split('/')
+                    .map((s) => s.trim())
+                    .filter(Boolean)
+                    .forEach((i) => set.add(i));
             });
         });
     });
@@ -853,8 +1055,22 @@ const onDrop = (day, rowIndex, slotIndex) => {
     }
 
     const tmp = fromRow.slots[from.slotIndex];
-    fromRow.slots[from.slotIndex] = toRow.slots[slotIndex];
-    toRow.slots[slotIndex] = tmp;
+    const candidateFrom = toRow.slots[slotIndex];
+    const candidateTo = tmp;
+
+    const fromClassId = Number(fromRow?.school_class_id || fromRow?.id || fromRow?.class_id || fromRow?.classId || fromRow?.schoolClassId || 0) || null;
+    const toClassId = Number(toRow?.school_class_id || toRow?.id || toRow?.class_id || toRow?.classId || toRow?.schoolClassId || 0) || null;
+
+    const canPlaceA = !candidateFrom?.subject || isSubjectAllowedInSlot(fromClassId, candidateFrom.subject, from.slotIndex);
+    const canPlaceB = !candidateTo?.subject || isSubjectAllowedInSlot(toClassId, candidateTo.subject, slotIndex);
+
+    if (!canPlaceA || !canPlaceB) {
+        draggedCell.value = null;
+        return;
+    }
+
+    fromRow.slots[from.slotIndex] = candidateFrom;
+    toRow.slots[slotIndex] = candidateTo;
 
     saveScheduleToStorage();
 
@@ -1428,50 +1644,52 @@ const onDrop = (day, rowIndex, slotIndex) => {
                 <div
                     class="max-h-full w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 text-xs text-gray-700 shadow-2xl ring-1 ring-gray-200"
                 >
-                    <div class="mb-3 flex items-center justify-between">
-                        <div>
-                            <h3 class="text-sm font-semibold text-gray-800">
-                                Limitations &amp; More
-                            </h3>
-                            <p class="mt-0.5 text-[11px] text-gray-500">
-                                Weka vipindi kwa wiki kwa kila mwalimu na somo kwa darasa/stream.
-                            </p>
-                        </div>
-                        <button
-                            type="button"
-                            class="text-[11px] text-gray-500 hover:text-gray-700"
-                            @click="showLimitationsModal = false"
-                        >
-                            Close
-                        </button>
-                    </div>
-
-                    <div class="mb-3 flex flex-wrap items-end gap-3">
-                        <div>
-                            <label class="mb-1 block text-[11px] font-medium">Class / Stream</label>
-                            <select
-                                v-model="selectedLimitClassId"
-                                class="w-64 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                    <div class="sticky top-0 z-10 -mx-6 -mt-6 mb-3 border-b border-gray-200 bg-white/95 px-6 pt-6 pb-3 backdrop-blur">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-sm font-semibold text-gray-800">
+                                    Limitations &amp; More
+                                </h3>
+                                <p class="mt-0.5 text-[11px] text-gray-500">
+                                    Weka vipindi kwa wiki kwa kila mwalimu na somo kwa darasa/stream.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                class="text-[11px] text-gray-500 hover:text-gray-700"
+                                @click="showLimitationsModal = false"
                             >
-                                <option value="" disabled>Select class</option>
-                                <option v-for="c in limitationClassOptions" :key="c.id" :value="c.id">
-                                    {{ c.display }}
-                                </option>
-                            </select>
+                                Close
+                            </button>
                         </div>
 
-                        <div>
-                            <label class="mb-1 block text-[11px] font-medium">Mode</label>
-                            <select
-                                v-model="limitationsMode"
-                                class="w-56 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            >
-                                <option value="subject_only">Subject limitation</option>
-                                <option value="teacher_subject">Teacher + Subject limitation</option>
-                            </select>
-                        </div>
+                        <div class="mt-3 flex flex-wrap items-end gap-3">
+                            <div>
+                                <label class="mb-1 block text-[11px] font-medium">Class / Stream</label>
+                                <select
+                                    v-model="selectedLimitClassId"
+                                    class="w-64 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                >
+                                    <option value="" disabled>Select class</option>
+                                    <option v-for="c in limitationClassOptions" :key="c.id" :value="c.id">
+                                        {{ c.display }}
+                                    </option>
+                                </select>
+                            </div>
 
-                        <div v-if="limitsLoading" class="text-[11px] text-gray-500">Loading...</div>
+                            <div>
+                                <label class="mb-1 block text-[11px] font-medium">Mode</label>
+                                <select
+                                    v-model="limitationsMode"
+                                    class="w-56 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                >
+                                    <option value="subject_only">Subject limitation</option>
+                                    <option value="teacher_subject">Teacher + Subject limitation</option>
+                                </select>
+                            </div>
+
+                            <div v-if="limitsLoading" class="text-[11px] text-gray-500">Loading...</div>
+                        </div>
                     </div>
 
                     <div class="overflow-hidden rounded-lg border border-gray-200">
@@ -1479,12 +1697,13 @@ const onDrop = (day, rowIndex, slotIndex) => {
                             <thead>
                                 <tr class="bg-gray-50 text-left">
                                     <th class="border-b border-gray-200 px-3 py-2">Subject</th>
+                                    <th class="border-b border-gray-200 px-3 py-2">Session</th>
                                     <th class="border-b border-gray-200 px-3 py-2">Periods / Week</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <tr v-if="!classSubjectRows.length">
-                                    <td colspan="2" class="px-3 py-3 text-center text-[11px] text-gray-500">
+                                    <td colspan="3" class="px-3 py-3 text-center text-[11px] text-gray-500">
                                         <span v-if="!selectedLimitClassId">Select a class to view subject limitations.</span>
                                         <span v-else-if="selectedLimitClassId && !selectedLimitClassHasSubjects">No subjects assigned to this class.</span>
                                         <span v-else>No subjects found.</span>
@@ -1495,6 +1714,18 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                     <td class="border-b border-gray-100 px-3 py-2">
                                         <div class="font-medium text-gray-800">{{ row.subject_code }}</div>
                                         <div class="text-[10px] text-gray-500">{{ row.subject_name }}</div>
+                                    </td>
+                                    <td class="border-b border-gray-100 px-3 py-2">
+                                        <select
+                                            class="w-48 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                            :disabled="!selectedLimitClassId"
+                                            :value="selectedLimitClassSessionRules[String(row.subject_id)] || 'any'"
+                                            @change="(e) => setSelectedLimitSubjectSessionRule(row.subject_id, e.target.value)"
+                                        >
+                                            <option value="any">Any time</option>
+                                            <option value="morning">Morning only (08:00 - 10:40)</option>
+                                            <option value="afternoon">Afternoon only (01:20 - 02:40)</option>
+                                        </select>
                                     </td>
                                     <td class="border-b border-gray-100 px-3 py-2">
                                         <input
