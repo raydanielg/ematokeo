@@ -1,0 +1,183 @@
+<script setup>
+import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
+import { Head, router } from '@inertiajs/vue3';
+import { computed, ref } from 'vue';
+
+const props = defineProps({
+    teachersWithVipindi: {
+        type: Array,
+        default: () => [],
+    },
+    allTeachers: {
+        type: Array,
+        default: () => [],
+    },
+    defaultPassword: {
+        type: String,
+        default: 'amss2025',
+    },
+});
+
+const query = ref('');
+
+const norm = (v) => String(v || '').toLowerCase().trim();
+
+const filteredVipindi = computed(() => {
+    const q = norm(query.value);
+    if (!q) return props.teachersWithVipindi || [];
+    return (props.teachersWithVipindi || []).filter((t) => {
+        return norm(t.name).includes(q) || norm(t.email).includes(q) || norm(t.check_number).includes(q) || norm(t.phone).includes(q);
+    });
+});
+
+const filteredAll = computed(() => {
+    const q = norm(query.value);
+    if (!q) return props.allTeachers || [];
+    return (props.allTeachers || []).filter((t) => {
+        return norm(t.name).includes(q) || norm(t.email).includes(q) || norm(t.check_number).includes(q) || norm(t.phone).includes(q);
+    });
+});
+
+const resettingId = ref(null);
+
+const resetPassword = (teacher) => {
+    if (!teacher?.id) return;
+    const ok = window.confirm(`Reset password ya ${teacher.name} iwe \"${props.defaultPassword}\"?`);
+    if (!ok) return;
+
+    resettingId.value = teacher.id;
+    router.post(route('teachers.credentials.reset-password', teacher.id), {}, {
+        preserveScroll: true,
+        onFinish: () => {
+            resettingId.value = null;
+        },
+    });
+};
+</script>
+
+<template>
+    <Head title="Teacher Credentials" />
+
+    <AuthenticatedLayout>
+        <template #header>
+            <div>
+                <h2 class="text-2xl font-semibold leading-tight text-gray-800">Teacher Credentials</h2>
+                <p class="mt-1 text-sm text-gray-500">Reset passwords and view login details for teachers.</p>
+            </div>
+        </template>
+
+        <div class="space-y-6">
+            <div class="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
+                <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-800">Default Password</h3>
+                        <p class="mt-1 text-[11px] text-gray-600">Kwa sasa mfumo utaweka password ya reset kuwa:</p>
+                        <div class="mt-2 inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100">
+                            {{ props.defaultPassword }}
+                        </div>
+                    </div>
+
+                    <div class="w-full md:w-80">
+                        <label class="mb-1 block text-[11px] font-medium text-gray-700">Search teacher</label>
+                        <input
+                            v-model="query"
+                            type="text"
+                            class="w-full rounded-md border border-gray-300 px-3 py-2 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                            placeholder="Search by name, email, phone, check no..."
+                        />
+                    </div>
+                </div>
+            </div>
+
+            <div class="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-800">Walimu wenye vipindi tu</h3>
+                        <p class="mt-1 text-[11px] text-gray-500">Hawa ni walimu waliopangiwa vipindi (waliopo kwenye timetable weekly limits).</p>
+                    </div>
+                    <div class="text-[11px] text-gray-500">Total: <span class="font-semibold text-gray-700">{{ filteredVipindi.length }}</span></div>
+                </div>
+
+                <div class="mt-4 overflow-x-auto">
+                    <table class="min-w-full text-[11px]">
+                        <thead>
+                            <tr class="border-b bg-slate-50 text-left text-[10px] font-semibold uppercase tracking-wide text-gray-600">
+                                <th class="px-3 py-2">Name</th>
+                                <th class="px-3 py-2">Email</th>
+                                <th class="px-3 py-2">Phone</th>
+                                <th class="px-3 py-2">Check No.</th>
+                                <th class="px-3 py-2 text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-if="!filteredVipindi.length">
+                                <td colspan="5" class="px-3 py-3 text-[11px] text-gray-500">Hakuna mwalimu mwenye vipindi bado.</td>
+                            </tr>
+                            <tr v-for="t in filteredVipindi" :key="t.id" class="border-b last:border-b-0">
+                                <td class="px-3 py-2 font-medium text-gray-900">{{ t.name }}</td>
+                                <td class="px-3 py-2 text-gray-700">{{ t.email }}</td>
+                                <td class="px-3 py-2 text-gray-700">{{ t.phone || '-' }}</td>
+                                <td class="px-3 py-2 text-gray-700">{{ t.check_number || '-' }}</td>
+                                <td class="px-3 py-2 text-right">
+                                    <button
+                                        type="button"
+                                        class="rounded-md bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+                                        :disabled="resettingId === t.id"
+                                        @click="resetPassword(t)"
+                                    >
+                                        {{ resettingId === t.id ? 'Resetting...' : 'Reset password' }}
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-800">Walimu wote (role: teacher)</h3>
+                        <p class="mt-1 text-[11px] text-gray-500">Hii ni list ya walimu wote walio kwenye mfumo. Unaweza ku-reset password yao pia.</p>
+                    </div>
+                    <div class="text-[11px] text-gray-500">Total: <span class="font-semibold text-gray-700">{{ filteredAll.length }}</span></div>
+                </div>
+
+                <div class="mt-4 overflow-x-auto">
+                    <table class="min-w-full text-[11px]">
+                        <thead>
+                            <tr class="border-b bg-slate-50 text-left text-[10px] font-semibold uppercase tracking-wide text-gray-600">
+                                <th class="px-3 py-2">Name</th>
+                                <th class="px-3 py-2">Email</th>
+                                <th class="px-3 py-2">Phone</th>
+                                <th class="px-3 py-2">Check No.</th>
+                                <th class="px-3 py-2 text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-if="!filteredAll.length">
+                                <td colspan="5" class="px-3 py-3 text-[11px] text-gray-500">Hakuna walimu kwenye mfumo.</td>
+                            </tr>
+                            <tr v-for="t in filteredAll" :key="t.id" class="border-b last:border-b-0">
+                                <td class="px-3 py-2 font-medium text-gray-900">{{ t.name }}</td>
+                                <td class="px-3 py-2 text-gray-700">{{ t.email }}</td>
+                                <td class="px-3 py-2 text-gray-700">{{ t.phone || '-' }}</td>
+                                <td class="px-3 py-2 text-gray-700">{{ t.check_number || '-' }}</td>
+                                <td class="px-3 py-2 text-right">
+                                    <button
+                                        type="button"
+                                        class="rounded-md bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-slate-800 disabled:opacity-60"
+                                        :disabled="resettingId === t.id"
+                                        @click="resetPassword(t)"
+                                    >
+                                        {{ resettingId === t.id ? 'Resetting...' : 'Reset password' }}
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </AuthenticatedLayout>
+</template>

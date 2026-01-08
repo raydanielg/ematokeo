@@ -37,7 +37,7 @@ const userSidebarSections = [
     {
         key: 'teachers',
         title: 'Teachers',
-        items: ['Add Teacher', 'View Teachers', 'Roles & Permissions'],
+        items: ['Add Teacher', 'View Teachers', 'Credentials', 'Roles & Permissions'],
     },
     {
         key: 'exams',
@@ -221,6 +221,7 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
     if (sectionKey === 'dashboard' && itemName === 'Recent Activities') return route('recent-activities');
     if (sectionKey === 'teachers' && itemName === 'View Teachers') return route('teachers.index');
     if (sectionKey === 'teachers' && itemName === 'Add Teacher') return route('teachers.create');
+    if (sectionKey === 'teachers' && itemName === 'Credentials') return route('teachers.credentials');
     if (sectionKey === 'teachers' && itemName === 'Roles & Permissions') return route('roles.index');
     if (sectionKey === 'students' && (itemName === 'View Students' || itemName === 'Add Student')) return route('students.index');
     if (sectionKey === 'students' && itemName === 'Promote Students') return route('students.promote');
@@ -567,6 +568,7 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
                                                 (section.key === 'classes' && item === 'Class Teachers' && route().current('classes.teachers.index')) ||
                                                 (section.key === 'teachers' && item === 'View Teachers' && route().current('teachers.index')) ||
                                                 (section.key === 'teachers' && item === 'Add Teacher' && route().current('teachers.create')) ||
+                                                (section.key === 'teachers' && item === 'Credentials' && route().current('teachers.credentials')) ||
                                                 (section.key === 'subjects' && item === 'View Subjects' && route().current('subjects.index')) ||
                                                 (section.key === 'subjects' && item === 'Add Subject' && route().current('subjects.create')) ||
                                                 (section.key === 'subjects' && item === 'Assign Teachers' && route().current('subjects.assign-teachers')) ||

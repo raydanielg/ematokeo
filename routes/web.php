@@ -5981,6 +5981,59 @@ Route::middleware('auth')->group(function () {
         ]);
     })->name('teachers.weekly-limits');
 
+    Route::get('/teachers/credentials', function (\Illuminate\Http\Request $request) {
+        $schoolId = $request->user()?->school_id;
+
+        $teachersQuery = User::query()
+            ->where('role', 'teacher')
+            ->orderBy('name');
+
+        if ($schoolId) {
+            $teachersQuery->where('school_id', $schoolId);
+        }
+
+        $allTeachers = (clone $teachersQuery)
+            ->get(['id', 'name', 'email', 'phone', 'check_number']);
+
+        $teacherIdsWithVipindi = DB::table('timetable_weekly_limits')
+            ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+            ->distinct()
+            ->pluck('teacher_id')
+            ->map(fn ($v) => (int) $v)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        $teachersWithVipindi = User::query()
+            ->where('role', 'teacher')
+            ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+            ->whereIn('id', $teacherIdsWithVipindi)
+            ->orderBy('name')
+            ->get(['id', 'name', 'email', 'phone', 'check_number']);
+
+        return Inertia::render('TeachersCredentials', [
+            'teachersWithVipindi' => $teachersWithVipindi,
+            'allTeachers' => $allTeachers,
+            'defaultPassword' => 'amss2025',
+        ]);
+    })->name('teachers.credentials');
+
+    Route::post('/teachers/credentials/{teacher}/reset-password', function (\Illuminate\Http\Request $request, User $teacher) {
+        abort_unless($teacher->role === 'teacher', 404);
+
+        $schoolId = $request->user()?->school_id;
+        if ($schoolId && $teacher->school_id && (int) $teacher->school_id !== (int) $schoolId) {
+            abort(403);
+        }
+
+        $teacher->update([
+            'password' => bcrypt('amss2025'),
+        ]);
+
+        return back()->with('success', 'Password reset successfully.');
+    })->name('teachers.credentials.reset-password');
+
     Route::get('/teachers/create', function () {
         return Inertia::render('AddTeacher');
     })->name('teachers.create');
@@ -6202,6 +6255,20 @@ Route::middleware('auth')->group(function () {
 
         return redirect()->route('teachers.index')->with('success', 'Teacher updated successfully.');
     })->name('teachers.update');
+
+    Route::get('/teachers', function () {
+        $user = request()->user();
+        $schoolId = $user?->school_id;
+
+        $teachers = User::query()
+            ->where('role', 'teacher')
+            ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+            ->get();
+
+        return Inertia::render('Teachers', [
+            'teachers' => $teachers,
+        ]);
+    })->name('teachers.index');
 
     Route::delete('/teachers/{teacher}', function (User $teacher) {
         abort_unless($teacher->role === 'teacher', 404);
