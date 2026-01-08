@@ -6031,6 +6031,8 @@ Route::middleware('auth')->group(function () {
                 'academic_year',
                 'term',
                 'file_path',
+                'schedule_json',
+                'created_at',
             ]);
 
         return Inertia::render('Timetables', [

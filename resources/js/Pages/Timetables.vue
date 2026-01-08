@@ -18,6 +18,21 @@ const deleteTimetable = (id) => {
 
     router.delete(route('timetables.destroy', id));
 };
+
+const formatDateTime = (value) => {
+    if (!value) return '-';
+    const dt = new Date(value);
+    if (Number.isNaN(dt.getTime())) return String(value);
+    return dt.toLocaleString();
+};
+
+const hasSchedule = (t) => {
+    const s = t?.schedule_json;
+    if (!s) return false;
+    if (Array.isArray(s)) return s.length > 0;
+    if (typeof s === 'object') return Object.keys(s).length > 0;
+    return false;
+};
 </script>
 
 <template>
@@ -34,6 +49,14 @@ const deleteTimetable = (id) => {
                         View and manage class timetables. You can preview, download or delete a timetable from the list below.
                     </p>
                 </div>
+
+                <button
+                    type="button"
+                    class="inline-flex items-center rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
+                    @click="router.get(route('timetables.create'))"
+                >
+                    Create Timetable
+                </button>
             </div>
         </template>
 
@@ -54,12 +77,14 @@ const deleteTimetable = (id) => {
                             <th class="px-3 py-2">Title</th>
                             <th class="px-3 py-2">Class</th>
                             <th class="px-3 py-2">Year / Term</th>
+                            <th class="px-3 py-2">Status</th>
+                            <th class="px-3 py-2">Created</th>
                             <th class="px-3 py-2 text-right">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr v-if="timetables.length === 0">
-                            <td colspan="4" class="px-3 py-4 text-center text-xs text-gray-500">
+                            <td colspan="6" class="px-3 py-4 text-center text-xs text-gray-500">
                                 No timetables created yet.
                             </td>
                         </tr>
@@ -82,6 +107,29 @@ const deleteTimetable = (id) => {
                                     • {{ timetable.term }}
                                 </span>
                                 <span v-if="!timetable.academic_year && !timetable.term">-</span>
+                            </td>
+                            <td class="px-3 py-2 align-top">
+                                <div class="flex flex-wrap items-center gap-1">
+                                    <span
+                                        class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1"
+                                        :class="hasSchedule(timetable)
+                                            ? 'bg-emerald-50 text-emerald-700 ring-emerald-100'
+                                            : 'bg-amber-50 text-amber-800 ring-amber-100'"
+                                    >
+                                        {{ hasSchedule(timetable) ? 'Saved' : 'No schedule' }}
+                                    </span>
+                                    <span
+                                        class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1"
+                                        :class="timetable.file_path
+                                            ? 'bg-blue-50 text-blue-700 ring-blue-100'
+                                            : 'bg-gray-50 text-gray-500 ring-gray-100'"
+                                    >
+                                        {{ timetable.file_path ? 'PDF' : 'No PDF' }}
+                                    </span>
+                                </div>
+                            </td>
+                            <td class="px-3 py-2 align-top text-xs text-gray-600">
+                                {{ formatDateTime(timetable.created_at) }}
                             </td>
                             <td class="px-3 py-2 align-top">
                                 <div class="flex justify-end gap-2">
