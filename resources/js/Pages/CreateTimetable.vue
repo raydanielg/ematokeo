@@ -304,7 +304,7 @@ const schedule = ref({});
 
 const scheduleStorageKey = computed(() => {
     const schoolId = props.school?.id ?? 'school';
-    return `timetable_schedule_v2_${schoolId}`;
+    return `timetable_schedule_v3_${schoolId}`;
 });
 
 const loadScheduleFromStorage = () => {
@@ -365,9 +365,14 @@ const generateSampleTimetable = () => {
             // gives a slightly different distribution per class and per day.
             for (let i = 0; i < 9; i += 1) {
                 const subject = classSubjectCodes[Math.floor(Math.random() * classSubjectCodes.length)];
+                const teacher = teachers[subject] || '';
+                const teacherInitials = typeof teacher === 'string' ? teacher : (teacher?.initials || teacher?.name || '');
+                const teacherName = typeof teacher === 'string' ? teacher : (teacher?.name || teacher?.initials || '');
                 row.slots.push({
                     subject,
-                    teacher: teachers[subject] || '',
+                    teacher: teacherInitials,
+                    teacher_initials: teacherInitials,
+                    teacher_name: teacherName,
                 });
             }
 
@@ -446,6 +451,89 @@ const saveTimetable = () => {
 
 const printTimetable = () => {
     window.print();
+};
+
+const showTeacherInitialsModal = ref(false);
+
+const simpleTeacherName = (name) => {
+    const s = String(name || '').trim();
+    if (!s) return '';
+    const parts = s.split(/\s+/).filter(Boolean);
+    if (parts.length === 1) return parts[0];
+    return `${parts[0]} ${parts[parts.length - 1]}`;
+};
+
+const usedTeacherInitials = computed(() => {
+    const set = new Set();
+    const data = schedule.value || {};
+    Object.values(data).forEach((rows) => {
+        (rows || []).forEach((row) => {
+            (row?.slots || []).forEach((slot) => {
+                const initials = (slot?.teacher_initials || slot?.teacher || '').toString().trim();
+                if (initials) set.add(initials);
+            });
+        });
+    });
+    return set;
+});
+
+const teacherInitialsList = computed(() => {
+    const allSubjects = Array.isArray(props.subjects) ? props.subjects : [];
+    const map = new Map();
+
+    allSubjects.forEach((s) => {
+        const teachers = Array.isArray(s.teachers) ? s.teachers : [];
+        teachers.forEach((t) => {
+            if (!t?.id) return;
+            const initials = String(t.initials || '').trim() || String(t.name || '').trim();
+            const name = String(t.name || '').trim();
+            if (!initials && !name) return;
+            if (!map.has(t.id)) {
+                map.set(t.id, {
+                    id: t.id,
+                    initials,
+                    name,
+                    simple_name: simpleTeacherName(name) || name,
+                    used: false,
+                });
+            }
+        });
+    });
+
+    const usedSet = usedTeacherInitials.value;
+    const list = Array.from(map.values()).map((row) => ({
+        ...row,
+        used: usedSet.has(row.initials),
+    }));
+
+    return list.sort((a, b) => {
+        const u = Number(b.used) - Number(a.used);
+        if (u !== 0) return u;
+        const ic = String(a.initials || '').localeCompare(String(b.initials || ''));
+        if (ic !== 0) return ic;
+        return String(a.simple_name || '').localeCompare(String(b.simple_name || ''));
+    });
+});
+
+const downloadTeacherInitials = () => {
+    const rows = teacherInitialsList.value;
+    const lines = ['Initials,Name,UsedInTimetable'];
+    rows.forEach((r) => {
+        const initials = String(r.initials || '').replaceAll('"', '""');
+        const name = String(r.simple_name || r.name || '').replaceAll('"', '""');
+        const used = r.used ? 'YES' : 'NO';
+        lines.push(`"${initials}","${name}","${used}"`);
+    });
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `teacher-initials-${form.academic_year || 'timetable'}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
 };
 
 const showLimitationsModal = ref(false);
@@ -800,6 +888,84 @@ const onDrop = (day, rowIndex, slotIndex) => {
             </div>
         </template>
 
+        <!-- Teacher initials modal -->
+        <div
+            v-if="showTeacherInitialsModal"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 py-6 sm:px-0"
+            @click.self="showTeacherInitialsModal = false"
+        >
+            <div
+                class="max-h-full w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 text-xs text-gray-700 shadow-2xl ring-1 ring-gray-200"
+            >
+                <div class="mb-3 flex items-center justify-between">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-800">
+                            Teacher Initials Details
+                        </h3>
+                        <p class="mt-0.5 text-[11px] text-gray-500">
+                            Orodha ya walimu wote na initials zao. Zilizotumika kwenye ratiba zitaonyesha "Used".
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        class="text-[11px] text-gray-500 hover:text-gray-700"
+                        @click="showTeacherInitialsModal = false"
+                    >
+                        Close
+                    </button>
+                </div>
+
+                <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div class="text-[11px] text-gray-600">
+                        Used initials: <span class="font-semibold">{{ usedTeacherInitials.size }}</span>
+                        / Total teachers: <span class="font-semibold">{{ teacherInitialsList.length }}</span>
+                    </div>
+                    <button
+                        type="button"
+                        class="rounded-md bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
+                        @click="downloadTeacherInitials"
+                    >
+                        Download (CSV)
+                    </button>
+                </div>
+
+                <div class="overflow-hidden rounded-lg border border-gray-200">
+                    <table class="min-w-full border-collapse text-[11px]">
+                        <thead>
+                            <tr class="bg-gray-50 text-left">
+                                <th class="border-b border-gray-200 px-3 py-2">Initials</th>
+                                <th class="border-b border-gray-200 px-3 py-2">Teacher</th>
+                                <th class="border-b border-gray-200 px-3 py-2">Used</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-if="!teacherInitialsList.length">
+                                <td colspan="3" class="px-3 py-3 text-center text-[11px] text-gray-500">
+                                    No teachers found.
+                                </td>
+                            </tr>
+                            <tr v-for="t in teacherInitialsList" :key="t.id" class="hover:bg-gray-50">
+                                <td class="border-b border-gray-100 px-3 py-2 font-semibold text-gray-800">
+                                    {{ t.initials }}
+                                </td>
+                                <td class="border-b border-gray-100 px-3 py-2">
+                                    {{ t.simple_name || t.name }}
+                                </td>
+                                <td class="border-b border-gray-100 px-3 py-2">
+                                    <span
+                                        class="inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                                        :class="t.used ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-700'"
+                                    >
+                                        {{ t.used ? 'Used' : 'Not used' }}
+                                    </span>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <div class="space-y-4">
             <!-- Preview: full-width card -->
             <div class="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
@@ -839,6 +1005,13 @@ const onDrop = (day, rowIndex, slotIndex) => {
                         <button
                             type="button"
                             class="rounded-md bg-white px-2 py-1 text-[10px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
+                            @click="showTeacherInitialsModal = true"
+                        >
+                            Teacher Initials Details
+                        </button>
+                        <button
+                            type="button"
+                            class="rounded-md bg-white px-2 py-1 text-[10px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
                             @click="showLimitationsModal = true"
                         >
                             Limitations &amp; More
@@ -862,7 +1035,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
 
                 <div
                     id="class-timetable-preview"
-                    class="overflow-hidden rounded-lg border border-gray-300 bg-white text-[10px] text-gray-800"
+                    class="overflow-hidden rounded-lg border border-gray-300 bg-white text-[11px] text-gray-800"
                 >
                     <!-- Top header styled like reports (emblem + titles) -->
                     <div class="border-b border-gray-300 bg-white px-4 py-3 text-center">
@@ -909,7 +1082,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
 
                     <!-- Timetable grid (soft colours) -->
                     <div class="overflow-x-auto bg-slate-50 px-2 pb-3 pt-2">
-                        <table class="min-w-full border-collapse text-[9px] leading-tight">
+                        <table class="min-w-full border-collapse text-[10px] leading-tight">
                             <thead>
                                 <tr>
                                     <th class="w-12 border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
@@ -1008,7 +1181,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             @drop="isDraggableSlot(day, index) && onDrop(day, originalIndex, index)"
                                         >
                                             <div>{{ slot.subject }}</div>
-                                            <div class="text-[8px] text-gray-600">{{ slot.teacher }}</div>
+                                            <div class="text-[9px] font-semibold text-gray-700">{{ slot.teacher }}</div>
                                         </td>
 
                                         <!-- First BREAK column (10:40-11:05) -->
@@ -1032,7 +1205,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             </template>
                                             <template v-else>
                                                 <div>{{ slot.subject }}</div>
-                                                <div class="text-[8px] text-gray-600">{{ slot.teacher }}</div>
+                                                <div class="text-[9px] font-semibold text-gray-700">{{ slot.teacher }}</div>
                                             </template>
                                         </td>
 
@@ -1071,7 +1244,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             </template>
                                             <template v-else>
                                                 <div>{{ slot.subject }}</div>
-                                                <div class="text-[8px] text-gray-600">{{ slot.teacher }}</div>
+                                                <div class="text-[9px] font-semibold text-gray-700">{{ slot.teacher }}</div>
                                             </template>
                                         </td>
 
@@ -1249,10 +1422,11 @@ const onDrop = (day, rowIndex, slotIndex) => {
             <!-- Limitations modal -->
             <div
                 v-if="showLimitationsModal"
-                class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6 sm:px-0"
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 py-6 sm:px-0"
+                @click.self="showLimitationsModal = false"
             >
                 <div
-                    class="max-h-full w-full max-w-4xl overflow-y-auto rounded-xl bg-white p-5 text-xs text-gray-700 shadow-lg ring-1 ring-gray-200"
+                    class="max-h-full w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 text-xs text-gray-700 shadow-2xl ring-1 ring-gray-200"
                 >
                     <div class="mb-3 flex items-center justify-between">
                         <div>
@@ -1472,23 +1646,55 @@ Form I &amp; II	Form III &amp; IV
 
 <style>
 @media print {
+    @page {
+        size: A4 landscape;
+        margin: 10mm;
+    }
+
+    body {
+        background: #ffffff !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
     body * {
-        visibility: hidden;
+        visibility: hidden !important;
     }
 
     #class-timetable-preview,
     #class-timetable-preview * {
-        visibility: visible;
+        visibility: visible !important;
     }
 
     #class-timetable-preview {
         position: absolute;
-        inset: 0;
-        width: 100%;
-        margin: 0;
-        padding: 0;
-        box-shadow: none;
-        border: none;
+        left: 0;
+        top: 0;
+        width: 100% !important;
+        overflow: visible !important;
+        border: none !important;
+        font-size: 11pt !important;
+        line-height: 1.15 !important;
+    }
+
+    #class-timetable-preview table {
+        width: 100% !important;
+        border-collapse: collapse !important;
+    }
+
+    #class-timetable-preview th,
+    #class-timetable-preview td {
+        padding: 2px 3px !important;
+    }
+
+    #class-timetable-preview tr {
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+
+    #class-timetable-preview .overflow-x-auto,
+    #class-timetable-preview .overflow-hidden {
+        overflow: visible !important;
     }
 }
 </style>
