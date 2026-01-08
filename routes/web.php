@@ -5633,8 +5633,13 @@ Route::middleware('auth')->group(function () {
 
             $classLabels = $rows
                 ->map(function ($r) {
+                    $name = $r->class_name ? trim((string) $r->class_name) : '';
+                    if ($name !== '') {
+                        return $name;
+                    }
+
                     $label = trim(($r->class_level ?? '').' '.($r->class_stream ?? ''));
-                    return $label ?: ($r->class_name ?? '');
+                    return $label;
                 })
                 ->filter()
                 ->unique()
@@ -5687,6 +5692,37 @@ Route::middleware('auth')->group(function () {
             'classSubjectMap' => $classSubjectMap,
         ]);
     })->name('teachers.index');
+
+    Route::get('/teachers/class-assignment-check', function (\Illuminate\Http\Request $request) {
+        $schoolId = $request->user()?->school_id;
+
+        $data = $request->validate([
+            'class_id' => ['required', 'integer', 'exists:school_classes,id'],
+            'exclude_teacher_id' => ['sometimes', 'integer', 'exists:users,id'],
+        ]);
+
+        $classId = (int) $data['class_id'];
+        $excludeTeacherId = ! empty($data['exclude_teacher_id']) ? (int) $data['exclude_teacher_id'] : null;
+
+        $q = DB::table('teacher_class_subject')
+            ->join('users', 'users.id', '=', 'teacher_class_subject.teacher_id')
+            ->when($schoolId, fn ($qq) => $qq->where('teacher_class_subject.school_id', $schoolId))
+            ->where('teacher_class_subject.school_class_id', $classId)
+            ->where('users.role', 'teacher')
+            ->select(['users.id', 'users.name'])
+            ->distinct();
+
+        if ($excludeTeacherId) {
+            $q->where('users.id', '!=', $excludeTeacherId);
+        }
+
+        $teachers = $q->get();
+
+        return response()->json([
+            'has_teacher' => $teachers->count() > 0,
+            'teachers' => $teachers,
+        ]);
+    })->name('teachers.class-assignment-check');
 
     Route::get('/teachers/{teacher}/weekly-limits', function (\Illuminate\Http\Request $request, User $teacher) {
         $user = $request->user();
@@ -5829,7 +5865,7 @@ Route::middleware('auth')->group(function () {
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'phone' => ['nullable', 'string', 'max:50'],
-            'check_number' => ['required', 'string', 'max:100'],
+            'check_number' => ['nullable', 'string', 'max:100'],
             'teaching_classes' => ['nullable', 'string', 'max:255'],
             'class_ids' => ['sometimes', 'array'],
             'class_ids.*' => ['integer', 'exists:school_classes,id'],
@@ -5837,10 +5873,18 @@ Route::middleware('auth')->group(function () {
             'subject_ids.*' => ['integer', 'exists:subjects,id'],
         ]);
 
+        $checkNumber = $validated['check_number'] ?? null;
+        if (! $checkNumber) {
+            $checkNumber = $teacher->check_number;
+        }
+        if (! $checkNumber) {
+            $checkNumber = 'TCH-' . str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        }
+
         $teacher->update([
             'name' => $validated['name'],
             'phone' => $validated['phone'] ?? null,
-            'check_number' => $validated['check_number'],
+            'check_number' => $checkNumber,
             'teaching_classes' => $validated['teaching_classes'] ?? '',
         ]);
 

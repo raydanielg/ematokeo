@@ -34,6 +34,10 @@ const showDeleteModal = ref(false);
 const showTimetableModal = ref(false);
 const showVipindiModal = ref(false);
 
+const showClassTeacherWarning = ref(false);
+const classTeacherWarningLoading = ref(false);
+const classTeacherWarning = ref({ classId: null, teachers: [], context: null });
+
 const addForm = reactive({
     name: '',
     phone: '',
@@ -103,6 +107,60 @@ const toggleAddSubject = (id) => toggleInArray(addForm.subject_ids, id);
 const toggleEditClass = (id) => toggleInArray(editForm.class_ids, id);
 const toggleEditSubject = (id) => toggleInArray(editForm.subject_ids, id);
 
+const openClassTeacherWarning = (classId, teachers, context) => {
+    classTeacherWarning.value = {
+        classId: Number(classId),
+        teachers: Array.isArray(teachers) ? teachers : [],
+        context,
+    };
+    showClassTeacherWarning.value = true;
+};
+
+const closeClassTeacherWarning = () => {
+    if (classTeacherWarningLoading.value) return;
+    showClassTeacherWarning.value = false;
+    classTeacherWarning.value = { classId: null, teachers: [], context: null };
+};
+
+const confirmClassTeacherWarning = () => {
+    if (classTeacherWarningLoading.value) return;
+    const ctx = classTeacherWarning.value?.context;
+    const classId = classTeacherWarning.value?.classId;
+    if (ctx?.type === 'add' && Number.isFinite(Number(classId))) {
+        toggleInArray(addForm.class_ids, classId);
+    }
+    if (ctx?.type === 'edit' && Number.isFinite(Number(classId))) {
+        toggleInArray(editForm.class_ids, classId);
+    }
+    closeClassTeacherWarning();
+};
+
+const checkClassHasTeacher = async (classId, excludeTeacherId = null) => {
+    classTeacherWarningLoading.value = true;
+    try {
+        const url = route('teachers.class-assignment-check', {
+            class_id: Number(classId),
+            exclude_teacher_id: excludeTeacherId ? Number(excludeTeacherId) : undefined,
+        });
+        const res = await fetch(url, {
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                Accept: 'application/json',
+            },
+            credentials: 'same-origin',
+        });
+        const json = await res.json();
+        return {
+            hasTeacher: !!json?.has_teacher,
+            teachers: Array.isArray(json?.teachers) ? json.teachers : [],
+        };
+    } catch {
+        return { hasTeacher: false, teachers: [] };
+    } finally {
+        classTeacherWarningLoading.value = false;
+    }
+};
+
 const toggleAddBaseClass = (baseId) => {
     toggleInArray(addBaseClassIds.value, baseId);
     addForm.class_ids = ensureStreamsBelongToSelectedBases(addBaseClassIds.value, addForm.class_ids);
@@ -113,6 +171,40 @@ const toggleEditBaseClass = (baseId) => {
     toggleInArray(editBaseClassIds.value, baseId);
     editForm.class_ids = ensureStreamsBelongToSelectedBases(editBaseClassIds.value, editForm.class_ids);
     editForm.subject_ids = [];
+};
+
+const onToggleAddStream = async (streamClassId) => {
+    const id = Number(streamClassId);
+    if (!Number.isFinite(id)) return;
+    if (addForm.class_ids.includes(id)) {
+        toggleAddClass(id);
+        return;
+    }
+
+    const chk = await checkClassHasTeacher(id, null);
+    if (chk.hasTeacher) {
+        openClassTeacherWarning(id, chk.teachers, { type: 'add' });
+        return;
+    }
+
+    toggleAddClass(id);
+};
+
+const onToggleEditStream = async (streamClassId) => {
+    const id = Number(streamClassId);
+    if (!Number.isFinite(id)) return;
+    if (editForm.class_ids.includes(id)) {
+        toggleEditClass(id);
+        return;
+    }
+
+    const chk = await checkClassHasTeacher(id, editForm.id);
+    if (chk.hasTeacher) {
+        openClassTeacherWarning(id, chk.teachers, { type: 'edit' });
+        return;
+    }
+
+    toggleEditClass(id);
 };
 
 const filteredSubjectsFor = (classIds) => {
@@ -439,6 +531,66 @@ const formatSubjectOption = (s) => {
                 </div>
             </div>
         </template>
+
+        <!-- Class already has teacher warning -->
+        <div
+            v-if="showClassTeacherWarning"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6 backdrop-blur-sm"
+        >
+            <div class="w-full max-w-md rounded-xl bg-white p-5 text-xs text-gray-700 shadow-xl">
+                <div class="mb-2 flex items-start justify-between gap-3">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-900">This class already has teacher(s)</h3>
+                        <p class="mt-0.5 text-[11px] text-gray-500">
+                            Darasa hili tayari lina mwalimu. Unataka kuongeza mwalimu mwingine?
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-[11px] font-bold text-gray-600 hover:bg-gray-200"
+                        :disabled="classTeacherWarningLoading"
+                        @click="closeClassTeacherWarning"
+                    >
+                        ×
+                    </button>
+                </div>
+
+                <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+                    <div class="font-semibold">Existing teacher(s):</div>
+                    <div class="mt-1 flex flex-wrap gap-1">
+                        <span
+                            v-for="t in (classTeacherWarning.teachers || [])"
+                            :key="t.id"
+                            class="rounded bg-white/70 px-2 py-0.5 text-[10px] text-amber-900 ring-1 ring-amber-200"
+                        >
+                            {{ t.name }}
+                        </span>
+                        <span v-if="!(classTeacherWarning.teachers || []).length" class="text-[10px] text-amber-900">
+                            —
+                        </span>
+                    </div>
+                </div>
+
+                <div class="mt-4 flex justify-end gap-2">
+                    <button
+                        type="button"
+                        class="rounded-md bg-gray-50 px-3 py-1.5 text-[11px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100"
+                        :disabled="classTeacherWarningLoading"
+                        @click="closeClassTeacherWarning"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="button"
+                        class="rounded-md bg-amber-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-amber-700 disabled:opacity-60"
+                        :disabled="classTeacherWarningLoading"
+                        @click="confirmClassTeacherWarning"
+                    >
+                        {{ classTeacherWarningLoading ? 'Checking...' : 'Yes, add another' }}
+                    </button>
+                </div>
+            </div>
+        </div>
 
         <!-- Assign vipindi modal -->
         <div
@@ -906,7 +1058,7 @@ const formatSubjectOption = (s) => {
                                 v-model="editForm.phone"
                                 type="tel"
                                 class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                                required
+                                placeholder="07XXXXXXXX (optional)"
                             />
                         </div>
                         <div>
@@ -915,7 +1067,7 @@ const formatSubjectOption = (s) => {
                                 v-model="editForm.check_number"
                                 type="text"
                                 class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                                required
+                                placeholder="TCH-XXXXXX (optional)"
                             />
                         </div>
                     </div>
@@ -946,7 +1098,7 @@ const formatSubjectOption = (s) => {
                                                     type="checkbox"
                                                     class="h-3.5 w-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
                                                     :checked="editForm.class_ids.includes(st.id)"
-                                                    @change="toggleEditClass(st.id)"
+                                                    @change="onToggleEditStream(st.id)"
                                                 />
                                                 <span class="text-gray-800">{{ st.label }}</span>
                                             </label>
@@ -1065,15 +1217,14 @@ const formatSubjectOption = (s) => {
                         />
                     </div>
                     <div>
-                        <label class="mb-1 block text-[11px] font-medium">Phone Number (optional)</label>
+                        <label class="mb-1 block text-[11px] font-medium">Phone Number</label>
                         <input
                             v-model="addForm.phone"
                             type="tel"
                             class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            placeholder="07XXXXXXXX"
+                            placeholder="07XXXXXXXX (optional)"
                         />
                     </div>
-
                     <div class="grid grid-cols-2 gap-3">
                         <div>
                             <label class="mb-1 block text-[11px] font-medium">Assigned classes</label>
@@ -1101,7 +1252,7 @@ const formatSubjectOption = (s) => {
                                                     type="checkbox"
                                                     class="h-3.5 w-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
                                                     :checked="addForm.class_ids.includes(st.id)"
-                                                    @change="toggleAddClass(st.id)"
+                                                    @change="onToggleAddStream(st.id)"
                                                 />
                                                 <span class="text-gray-800">{{ st.label }}</span>
                                             </label>
@@ -1112,6 +1263,7 @@ const formatSubjectOption = (s) => {
                                     </div>
                                 </div>
                             </div>
+                            <p class="mt-1 text-[10px] text-gray-500">Chagua darasa, kisha chagua stream. Ukiacha stream bila kuchagua, hakuna assignment itahifadhiwa.</p>
                         </div>
                         <div>
                             <label class="mb-1 block text-[11px] font-medium">Assigned subjects</label>
@@ -1133,6 +1285,7 @@ const formatSubjectOption = (s) => {
                                     Chagua stream kwanza ili masomo yaonekane.
                                 </div>
                             </div>
+                            <p class="mt-1 text-[10px] text-gray-500">Masomo yanatokana na streams ulizochagua.</p>
                         </div>
                     </div>
 
