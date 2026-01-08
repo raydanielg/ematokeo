@@ -511,6 +511,7 @@ const saveLimitationsDraftToStorage = () => {
             selected_class_id: selectedLimitClassId.value,
             limits_by_key: limitsByKey.value || {},
             subject_limits_by_id: subjectLimitsById.value || {},
+            subject_double_by_id: subjectDoubleById.value || {},
         }));
     } catch {
         // ignore storage failures
@@ -598,7 +599,15 @@ const generateSampleTimetable = () => {
         };
 
         const desiredPeriodsByCode = {};
-        if (limitationsMode.value === 'subject_only' && selectedLimitClassId.value && String(classId) === String(selectedLimitClassId.value)) {
+        const desiredDoubleByCode = {};
+        const appliesSubjectLimits = limitationsMode.value === 'subject_only'
+            && selectedLimitClassId.value
+            && (
+                String(classId) === String(selectedLimitClassId.value)
+                || String(c?.parent_class_id || '') === String(selectedLimitClassId.value)
+            );
+
+        if (appliesSubjectLimits) {
             classSubjectCodes.forEach((code) => {
                 const sid = subjectIdByCode.value?.[String(code)] || null;
                 if (!sid) return;
@@ -607,6 +616,10 @@ const generateSampleTimetable = () => {
                 const n = val === '' || val === null || val === undefined ? 0 : Number(val);
                 if (Number.isFinite(n) && n > 0) {
                     desiredPeriodsByCode[String(code)] = Math.floor(n);
+                }
+
+                if (subjectDoubleById.value?.[key]) {
+                    desiredDoubleByCode[String(code)] = true;
                 }
             });
         }
@@ -626,6 +639,48 @@ const generateSampleTimetable = () => {
                 teacher_name: teacherName,
             };
         };
+
+        const canBeDoubleStart = (slotIndex) => {
+            // prevent spanning breaks: 3->4 is across break, 6->7 is across break
+            return slotIndex >= 0 && slotIndex < 8 && ![3, 6].includes(slotIndex);
+        };
+
+        const tryPlaceDoubleForCode = (code) => {
+            // need at least 2 remaining to form a double
+            if (!remainingNeeded[String(code)] || remainingNeeded[String(code)] < 2) return false;
+
+            for (let d = 0; d < days.length; d += 1) {
+                const day = days[d];
+                for (let i = 0; i < 8; i += 1) {
+                    if (!canBeDoubleStart(i)) continue;
+                    if (!isTeachableLessonSlot(day, i) || !isTeachableLessonSlot(day, i + 1)) continue;
+                    if (rowByDay[day].slots[i] !== null) continue;
+                    if (rowByDay[day].slots[i + 1] !== null) continue;
+                    if (classId && (!isSubjectAllowedInSlot(classId, code, i) || !isSubjectAllowedInSlot(classId, code, i + 1))) continue;
+
+                    setSlot(day, i, code);
+                    setSlot(day, i + 1, code);
+                    remainingNeeded[String(code)] -= 2;
+                    if (remainingNeeded[String(code)] <= 0) delete remainingNeeded[String(code)];
+                    return true;
+                }
+            }
+
+            return false;
+        };
+
+        if (hasQuotas) {
+            // Place double periods first so we can reserve consecutive slots.
+            Object.keys(desiredDoubleByCode)
+                .filter((code) => desiredDoubleByCode[code])
+                .forEach((code) => {
+                    // keep placing while possible
+                    while (remainingNeeded[String(code)] >= 2) {
+                        const ok = tryPlaceDoubleForCode(code);
+                        if (!ok) break;
+                    }
+                });
+        }
 
         // 1) Coverage-first: try to place every subject at least once (respecting session rules).
         const unconstrainedSubjects = [];
@@ -884,6 +939,9 @@ onMounted(() => {
         if (limitationsDraft.subject_limits_by_id && typeof limitationsDraft.subject_limits_by_id === 'object') {
             subjectLimitsById.value = limitationsDraft.subject_limits_by_id;
         }
+        if (limitationsDraft.subject_double_by_id && typeof limitationsDraft.subject_double_by_id === 'object') {
+            subjectDoubleById.value = limitationsDraft.subject_double_by_id;
+        }
     }
 
     if (props.timetable?.schedule_json) {
@@ -906,6 +964,7 @@ const saveTimetable = () => {
         preserveScroll: true,
         onSuccess: () => {
             showDetailsModal.value = false;
+            clearStoredSchedule();
         },
     });
 };
@@ -1010,20 +1069,32 @@ const limitsByKey = ref({});
 
 const limitationsMode = ref('subject_only');
 const subjectLimitsById = ref({});
+const subjectDoubleById = ref({});
 
-watch([limitsByKey, subjectLimitsById, selectedLimitClassId, limitationsMode], () => {
+watch([limitsByKey, subjectLimitsById, subjectDoubleById, selectedLimitClassId, limitationsMode], () => {
     saveLimitationsDraftToStorage();
 }, { deep: true });
 
 const selectedLimitClass = computed(() => {
     const selectedId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
     if (!Number.isFinite(selectedId)) return null;
-    return timetableClasses.value.find((c) => Number(c?.id) === selectedId) || null;
+    const base = (props.classes || []).filter((c) => !c?.parent_class_id);
+    return base.find((c) => Number(c?.id) === selectedId) || null;
 });
 
 const selectedLimitClassHasSubjects = computed(() => {
-    const codes = Array.isArray(selectedLimitClass.value?.subject_codes) ? selectedLimitClass.value.subject_codes : [];
-    return codes.length > 0;
+    const baseId = selectedLimitClass.value?.id ? Number(selectedLimitClass.value.id) : null;
+    if (!Number.isFinite(baseId) || !baseId) return false;
+
+    const all = Array.isArray(props.classes) ? props.classes : [];
+    const streams = all.filter((c) => Number(c?.parent_class_id) === baseId);
+    const codes = new Set();
+    if (streams.length) {
+        streams.forEach((s) => (Array.isArray(s?.subject_codes) ? s.subject_codes : []).forEach((code) => codes.add(code)));
+    } else {
+        (Array.isArray(selectedLimitClass.value?.subject_codes) ? selectedLimitClass.value.subject_codes : []).forEach((code) => codes.add(code));
+    }
+    return codes.size > 0;
 });
 
 const csrfToken = () => {
@@ -1050,9 +1121,18 @@ const teacherSubjectRows = computed(() => {
 
     const selectedId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
     const selectedClass = Number.isFinite(selectedId)
-        ? timetableClasses.value.find((c) => Number(c?.id) === selectedId)
+        ? (props.classes || []).filter((c) => !c?.parent_class_id).find((c) => Number(c?.id) === selectedId)
         : null;
-    const classSubjectCodes = Array.isArray(selectedClass?.subject_codes) ? selectedClass.subject_codes : [];
+
+    const all = Array.isArray(props.classes) ? props.classes : [];
+    const streams = selectedClass?.id ? all.filter((c) => Number(c?.parent_class_id) === Number(selectedClass.id)) : [];
+    const codesSet = new Set();
+    if (streams.length) {
+        streams.forEach((s) => (Array.isArray(s?.subject_codes) ? s.subject_codes : []).forEach((code) => codesSet.add(code)));
+    } else {
+        (Array.isArray(selectedClass?.subject_codes) ? selectedClass.subject_codes : []).forEach((code) => codesSet.add(code));
+    }
+    const classSubjectCodes = Array.from(codesSet.values());
 
     if (!selectedClass) {
         return [];
@@ -1072,14 +1152,22 @@ const teacherSubjectRows = computed(() => {
 const classSubjectRows = computed(() => {
     const selectedId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
     const selectedClass = Number.isFinite(selectedId)
-        ? timetableClasses.value.find((c) => Number(c?.id) === selectedId)
+        ? (props.classes || []).filter((c) => !c?.parent_class_id).find((c) => Number(c?.id) === selectedId)
         : null;
 
     if (!selectedClass) {
         return [];
     }
 
-    const codes = Array.isArray(selectedClass?.subject_codes) ? selectedClass.subject_codes : [];
+    const all = Array.isArray(props.classes) ? props.classes : [];
+    const streams = selectedClass?.id ? all.filter((c) => Number(c?.parent_class_id) === Number(selectedClass.id)) : [];
+    const codesSet = new Set();
+    if (streams.length) {
+        streams.forEach((s) => (Array.isArray(s?.subject_codes) ? s.subject_codes : []).forEach((code) => codesSet.add(code)));
+    } else {
+        (Array.isArray(selectedClass?.subject_codes) ? selectedClass.subject_codes : []).forEach((code) => codesSet.add(code));
+    }
+    const codes = Array.from(codesSet.values());
     const subjects = (props.subjects || [])
         .filter((s) => codes.includes(s.subject_code))
         .map((s) => ({
@@ -1092,16 +1180,16 @@ const classSubjectRows = computed(() => {
 });
 
 const limitationClassOptions = computed(() => {
-    return timetableClasses.value.map((c) => {
-        const label = getClassLabel(c) || c.name || '';
-        const stream = c.stream ? String(c.stream).toUpperCase().trim() : '';
-        const display = stream ? `${label} ${stream}` : label;
-
-        return {
-            id: String(c.id),
-            display,
-        };
-    });
+    const base = (props.classes || []).filter((c) => !c?.parent_class_id);
+    return base
+        .map((c) => {
+            const label = getClassLabel(c) || c.name || '';
+            return {
+                id: String(c.id),
+                display: label,
+            };
+        })
+        .sort((a, b) => String(a.display || '').localeCompare(String(b.display || '')));
 });
 
 const limitKey = (teacherId, subjectId) => `${teacherId}:${subjectId}`;
@@ -1111,6 +1199,7 @@ const subjectLimitKey = (subjectId) => `${subjectId}`;
 const loadSubjectLimits = async () => {
     if (!selectedLimitClassId.value) {
         subjectLimitsById.value = {};
+        subjectDoubleById.value = {};
         return;
     }
 
@@ -1129,12 +1218,16 @@ const loadSubjectLimits = async () => {
 
         const json = await res.json();
         const map = {};
+        const doubleMap = {};
         (json?.limits || []).forEach((row) => {
             map[subjectLimitKey(row.subject_id)] = row.periods_per_week;
+            doubleMap[subjectLimitKey(row.subject_id)] = !!row.is_double;
         });
         subjectLimitsById.value = map;
+        subjectDoubleById.value = doubleMap;
     } catch {
         subjectLimitsById.value = {};
+        subjectDoubleById.value = {};
     } finally {
         limitsLoading.value = false;
     }
@@ -1217,10 +1310,12 @@ const saveSubjectLimits = async () => {
             .map((row) => {
                 const key = subjectLimitKey(row.subject_id);
                 const val = subjectLimitsById.value[key];
+                const isDouble = !!subjectDoubleById.value?.[key];
                 return {
                     school_class_id: Number(selectedLimitClassId.value),
                     subject_id: row.subject_id,
                     periods_per_week: val === '' || val === null || val === undefined ? 0 : Number(val),
+                    is_double: isDouble,
                 };
             })
             .filter((r) => Number.isFinite(r.periods_per_week) && r.periods_per_week >= 0);
@@ -1940,7 +2035,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
 
                         <div class="mt-3 flex flex-wrap items-end gap-3">
                             <div>
-                                <label class="mb-1 block text-[11px] font-medium">Class / Stream</label>
+                                <label class="mb-1 block text-[11px] font-medium">Class</label>
                                 <select
                                     v-model="selectedLimitClassId"
                                     class="w-64 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
@@ -1974,11 +2069,12 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                     <th class="border-b border-gray-200 px-3 py-2">Subject</th>
                                     <th class="border-b border-gray-200 px-3 py-2">Session</th>
                                     <th class="border-b border-gray-200 px-3 py-2">Periods / Week</th>
+                                    <th class="border-b border-gray-200 px-3 py-2">Double (80 mins)</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <tr v-if="!classSubjectRows.length">
-                                    <td colspan="3" class="px-3 py-3 text-center text-[11px] text-gray-500">
+                                    <td colspan="4" class="px-3 py-3 text-center text-[11px] text-gray-500">
                                         <span v-if="!selectedLimitClassId">Select a class to view subject limitations.</span>
                                         <span v-else-if="selectedLimitClassId && !selectedLimitClassHasSubjects">No subjects assigned to this class.</span>
                                         <span v-else>No subjects found.</span>
@@ -2004,13 +2100,19 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                     </td>
                                     <td class="border-b border-gray-100 px-3 py-2">
                                         <input
+                                            v-model="subjectLimitsById[subjectLimitKey(row.subject_id)]"
                                             type="number"
                                             min="0"
-                                            max="50"
                                             class="w-24 rounded-md border border-gray-300 px-2 py-1 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
                                             :disabled="!selectedLimitClassId"
-                                            :value="subjectLimitsById[subjectLimitKey(row.subject_id)] ?? 0"
-                                            @input="(e) => { subjectLimitsById[subjectLimitKey(row.subject_id)] = e.target.value; }"
+                                        />
+                                    </td>
+                                    <td class="border-b border-gray-100 px-3 py-2">
+                                        <input
+                                            v-model="subjectDoubleById[subjectLimitKey(row.subject_id)]"
+                                            type="checkbox"
+                                            class="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                            :disabled="!selectedLimitClassId"
                                         />
                                     </td>
                                 </tr>

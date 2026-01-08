@@ -6725,6 +6725,7 @@ Route::middleware('auth')->group(function () {
                 'school_class_id',
                 'subject_id',
                 'periods_per_week',
+                'is_double',
             ])
             ->map(function (\App\Models\TimetableClassSubjectLimit $row) {
                 return [
@@ -6732,6 +6733,7 @@ Route::middleware('auth')->group(function () {
                     'school_class_id' => $row->school_class_id,
                     'subject_id' => $row->subject_id,
                     'periods_per_week' => (int) $row->periods_per_week,
+                    'is_double' => (bool) $row->is_double,
                 ];
             })
             ->values();
@@ -6750,6 +6752,7 @@ Route::middleware('auth')->group(function () {
             'limits.*.school_class_id' => ['required', 'integer', 'exists:school_classes,id'],
             'limits.*.subject_id' => ['required', 'integer', 'exists:subjects,id'],
             'limits.*.periods_per_week' => ['required', 'integer', 'min:0', 'max:50'],
+            'limits.*.is_double' => ['nullable'],
         ]);
 
         $rows = collect($data['limits'])
@@ -6759,6 +6762,7 @@ Route::middleware('auth')->group(function () {
                     'school_class_id' => (int) $row['school_class_id'],
                     'subject_id' => (int) $row['subject_id'],
                     'periods_per_week' => (int) $row['periods_per_week'],
+                    'is_double' => (bool) ($row['is_double'] ?? false),
                     'updated_at' => now(),
                     'created_at' => now(),
                 ];
@@ -6770,7 +6774,7 @@ Route::middleware('auth')->group(function () {
             \App\Models\TimetableClassSubjectLimit::upsert(
                 $rows,
                 ['school_id', 'school_class_id', 'subject_id'],
-                ['periods_per_week', 'updated_at']
+                ['periods_per_week', 'is_double', 'updated_at']
             );
         }
 
@@ -6823,7 +6827,7 @@ Route::middleware('auth')->group(function () {
             // If PDF generation fails, continue without blocking save
         }
 
-        return redirect()->route('timetables.index');
+        return redirect()->route('timetables.show', $timetable->id);
     })->name('timetables.store');
 
     Route::get('/timetables/{timetable}/download', function (Timetable $timetable) {
