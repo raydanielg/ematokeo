@@ -5931,7 +5931,47 @@ Route::middleware('auth')->group(function () {
         return redirect()->route('teachers.index')->with('success', 'Teacher deleted successfully.');
     })->name('teachers.destroy');
 
+    Route::post('/teachers/bulk-delete', function (\Illuminate\Http\Request $request) {
+        $schoolId = $request->user()?->school_id;
+
+        $data = $request->validate([
+            'teacher_ids' => ['required', 'array', 'min:1'],
+            'teacher_ids.*' => ['integer', 'exists:users,id'],
+        ]);
+
+        $ids = collect($data['teacher_ids'])->map(fn ($v) => (int) $v)->filter()->unique()->values();
+        if ($ids->isEmpty()) {
+            return back();
+        }
+
+        DB::transaction(function () use ($ids, $schoolId) {
+            $teachersQuery = User::query()->where('role', 'teacher')->whereIn('id', $ids->all());
+            if ($schoolId) {
+                $teachersQuery->where('school_id', $schoolId);
+            }
+            $teacherIds = $teachersQuery->pluck('id')->all();
+
+            if (! empty($teacherIds)) {
+                DB::table('teacher_class_subject')
+                    ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+                    ->whereIn('teacher_id', $teacherIds)
+                    ->delete();
+
+                DB::table('timetable_weekly_limits')
+                    ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+                    ->whereIn('teacher_id', $teacherIds)
+                    ->delete();
+
+                User::query()->whereIn('id', $teacherIds)->delete();
+            }
+        });
+
+        return redirect()->route('teachers.index')->with('success', 'Teachers deleted successfully.');
+    })->name('teachers.bulk-destroy');
+
     Route::post('/teachers/import-samples', function (\Illuminate\Http\Request $request) {
+        abort(404);
+
         $data = $request->validate([
             'class_id' => ['required', 'integer', 'exists:school_classes,id'],
         ]);

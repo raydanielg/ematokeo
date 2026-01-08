@@ -33,10 +33,51 @@ const showEditModal = ref(false);
 const showDeleteModal = ref(false);
 const showTimetableModal = ref(false);
 const showVipindiModal = ref(false);
+const showBulkDeleteModal = ref(false);
 
 const showClassTeacherWarning = ref(false);
 const classTeacherWarningLoading = ref(false);
 const classTeacherWarning = ref({ classId: null, teachers: [], context: null });
+
+const selectedTeacherIds = ref([]);
+
+const toggleSelectedTeacher = (id) => {
+    toggleInArray(selectedTeacherIds.value, id);
+};
+
+const isAllTeachersSelected = computed(() => {
+    const all = (props.teachers || []).map((t) => Number(t.id)).filter((v) => Number.isFinite(v));
+    if (!all.length) return false;
+    const cur = new Set((selectedTeacherIds.value || []).map((v) => Number(v)));
+    return all.every((id) => cur.has(id));
+});
+
+const toggleSelectAllTeachers = () => {
+    const all = (props.teachers || []).map((t) => Number(t.id)).filter((v) => Number.isFinite(v));
+    const cur = new Set((selectedTeacherIds.value || []).map((v) => Number(v)));
+    const allSelected = all.length > 0 && all.every((id) => cur.has(id));
+    selectedTeacherIds.value = allSelected ? [] : all;
+};
+
+const openBulkDeleteModal = () => {
+    if (!(selectedTeacherIds.value || []).length) return;
+    showBulkDeleteModal.value = true;
+};
+
+const closeBulkDeleteModal = () => {
+    showBulkDeleteModal.value = false;
+};
+
+const bulkDeleteTeachers = () => {
+    if (!(selectedTeacherIds.value || []).length) return;
+    router.post(route('teachers.bulk-destroy'), { teacher_ids: selectedTeacherIds.value }, {
+        preserveScroll: true,
+        onSuccess: () => {
+            selectedTeacherIds.value = [];
+            showBulkDeleteModal.value = false;
+        },
+    });
+};
 
 const addForm = reactive({
     name: '',
@@ -123,15 +164,6 @@ const closeClassTeacherWarning = () => {
 };
 
 const confirmClassTeacherWarning = () => {
-    if (classTeacherWarningLoading.value) return;
-    const ctx = classTeacherWarning.value?.context;
-    const classId = classTeacherWarning.value?.classId;
-    if (ctx?.type === 'add' && Number.isFinite(Number(classId))) {
-        toggleInArray(addForm.class_ids, classId);
-    }
-    if (ctx?.type === 'edit' && Number.isFinite(Number(classId))) {
-        toggleInArray(editForm.class_ids, classId);
-    }
     closeClassTeacherWarning();
 };
 
@@ -176,35 +208,27 @@ const toggleEditBaseClass = (baseId) => {
 const onToggleAddStream = async (streamClassId) => {
     const id = Number(streamClassId);
     if (!Number.isFinite(id)) return;
-    if (addForm.class_ids.includes(id)) {
-        toggleAddClass(id);
-        return;
-    }
+    const wasSelected = addForm.class_ids.includes(id);
+    toggleAddClass(id);
+    if (wasSelected) return;
 
     const chk = await checkClassHasTeacher(id, null);
     if (chk.hasTeacher) {
         openClassTeacherWarning(id, chk.teachers, { type: 'add' });
-        return;
     }
-
-    toggleAddClass(id);
 };
 
 const onToggleEditStream = async (streamClassId) => {
     const id = Number(streamClassId);
     if (!Number.isFinite(id)) return;
-    if (editForm.class_ids.includes(id)) {
-        toggleEditClass(id);
-        return;
-    }
+    const wasSelected = editForm.class_ids.includes(id);
+    toggleEditClass(id);
+    if (wasSelected) return;
 
     const chk = await checkClassHasTeacher(id, editForm.id);
     if (chk.hasTeacher) {
         openClassTeacherWarning(id, chk.teachers, { type: 'edit' });
-        return;
     }
-
-    toggleEditClass(id);
 };
 
 const filteredSubjectsFor = (classIds) => {
@@ -301,14 +325,7 @@ const saveTeacher = () => {
 };
 
 const importSampleTeachers = () => {
-    if (!importForm.class_id) return;
-
-    router.post(route('teachers.import-samples'), importForm, {
-        preserveScroll: true,
-        onSuccess: () => {
-            showImportModal.value = false;
-        },
-    });
+    return;
 };
 
 const openDetails = (teacher) => {
@@ -522,11 +539,12 @@ const formatSubjectOption = (s) => {
                         Add Teacher
                     </button>
                     <button
+                        v-if="selectedTeacherIds.length"
                         type="button"
-                        class="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50"
-                        @click="showImportModal = true"
+                        class="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-red-700"
+                        @click="openBulkDeleteModal"
                     >
-                        Import Sample Teachers
+                        Delete selected ({{ selectedTeacherIds.length }})
                     </button>
                 </div>
             </div>
@@ -542,7 +560,7 @@ const formatSubjectOption = (s) => {
                     <div>
                         <h3 class="text-sm font-semibold text-gray-900">This class already has teacher(s)</h3>
                         <p class="mt-0.5 text-[11px] text-gray-500">
-                            Darasa hili tayari lina mwalimu. Unataka kuongeza mwalimu mwingine?
+                            Darasa hili tayari lina mwalimu. Mfumo unaruhusu walimu zaidi ya mmoja.
                         </p>
                     </div>
                     <button
@@ -571,22 +589,14 @@ const formatSubjectOption = (s) => {
                     </div>
                 </div>
 
-                <div class="mt-4 flex justify-end gap-2">
-                    <button
-                        type="button"
-                        class="rounded-md bg-gray-50 px-3 py-1.5 text-[11px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100"
-                        :disabled="classTeacherWarningLoading"
-                        @click="closeClassTeacherWarning"
-                    >
-                        Cancel
-                    </button>
+                <div class="mt-4 flex justify-end">
                     <button
                         type="button"
                         class="rounded-md bg-amber-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-amber-700 disabled:opacity-60"
                         :disabled="classTeacherWarningLoading"
                         @click="confirmClassTeacherWarning"
                     >
-                        {{ classTeacherWarningLoading ? 'Checking...' : 'Yes, add another' }}
+                        OK
                     </button>
                 </div>
             </div>
@@ -744,6 +754,14 @@ const formatSubjectOption = (s) => {
                         <table class="min-w-full text-left text-sm">
                             <thead>
                                 <tr class="border-b border-gray-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                    <th class="w-10 px-4 py-3">
+                                        <input
+                                            type="checkbox"
+                                            class="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                            :checked="isAllTeachersSelected"
+                                            @change="toggleSelectAllTeachers"
+                                        />
+                                    </th>
                                     <th class="px-4 py-3">Name</th>
                                     <th class="px-4 py-3">Phone</th>
                                     <th class="px-4 py-3">Check No.</th>
@@ -754,7 +772,7 @@ const formatSubjectOption = (s) => {
                             </thead>
                             <tbody>
                                 <tr v-if="teachers.length === 0">
-                                    <td colspan="6" class="px-4 py-10 text-center">
+                                    <td colspan="7" class="px-4 py-10 text-center">
                                         <div class="mx-auto max-w-sm">
                                             <div class="text-sm font-semibold text-gray-800">No teachers yet</div>
                                             <div class="mt-1 text-xs text-gray-500">Bado hujaongeza mwalimu. Bonyeza <span class="font-semibold">Add Teacher</span> kuanza.</div>
@@ -770,6 +788,14 @@ const formatSubjectOption = (s) => {
                                         'hover:bg-emerald-50/40'
                                     ]"
                                 >
+                            <td class="px-4 py-2 align-top">
+                                <input
+                                    type="checkbox"
+                                    class="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                    :checked="selectedTeacherIds.map((v) => Number(v)).includes(Number(teacher.id))"
+                                    @change="toggleSelectedTeacher(teacher.id)"
+                                />
+                            </td>
                             <td class="px-3 py-2 align-top">
                                 <div class="flex flex-col">
                                     <span class="text-gray-800">{{ teacher.name }}</span>
@@ -1308,66 +1334,32 @@ const formatSubjectOption = (s) => {
             </div>
         </div>
 
-        <!-- Import Sample Teachers modal -->
+        <!-- Bulk delete confirmation -->
         <div
-            v-if="showImportModal"
-            class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6 backdrop-blur-sm"
+            v-if="showBulkDeleteModal"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6 backdrop-blur-sm"
         >
-            <div class="w-full max-w-md rounded-xl bg-white p-5 text-xs text-gray-700 shadow-xl">
-                <div class="mb-3 flex items-center justify-between">
-                    <div>
-                        <h3 class="text-sm font-semibold text-gray-900">Import Sample Teachers</h3>
-                        <p class="mt-0.5 text-[11px] text-gray-500">
-                            Quickly create 38 sample teachers for a selected class and assign them to subjects.
-                        </p>
-                    </div>
+            <div class="w-full max-w-sm rounded-xl bg-white p-5 text-xs text-gray-700 shadow-xl">
+                <h3 class="mb-2 text-sm font-semibold text-gray-900">Delete selected teachers?</h3>
+                <p class="mb-3 text-[11px] text-gray-600">
+                    You are about to delete <span class="font-semibold">{{ selectedTeacherIds.length }}</span> teacher(s). This will also remove their class/subject assignments.
+                </p>
+                <div class="mt-3 flex justify-end gap-2">
                     <button
                         type="button"
-                        class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-[11px] font-bold text-gray-600 hover:bg-gray-200"
-                        @click="showImportModal = false"
+                        class="rounded-md bg-gray-50 px-3 py-1.5 text-[11px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100"
+                        @click="closeBulkDeleteModal"
                     >
-                        ×
+                        Cancel
+                    </button>
+                    <button
+                        type="button"
+                        class="rounded-md bg-red-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-red-700"
+                        @click="bulkDeleteTeachers"
+                    >
+                        Delete
                     </button>
                 </div>
-
-                <form class="space-y-4" @submit.prevent="importSampleTeachers">
-                    <div>
-                        <label class="mb-1 block text-[11px] font-medium">Class</label>
-                        <select
-                            v-model="importForm.class_id"
-                            class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] text-gray-800 focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            required
-                        >
-                            <option value="" disabled>Select class...</option>
-                            <option
-                                v-for="cls in classes"
-                                :key="cls.id"
-                                :value="cls.id"
-                            >
-                                {{ cls.name }}
-                            </option>
-                        </select>
-                        <p class="mt-1 text-[10px] text-gray-500">
-                            We will generate 38 sample teachers linked to this class and rotate them across subjects.
-                        </p>
-                    </div>
-
-                    <div class="mt-2 flex justify-end gap-2">
-                        <button
-                            type="button"
-                            class="rounded-md bg-gray-50 px-3 py-1.5 text-[11px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100"
-                            @click="showImportModal = false"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            type="submit"
-                            class="rounded-md bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-700"
-                        >
-                            Import Sample Teachers
-                        </button>
-                    </div>
-                </form>
             </div>
         </div>
     </AuthenticatedLayout>
