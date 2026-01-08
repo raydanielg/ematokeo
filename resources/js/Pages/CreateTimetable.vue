@@ -71,6 +71,15 @@ const typeLabel = computed(() => {
 
 const subjectPool = computed(() => (props.subjects || []).map((s) => s.subject_code));
 
+const classById = computed(() => {
+    const map = {};
+    (props.classes || []).forEach((c) => {
+        if (!c?.id) return;
+        map[String(c.id)] = c;
+    });
+    return map;
+});
+
 const subjectIdByCode = computed(() => {
     const map = {};
     (props.subjects || []).forEach((s) => {
@@ -84,7 +93,10 @@ const teacherInitialsForClassSubject = (schoolClassId, subjectCode) => {
     const classId = schoolClassId ? String(schoolClassId) : '';
     const code = String(subjectCode || '').trim();
 
-    const classMap = props.teacherAssignments?.[classId];
+    const cls = classById.value?.[classId];
+    const parentId = cls?.parent_class_id ? String(cls.parent_class_id) : '';
+
+    const classMap = props.teacherAssignments?.[classId] || (parentId ? props.teacherAssignments?.[parentId] : null);
     if (classMap && typeof classMap === 'object') {
         // Strict mode: if assignments exist for this class, do not fall back to global teachers.
         const fromAssignments = classMap?.[code];
@@ -99,7 +111,9 @@ const teacherInitialsForClassSubject = (schoolClassId, subjectCode) => {
 
 const classHasTeacherAssignments = (schoolClassId) => {
     const classId = schoolClassId ? String(schoolClassId) : '';
-    const classMap = props.teacherAssignments?.[classId];
+    const cls = classById.value?.[classId];
+    const parentId = cls?.parent_class_id ? String(cls.parent_class_id) : '';
+    const classMap = props.teacherAssignments?.[classId] || (parentId ? props.teacherAssignments?.[parentId] : null);
     return !!(classMap && typeof classMap === 'object' && Object.keys(classMap).length);
 };
 
