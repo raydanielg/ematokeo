@@ -603,7 +603,7 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                             $labelBase = trim((string) ($r->class_name ?? ''));
                         }
                         $stream = trim((string) ($r->class_stream ?? ''));
-                        $label = $stream !== '' ? ($labelBase . ' - ' . $stream) : $labelBase;
+                        $label = $stream !== '' ? ($stream . ' - ' . $labelBase) : $labelBase;
 
                         return [
                             'name' => $label,
