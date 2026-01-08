@@ -454,6 +454,17 @@ const limitsLoading = ref(false);
 const limitsSaving = ref(false);
 const limitsByKey = ref({});
 
+const selectedLimitClass = computed(() => {
+    const selectedId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
+    if (!Number.isFinite(selectedId)) return null;
+    return timetableClasses.value.find((c) => Number(c?.id) === selectedId) || null;
+});
+
+const selectedLimitClassHasSubjects = computed(() => {
+    const codes = Array.isArray(selectedLimitClass.value?.subject_codes) ? selectedLimitClass.value.subject_codes : [];
+    return codes.length > 0;
+});
+
 const csrfToken = () => {
     return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 };
@@ -476,7 +487,17 @@ const teacherSubjectRows = computed(() => {
         });
     });
 
-    return rows.sort((a, b) => {
+    const selectedId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
+    const selectedClass = Number.isFinite(selectedId)
+        ? timetableClasses.value.find((c) => Number(c?.id) === selectedId)
+        : null;
+    const classSubjectCodes = Array.isArray(selectedClass?.subject_codes) ? selectedClass.subject_codes : [];
+
+    const filtered = selectedClass
+        ? rows.filter((r) => classSubjectCodes.includes(r.subject_code))
+        : rows;
+
+    return filtered.sort((a, b) => {
         const tc = String(a.teacher_name || '').localeCompare(String(b.teacher_name || ''));
         if (tc !== 0) return tc;
         return String(a.subject_code || '').localeCompare(String(b.subject_code || ''));
@@ -1162,7 +1183,12 @@ const onDrop = (day, rowIndex, slotIndex) => {
                             <tbody>
                                 <tr v-if="!teacherSubjectRows.length">
                                     <td colspan="3" class="px-3 py-3 text-center text-[11px] text-gray-500">
-                                        No teacher-subject mappings found.
+                                        <span v-if="selectedLimitClassId && !selectedLimitClassHasSubjects">
+                                            No subjects assigned to this class.
+                                        </span>
+                                        <span v-else>
+                                            No teacher-subject mappings found.
+                                        </span>
                                     </td>
                                 </tr>
 

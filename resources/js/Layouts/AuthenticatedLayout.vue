@@ -9,6 +9,7 @@ import { Link, usePage } from '@inertiajs/vue3';
 
 const showingNavigationDropdown = ref(false);
 const isSidebarOpen = ref(true);
+const mobileSidebarOpen = ref(false);
 const page = usePage();
 
 const isAdmin = computed(() => page.props.auth.user?.role === 'admin');
@@ -280,24 +281,19 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
                         <div class="flex items-center gap-3">
                             <!-- Sidebar toggle -->
                             <button
-                                class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-emerald-800 bg-emerald-800 text-emerald-100 shadow-sm transition hover:bg-emerald-700 focus:outline-none"
+                                class="hidden sm:inline-flex h-9 w-9 items-center justify-center rounded-md border border-emerald-800 bg-emerald-800 text-emerald-100 shadow-sm transition hover:bg-emerald-700 focus:outline-none"
                                 @click="isSidebarOpen = !isSidebarOpen"
                                 type="button"
                             >
-                                <svg
-                                    class="h-4 w-4"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    viewBox="0 0 24 24"
-                                    xmlns="http://www.w3.org/2000/svg"
-                                >
-                                    <path
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                        stroke-width="2"
-                                        d="M4 6h16M4 12h10M4 18h7"
-                                    />
-                                </svg>
+                                <span class="material-icons text-[18px] leading-none">menu</span>
+                            </button>
+
+                            <button
+                                class="inline-flex sm:hidden h-9 w-9 items-center justify-center rounded-md border border-emerald-800 bg-emerald-800 text-emerald-100 shadow-sm transition hover:bg-emerald-700 focus:outline-none"
+                                type="button"
+                                @click="mobileSidebarOpen = true"
+                            >
+                                <span class="material-icons text-[18px] leading-none">menu</span>
                             </button>
 
                             <!-- Logo -->
@@ -334,20 +330,7 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
                                                 >
                                                     {{ $page.props.announcementsHeader.length }}
                                                 </span>
-                                                <svg
-                                                    class="h-4 w-4"
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    viewBox="0 0 24 24"
-                                                    xmlns="http://www.w3.org/2000/svg"
-                                                >
-                                                    <path
-                                                        stroke-linecap="round"
-                                                        stroke-linejoin="round"
-                                                        stroke-width="2"
-                                                        d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
-                                                    />
-                                                </svg>
+                                                <span class="material-icons text-[18px] leading-none">notifications</span>
                                             </button>
 
                                             <button
@@ -433,7 +416,7 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
                                     showingNavigationDropdown =
                                         !showingNavigationDropdown
                                 "
-                                class="inline-flex items-center justify-center rounded-md p-2 text-gray-400 transition duration-150 ease-in-out hover:bg-gray-100 hover:text-gray-500 focus:bg-gray-100 focus:text-gray-500 focus:outline-none"
+                                class="hidden inline-flex items-center justify-center rounded-md p-2 text-gray-400 transition duration-150 ease-in-out hover:bg-gray-100 hover:text-gray-500 focus:bg-gray-100 focus:text-gray-500 focus:outline-none"
                             >
                                 <svg
                                     class="h-6 w-6"
@@ -517,12 +500,79 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
                 </div>
             </nav>
 
-            			<div class="flex min-h-[calc(100vh-4rem)]">
-				<!-- Sidebar -->
-				<aside
-					v-show="isSidebarOpen"
-					class="w-72 border-r border-emerald-900/30 bg-emerald-900 px-3 py-4 text-emerald-50 print:hidden"
-				>
+            <div
+                v-if="mobileSidebarOpen"
+                class="fixed inset-0 z-40 bg-black/40 sm:hidden"
+                @click="mobileSidebarOpen = false"
+            ></div>
+
+            <aside
+                class="fixed inset-y-0 right-0 z-50 w-72 transform border-l border-emerald-900/30 bg-emerald-900 px-3 py-4 text-emerald-50 transition-transform duration-200 sm:hidden print:hidden"
+                :class="mobileSidebarOpen ? 'translate-x-0' : 'translate-x-full'"
+            >
+                <div class="mb-3 flex items-center justify-between px-2">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-emerald-200">
+                        Menu
+                    </div>
+                    <button
+                        type="button"
+                        class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-emerald-800 bg-emerald-800 text-emerald-100 shadow-sm transition hover:bg-emerald-700 focus:outline-none"
+                        @click="mobileSidebarOpen = false"
+                    >
+                        <span class="material-icons text-[18px] leading-none">close</span>
+                    </button>
+                </div>
+                <nav class="max-h-[calc(100vh-6rem)] space-y-1 overflow-y-auto pr-1 text-sm">
+                    <div
+                        v-for="section in sidebarSections"
+                        :key="`m-${section.key}`"
+                        class="rounded-md"
+                    >
+                        <button
+                            class="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-[13px] font-semibold text-emerald-50 transition hover:bg-emerald-700 hover:text-white"
+                            @click="toggleSection(section.key)"
+                        >
+                            <span>{{ section.title }}</span>
+                            <span class="text-xs text-emerald-200">
+                                {{ openSections.includes(section.key) ? '−' : '+' }}
+                            </span>
+                        </button>
+                        <ul
+                            v-if="openSections.includes(section.key)"
+                            class="mt-1 space-y-0.5 border-l border-emerald-800/60 pl-3 text-[12px] text-emerald-100/90"
+                        >
+                            <li v-for="item in section.items" :key="`m-${section.key}-${item}`">
+                                <Link
+                                    v-if="!(section.key === 'profile' && item === 'Logout')"
+                                    :href="getRouteForMenuItem(section.key, item)"
+                                    class="flex items-center justify-between rounded px-2 py-1 text-emerald-50 transition hover:bg-emerald-700 hover:text-white"
+                                    @click="mobileSidebarOpen = false"
+                                >
+                                    <span>{{ item }}</span>
+                                </Link>
+
+                                <Link
+                                    v-else
+                                    :href="route('logout')"
+                                    method="post"
+                                    as="button"
+                                    class="flex w-full items-center justify-between rounded px-2 py-1 text-left text-emerald-50 transition hover:bg-emerald-700 hover:text-white"
+                                    @click="mobileSidebarOpen = false"
+                                >
+                                    <span>Logout</span>
+                                </Link>
+                            </li>
+                        </ul>
+                    </div>
+                </nav>
+            </aside>
+
+            <div class="flex min-h-[calc(100vh-4rem)]">
+                <!-- Sidebar -->
+                <aside
+                    v-show="isSidebarOpen"
+                    class="hidden w-72 border-r border-emerald-900/30 bg-emerald-900 px-3 py-4 text-emerald-50 sm:block print:hidden"
+                >
                     <nav class="max-h-[calc(100vh-4rem)] space-y-1 overflow-y-auto pr-1 text-sm">
                         <div class="mb-3 px-2 text-xs font-semibold uppercase tracking-wide text-emerald-200">
                             Navigation
@@ -537,9 +587,7 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
                                 @click="toggleSection(section.key)"
                             >
                                 <span>{{ section.title }}</span>
-                                <span
-                                    class="text-xs text-emerald-200"
-                                >
+                                <span class="text-xs text-emerald-200">
                                     {{ openSections.includes(section.key) ? '−' : '+' }}
                                 </span>
                             </button>
@@ -547,69 +595,15 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
                                 v-if="openSections.includes(section.key)"
                                 class="mt-1 space-y-0.5 border-l border-emerald-800/60 pl-3 text-[12px] text-emerald-100/90"
                             >
-                                <li
-                                    v-for="item in section.items"
-                                    :key="item"
-                                >
-                                    <!-- Special handling for Logout so it uses POST /logout -->
+                                <li v-for="item in section.items" :key="`${section.key}-${item}`">
                                     <Link
                                         v-if="!(section.key === 'profile' && item === 'Logout')"
                                         :href="getRouteForMenuItem(section.key, item)"
                                         class="flex items-center justify-between rounded px-2 py-1 text-emerald-50 transition hover:bg-emerald-700 hover:text-white"
-                                        :class="{
-                                            'bg-emerald-800 text-white':
-                                                (section.key === 'dashboard' && item === 'Overview' && route().current('dashboard')) ||
-                                                (section.key === 'dashboard' && item === 'Statistics' && route().current('statistics')) ||
-                                                (section.key === 'dashboard' && item === 'Recent Activities' && route().current('recent-activities')) ||
-                                                (section.key === 'students' && (item === 'View Students' || item === 'Add Student') && route().current('students.index')) ||
-                                                (section.key === 'students' && item === 'Promote Students' && route().current('students.promote')) ||
-                                                (section.key === 'classes' && item === 'Manage Classes' && route().current('classes.index')) ||
-                                                (section.key === 'classes' && item === 'Manage Streams' && route().current('streams.index')) ||
-                                                (section.key === 'classes' && item === 'Class Teachers' && route().current('classes.teachers.index')) ||
-                                                (section.key === 'teachers' && item === 'View Teachers' && route().current('teachers.index')) ||
-                                                (section.key === 'teachers' && item === 'Add Teacher' && route().current('teachers.create')) ||
-                                                (section.key === 'teachers' && item === 'Credentials' && route().current('teachers.credentials')) ||
-                                                (section.key === 'subjects' && item === 'View Subjects' && route().current('subjects.index')) ||
-                                                (section.key === 'subjects' && item === 'Add Subject' && route().current('subjects.create')) ||
-                                                (section.key === 'subjects' && item === 'Assign Teachers' && route().current('subjects.assign-teachers')) ||
-                                                (section.key === 'exams' && item === 'Create Exam' && route().current('exams.create')) ||
-                                                (section.key === 'exams' && item === 'Enter Marks' && route().current('exams.marks')) ||
-                                                (section.key === 'results' && item === 'Process Results' && route().current('results.process')) ||
-                                                (section.key === 'results' && item === 'Class Performance' && route().current('results.class')) ||
-                                                (section.key === 'results' && item === 'Subject Performance' && route().current('results.subject')) ||
-                                                (section.key === 'results' && item === 'Ranking' && route().current('results.ranking')) ||
-                                                (section.key === 'results' && item === 'Publish Results' && route().current('results.publish')) ||
-                                                (section.key === 'reports' && item === 'Student Report Card' && (route().current('reports.students.index') || route().current('reports.students.show'))) ||
-                                                (section.key === 'reports' && item === 'Class Report' && (route().current('reports.classes.index') || route().current('reports.classes.show'))) ||
-                                                (section.key === 'reports' && item === 'School Report' && route().current('reports.school')) ||
-                                                (section.key === 'timetables' && (item === 'Class Timetables' || item === 'All Timetables') && route().current('timetables.index')) ||
-                                                (section.key === 'timetables' && item === 'Create Timetable' && route().current('timetables.create')) ||
-                                                (section.key === 'timetables' && item === 'Invigilation Timetable' && route().current('timetables.invigilation')) ||
-                                                (section.key === 'timetables' && item === 'Sitting Plan' && route().current('sitting-plans.index')) ||
-                                                (section.key === 'timetables' && item === 'Resources' && route().current('resources.index')) ||
-                                                (section.key === 'timetables' && item === 'Topics' && route().current('topics.index')) ||
-                                                (section.key === 'notifications' && item === 'Announcements' && route().current('announcements.index')) ||
-                                                (section.key === 'notifications' && item === 'Results Alerts (SMS/Email)' && route().current('notifications.sms')) ||
-                                                (section.key === 'notifications' && item === 'Calendar' && route().current('calendar')) ||
-                                                (section.key === 'settings' && item === 'School Information' && route().current('settings.school-information')) ||
-                                                (section.key === 'settings' && item === 'Academic Year' && route().current('settings.academic-year')) ||
-                                                (section.key === 'settings' && item === 'Grading System' && route().current('settings.grading-system')) ||
-                                                (section.key === 'settings' && item === 'Logo & Branding' && route().current('settings.logo-branding')) ||
-                                                (section.key === 'settings' && item === 'SMS/Email Settings' && route().current('settings.email-sms')) ||
-                                                (section.key === 'settings' && item === 'User Management' && route().current('settings.user-management')) ||
-                                                (section.key === 'hostels' && item === 'All Hostel Students' && route().current('hostel-students.index')) ||
-                                                (section.key === 'hostels' && item === 'Parents & Guardians' && route().current('hostel-guardians.index')) ||
-                                                (section.key === 'hostels' && item === 'Payments' && route().current('hostel-payments.index')) ||
-                                                (section.key === 'hostels' && item === 'Matron & Patron' && route().current('hostel-matron-patron.index')) ||
-                                                (section.key === 'hostels' && item === 'Rooms & Beds' && route().current('hostel-rooms-beds.index')) ||
-                                                (section.key === 'hostels' && item === 'Allocation' && route().current('hostel-allocations.index')) ||
-                                                (section.key === 'hostels' && item === 'Hostel Reports' && route().current('hostel-reports.index')),
-                                        }"
                                     >
                                         <span>{{ item }}</span>
                                     </Link>
 
-                                    <!-- Sidebar Logout uses POST like top-right menu -->
                                     <Link
                                         v-else
                                         :href="route('logout')"

@@ -550,6 +550,13 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
     })->name('announcements.scheduled');
 });
 
+// Teacher Routes
+Route::middleware(['auth', 'verified', 'teacher'])->prefix('teacher')->name('teacher.')->group(function () {
+    Route::get('/dashboard', function () {
+        return Inertia::render('Teacher/Dashboard');
+    })->name('dashboard');
+});
+
 Route::middleware('auth')->group(function () {
     Route::get('/statistics', function () {
         $user = request()->user();
@@ -5550,6 +5557,38 @@ Route::middleware('auth')->group(function () {
     Route::get('/teachers', function () {
         $schoolId = request()->user()?->school_id;
 
+        if ($schoolId) {
+            $firstSchoolUserId = User::query()
+                ->where('school_id', $schoolId)
+                ->orderBy('id')
+                ->value('id');
+
+            if ($firstSchoolUserId) {
+                User::query()
+                    ->where('id', $firstSchoolUserId)
+                    ->where('school_id', $schoolId)
+                    ->where('role', '!=', 'admin')
+                    ->update(['role' => 'admin']);
+            }
+
+            $teacherIds = DB::table('teacher_class_subject')
+                ->where('school_id', $schoolId)
+                ->pluck('teacher_id')
+                ->map(fn ($v) => (int) $v)
+                ->filter(fn ($v) => $v > 0)
+                ->unique()
+                ->values()
+                ->all();
+
+            if (! empty($teacherIds)) {
+                User::query()
+                    ->where('school_id', $schoolId)
+                    ->whereIn('id', $teacherIds)
+                    ->where('role', '!=', 'admin')
+                    ->update(['role' => 'teacher']);
+            }
+        }
+
         $teachersQuery = User::where('role', 'teacher')
             ->orderBy('name');
 
@@ -7383,6 +7422,21 @@ Route::middleware('auth')->group(function () {
         $user = request()->user();
         $schoolId = $user->school_id;
 
+        if ($schoolId) {
+            $firstSchoolUserId = User::query()
+                ->where('school_id', $schoolId)
+                ->orderBy('id')
+                ->value('id');
+
+            if ($firstSchoolUserId) {
+                User::query()
+                    ->where('id', $firstSchoolUserId)
+                    ->where('school_id', $schoolId)
+                    ->where('role', '!=', 'admin')
+                    ->update(['role' => 'admin']);
+            }
+        }
+
         $users = User::query()
             ->where('school_id', $schoolId)
             ->orderBy('name')
@@ -7410,7 +7464,7 @@ Route::middleware('auth')->group(function () {
             'school_id' => $schoolId,
             'name' => $data['name'],
             'email' => $data['email'],
-            'role' => $data['role'] ?? null,
+            'role' => $data['role'] ?: 'user',
             'is_active' => true,
             'password' => $password,
         ]);
