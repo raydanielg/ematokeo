@@ -77,7 +77,13 @@ const clearFilters = () => {
                                 @change="applyFilters"
                             >
                                 <option value="">All assigned classes</option>
-                                <option v-for="c in classes" :key="c" :value="c">{{ c }}</option>
+                                <option
+                                    v-for="c in classes"
+                                    :key="c.key"
+                                    :value="c.key"
+                                >
+                                    {{ c.label }}
+                                </option>
                             </select>
                         </div>
 

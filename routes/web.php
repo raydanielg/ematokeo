@@ -805,17 +805,31 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
 
             $assignedClasses = $assignedClassesQuery->get();
 
-            $classes = $assignedClasses
-                ->map(fn ($c) => trim((string) ($c->level ?? '')))
-                ->filter(fn ($name) => $name !== '')
-                ->unique()
-                ->values()
-                ->all();
+            $classOptions = $assignedClasses
+                ->map(function ($c) {
+                    $level = trim((string) ($c->level ?? ''));
+                    $stream = trim((string) ($c->stream ?? ''));
 
-            $allowedKeys = $assignedClasses
-                ->map(fn ($c) => trim((string) ($c->level ?? '')) . '|' . trim((string) ($c->stream ?? '')))
-                ->unique()
+                    if ($level === '') {
+                        return null;
+                    }
+
+                    $key = $level . '|' . $stream;
+                    $label = $stream !== '' ? ($level . ' - ' . $stream) : $level;
+
+                    return [
+                        'key' => $key,
+                        'level' => $level,
+                        'stream' => $stream,
+                        'label' => $label,
+                    ];
+                })
+                ->filter()
+                ->unique('key')
+                ->sortBy('label')
                 ->values();
+
+            $allowedKeys = $classOptions->pluck('key');
 
             $studentsQuery = \App\Models\Student::query();
             if ($schoolId) {
@@ -832,7 +846,14 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
             }
 
             if ($classFilter !== '') {
-                $studentsQuery->where('class_level', $classFilter);
+                $parts = explode('|', $classFilter, 2);
+                $filterLevel = isset($parts[0]) ? trim((string) $parts[0]) : '';
+                $filterStream = isset($parts[1]) ? trim((string) $parts[1]) : '';
+
+                if ($filterLevel !== '') {
+                    $studentsQuery->where('class_level', $filterLevel)
+                        ->whereRaw('COALESCE(stream, "") = ?', [$filterStream]);
+                }
             }
 
             if ($q !== '') {
@@ -850,7 +871,7 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
 
             return Inertia::render('Teacher/Students', [
                 'students' => $students,
-                'classes' => $classes,
+                'classes' => $classOptions,
                 'filters' => [
                     'class' => $classFilter !== '' ? $classFilter : null,
                     'q' => $q !== '' ? $q : '',
