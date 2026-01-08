@@ -97,6 +97,22 @@ const teacherInitialsForClassSubject = (schoolClassId, subjectCode) => {
     return teacherBySubject.value?.[code] || '';
 };
 
+const pickTeacherInitialForSlot = (schoolClassId, subjectCode, day, slotIndex) => {
+    const raw = teacherInitialsForClassSubject(schoolClassId, subjectCode);
+    const parts = String(raw || '')
+        .split('/')
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+    if (!parts.length) return '';
+    if (parts.length === 1) return parts[0];
+
+    const d = String(day || '').toUpperCase();
+    const dayIdx = days.indexOf(d);
+    const seed = (Math.max(0, dayIdx) * 31) + Number(slotIndex || 0);
+    return parts[seed % parts.length];
+};
+
 const teacherBySubject = computed(() => {
     const map = {};
 
@@ -555,7 +571,8 @@ const generateSampleTimetable = () => {
         };
 
         const setSlot = (day, slotIndex, subject) => {
-            const teacher = teacherInitialsForClassSubject(classId, subject) || (teachers[subject] || '');
+            const picked = pickTeacherInitialForSlot(classId, subject, day, slotIndex);
+            const teacher = picked || (teachers[subject] || '');
             const teacherInitials = typeof teacher === 'string' ? teacher : (teacher?.initials || teacher?.name || '');
             const teacherName = typeof teacher === 'string' ? teacher : (teacher?.name || teacher?.initials || '');
             rowByDay[day].slots[slotIndex] = {
