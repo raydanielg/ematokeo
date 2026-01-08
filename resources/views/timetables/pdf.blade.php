@@ -70,6 +70,7 @@
             <th>08:40 - 09:20</th>
             <th>09:20 - 10:00</th>
             <th>10:00 - 10:40</th>
+            <th>10:40 - 11:05</th>
             <th>11:05 - 11:45</th>
             <th>11:45 - 12:25</th>
             <th>12:25 - 01:05</th>
@@ -81,7 +82,7 @@
         </thead>
         <tbody>
         <tr>
-            <td colspan="16" style="text-align: left;">
+            <td colspan="17" style="text-align: left;">
                 This PDF is an archived copy of the timetable header. The detailed grid is currently only available in the web preview.
             </td>
         </tr>

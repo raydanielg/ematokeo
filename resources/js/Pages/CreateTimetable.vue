@@ -304,7 +304,7 @@ const schedule = ref({});
 
 const scheduleStorageKey = computed(() => {
     const schoolId = props.school?.id ?? 'school';
-    return `timetable_schedule_v1_${schoolId}`;
+    return `timetable_schedule_v2_${schoolId}`;
 });
 
 const loadScheduleFromStorage = () => {
@@ -360,10 +360,10 @@ const generateSampleTimetable = () => {
                 slots: [],
             };
 
-            // 8 academic slots per row (3 before break, 5 after), index 0-7
+            // 9 academic slots per row (4 before break, 5 after), index 0-8
             // Choose subjects randomly from the pool so that each regenerate
             // gives a slightly different distribution per class and per day.
-            for (let i = 0; i < 8; i += 1) {
+            for (let i = 0; i < 9; i += 1) {
                 const subject = classSubjectCodes[Math.floor(Math.random() * classSubjectCodes.length)];
                 row.slots.push({
                     subject,
@@ -454,6 +454,9 @@ const limitsLoading = ref(false);
 const limitsSaving = ref(false);
 const limitsByKey = ref({});
 
+const limitationsMode = ref('subject_only');
+const subjectLimitsById = ref({});
+
 const selectedLimitClass = computed(() => {
     const selectedId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
     if (!Number.isFinite(selectedId)) return null;
@@ -493,6 +496,10 @@ const teacherSubjectRows = computed(() => {
         : null;
     const classSubjectCodes = Array.isArray(selectedClass?.subject_codes) ? selectedClass.subject_codes : [];
 
+    if (!selectedClass) {
+        return [];
+    }
+
     const filtered = selectedClass
         ? rows.filter((r) => classSubjectCodes.includes(r.subject_code))
         : rows;
@@ -502,6 +509,28 @@ const teacherSubjectRows = computed(() => {
         if (tc !== 0) return tc;
         return String(a.subject_code || '').localeCompare(String(b.subject_code || ''));
     });
+});
+
+const classSubjectRows = computed(() => {
+    const selectedId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
+    const selectedClass = Number.isFinite(selectedId)
+        ? timetableClasses.value.find((c) => Number(c?.id) === selectedId)
+        : null;
+
+    if (!selectedClass) {
+        return [];
+    }
+
+    const codes = Array.isArray(selectedClass?.subject_codes) ? selectedClass.subject_codes : [];
+    const subjects = (props.subjects || [])
+        .filter((s) => codes.includes(s.subject_code))
+        .map((s) => ({
+            subject_id: s.id,
+            subject_code: s.subject_code,
+            subject_name: s.name,
+        }));
+
+    return subjects.sort((a, b) => String(a.subject_code || '').localeCompare(String(b.subject_code || '')));
 });
 
 const limitationClassOptions = computed(() => {
@@ -518,6 +547,40 @@ const limitationClassOptions = computed(() => {
 });
 
 const limitKey = (teacherId, subjectId) => `${teacherId}:${subjectId}`;
+
+const subjectLimitKey = (subjectId) => `${subjectId}`;
+
+const loadSubjectLimits = async () => {
+    if (!selectedLimitClassId.value) {
+        subjectLimitsById.value = {};
+        return;
+    }
+
+    limitsLoading.value = true;
+    try {
+        const res = await fetch(
+            `${route('timetables.class-subject-limits.index')}?school_class_id=${encodeURIComponent(selectedLimitClassId.value)}`,
+            {
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    Accept: 'application/json',
+                },
+                credentials: 'same-origin',
+            }
+        );
+
+        const json = await res.json();
+        const map = {};
+        (json?.limits || []).forEach((row) => {
+            map[subjectLimitKey(row.subject_id)] = row.periods_per_week;
+        });
+        subjectLimitsById.value = map;
+    } catch {
+        subjectLimitsById.value = {};
+    } finally {
+        limitsLoading.value = false;
+    }
+};
 
 const loadLimits = async () => {
     if (!selectedLimitClassId.value) {
@@ -587,31 +650,83 @@ const saveLimits = async () => {
     }
 };
 
+const saveSubjectLimits = async () => {
+    if (!selectedLimitClassId.value) return;
+
+    limitsSaving.value = true;
+    try {
+        const limits = classSubjectRows.value
+            .map((row) => {
+                const key = subjectLimitKey(row.subject_id);
+                const val = subjectLimitsById.value[key];
+                return {
+                    school_class_id: Number(selectedLimitClassId.value),
+                    subject_id: row.subject_id,
+                    periods_per_week: val === '' || val === null || val === undefined ? 0 : Number(val),
+                };
+            })
+            .filter((r) => Number.isFinite(r.periods_per_week) && r.periods_per_week >= 0);
+
+        await fetch(route('timetables.class-subject-limits.save'), {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': csrfToken(),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ limits }),
+        });
+
+        showLimitationsModal.value = false;
+    } finally {
+        limitsSaving.value = false;
+    }
+};
+
 watch(showLimitationsModal, (open) => {
     if (!open) return;
     if (!selectedLimitClassId.value && limitationClassOptions.value.length) {
         selectedLimitClassId.value = limitationClassOptions.value[0].id;
     }
-    loadLimits();
+    if (limitationsMode.value === 'subject_only') {
+        loadSubjectLimits();
+    } else {
+        loadLimits();
+    }
 });
 
 watch(selectedLimitClassId, () => {
     if (!showLimitationsModal.value) return;
-    loadLimits();
+    if (limitationsMode.value === 'subject_only') {
+        loadSubjectLimits();
+    } else {
+        loadLimits();
+    }
+});
+
+watch(limitationsMode, () => {
+    if (!showLimitationsModal.value) return;
+    if (limitationsMode.value === 'subject_only') {
+        loadSubjectLimits();
+    } else {
+        loadLimits();
+    }
 });
 
 const draggedCell = ref(null);
 
 const isDraggableSlot = (day, slotIndex) => {
     // Morning lessons (08:00-10:00) always draggable
-    if (slotIndex >= 0 && slotIndex <= 2) {
+    if (slotIndex >= 0 && slotIndex <= 3) {
         return true;
     }
 
     // Mid-day lessons between breaks (11:05-13:05)
-    // Keep Friday MEWAKA slot (index 5) fixed
-    if (slotIndex >= 3 && slotIndex <= 5) {
-        if (day === 'FRIDAY' && slotIndex === 5) {
+    // Keep Friday MEWAKA slot (index 6) fixed
+    if (slotIndex >= 4 && slotIndex <= 6) {
+        if (day === 'FRIDAY' && slotIndex === 6) {
             return false;
         }
 
@@ -620,7 +735,7 @@ const isDraggableSlot = (day, slotIndex) => {
 
     // Afternoon lessons after second break (13:20-14:40)
     // Keep special activities (RELIGION, CLUBS, SPORTS) fixed on Wed/Thu/Fri
-    if (slotIndex >= 6 && slotIndex <= 7) {
+    if (slotIndex >= 7 && slotIndex <= 8) {
         return !['WEDNESDAY', 'THURSDAY', 'FRIDAY'].includes(day);
     }
 
@@ -824,6 +939,9 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                     <th class="w-18 border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
                                         10:00 - 10:40 AM
                                     </th>
+                                    <th class="w-18 border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
+                                        10:40 - 11:05 AM
+                                    </th>
                                     <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
                                         11:05 - 11:45 AM
                                     </th>
@@ -879,9 +997,9 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             PREP
                                         </td>
 
-                                        <!-- 3 slots before first break (08:00-08:40, 08:40-09:20, 09:20-10:00) - normal lessons for all days -->
+                                        <!-- 4 slots before first break (08:00-08:40, 08:40-09:20, 09:20-10:00, 10:00-10:40) - normal lessons for all days -->
                                         <td
-                                            v-for="(slot, index) in row.slots.slice(0, 3)"
+                                            v-for="(slot, index) in row.slots.slice(0, 4)"
                                             :key="`am-${index}`"
                                             class="border border-slate-300 bg-emerald-50 px-1 py-1 text-center"
                                             :draggable="isDraggableSlot(day, index)"
@@ -893,7 +1011,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             <div class="text-[8px] text-gray-600">{{ slot.teacher }}</div>
                                         </td>
 
-                                        <!-- First BREAK column (10:00-10:40) -->
+                                        <!-- First BREAK column (10:40-11:05) -->
                                         <td class="border border-slate-300 bg-sky-200 px-1 py-1 text-center font-semibold text-sky-900">
                                             BREAK
                                         </td>
@@ -901,13 +1019,13 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                         <!-- 3 slots between breaks (11:05-11:45, 11:45-12:25, 12:25-01:05)
                                              - normal lessons, except Friday last slot is MEWAKA -->
                                         <td
-                                            v-for="(slot, index) in row.slots.slice(3, 6)"
+                                            v-for="(slot, index) in row.slots.slice(4, 7)"
                                             :key="`mid-${index}`"
                                             class="border border-slate-300 bg-indigo-50 px-1 py-1 text-center"
-                                            :draggable="isDraggableSlot(day, 3 + index)"
-                                            @dragstart="isDraggableSlot(day, 3 + index) && onDragStart(day, originalIndex, 3 + index)"
+                                            :draggable="isDraggableSlot(day, 4 + index)"
+                                            @dragstart="isDraggableSlot(day, 4 + index) && onDragStart(day, originalIndex, 4 + index)"
                                             @dragover.prevent
-                                            @drop="isDraggableSlot(day, 3 + index) && onDrop(day, originalIndex, 3 + index)"
+                                            @drop="isDraggableSlot(day, 4 + index) && onDrop(day, originalIndex, 4 + index)"
                                         >
                                             <template v-if="day === 'FRIDAY' && index === 2">
                                                 <div class="font-semibold text-orange-700">MEWAKA</div>
@@ -925,7 +1043,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
 
                                         <!-- 2 slots after second break (01:20-02:00, 02:00-02:40) -->
                                         <td
-                                            v-for="(slot, index) in row.slots.slice(6, 8)"
+                                            v-for="(slot, index) in row.slots.slice(7, 9)"
                                             :key="`pm-${index}`"
                                             :class="[
                                                 'border border-slate-300 px-1 py-1 text-center',
@@ -937,10 +1055,10 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                                             ? 'bg-lime-300 text-[9px] font-semibold text-lime-900'
                                                             : 'bg-indigo-50',
                                             ]"
-                                            :draggable="isDraggableSlot(day, 6 + index)"
-                                            @dragstart="isDraggableSlot(day, 6 + index) && onDragStart(day, originalIndex, 6 + index)"
+                                            :draggable="isDraggableSlot(day, 7 + index)"
+                                            @dragstart="isDraggableSlot(day, 7 + index) && onDragStart(day, originalIndex, 7 + index)"
                                             @dragover.prevent
-                                            @drop="isDraggableSlot(day, 6 + index) && onDrop(day, originalIndex, 6 + index)"
+                                            @drop="isDraggableSlot(day, 7 + index) && onDrop(day, originalIndex, 7 + index)"
                                         >
                                             <template v-if="day === 'WEDNESDAY'">
                                                 <div>RELIGION</div>
@@ -965,7 +1083,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                     </template>
                                     <!-- Separator between days -->
                                     <tr>
-                                        <td :colspan="5 + 8 + 2 + 1" class="h-1 bg-yellow-300"></td>
+                                        <td :colspan="5 + 9 + 2 + 1" class="h-1 bg-yellow-300"></td>
                                     </tr>
                                 </template>
                             </tbody>
@@ -1168,11 +1286,58 @@ const onDrop = (day, rowIndex, slotIndex) => {
                             </select>
                         </div>
 
+                        <div>
+                            <label class="mb-1 block text-[11px] font-medium">Mode</label>
+                            <select
+                                v-model="limitationsMode"
+                                class="w-56 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                            >
+                                <option value="subject_only">Subject limitation</option>
+                                <option value="teacher_subject">Teacher + Subject limitation</option>
+                            </select>
+                        </div>
+
                         <div v-if="limitsLoading" class="text-[11px] text-gray-500">Loading...</div>
                     </div>
 
                     <div class="overflow-hidden rounded-lg border border-gray-200">
-                        <table class="min-w-full border-collapse text-[11px]">
+                        <table v-if="limitationsMode === 'subject_only'" class="min-w-full border-collapse text-[11px]">
+                            <thead>
+                                <tr class="bg-gray-50 text-left">
+                                    <th class="border-b border-gray-200 px-3 py-2">Subject</th>
+                                    <th class="border-b border-gray-200 px-3 py-2">Periods / Week</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-if="!classSubjectRows.length">
+                                    <td colspan="2" class="px-3 py-3 text-center text-[11px] text-gray-500">
+                                        <span v-if="!selectedLimitClassId">Select a class to view subject limitations.</span>
+                                        <span v-else-if="selectedLimitClassId && !selectedLimitClassHasSubjects">No subjects assigned to this class.</span>
+                                        <span v-else>No subjects found.</span>
+                                    </td>
+                                </tr>
+
+                                <tr v-for="row in classSubjectRows" :key="row.subject_id" class="hover:bg-gray-50">
+                                    <td class="border-b border-gray-100 px-3 py-2">
+                                        <div class="font-medium text-gray-800">{{ row.subject_code }}</div>
+                                        <div class="text-[10px] text-gray-500">{{ row.subject_name }}</div>
+                                    </td>
+                                    <td class="border-b border-gray-100 px-3 py-2">
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            max="50"
+                                            class="w-24 rounded-md border border-gray-300 px-2 py-1 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                            :disabled="!selectedLimitClassId"
+                                            :value="subjectLimitsById[subjectLimitKey(row.subject_id)] ?? 0"
+                                            @input="(e) => { subjectLimitsById[subjectLimitKey(row.subject_id)] = e.target.value; }"
+                                        />
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <table v-else class="min-w-full border-collapse text-[11px]">
                             <thead>
                                 <tr class="bg-gray-50 text-left">
                                     <th class="border-b border-gray-200 px-3 py-2">Teacher</th>
@@ -1183,12 +1348,9 @@ const onDrop = (day, rowIndex, slotIndex) => {
                             <tbody>
                                 <tr v-if="!teacherSubjectRows.length">
                                     <td colspan="3" class="px-3 py-3 text-center text-[11px] text-gray-500">
-                                        <span v-if="selectedLimitClassId && !selectedLimitClassHasSubjects">
-                                            No subjects assigned to this class.
-                                        </span>
-                                        <span v-else>
-                                            No teacher-subject mappings found.
-                                        </span>
+                                        <span v-if="!selectedLimitClassId">Select a class to view teacher limitations.</span>
+                                        <span v-else-if="selectedLimitClassId && !selectedLimitClassHasSubjects">No subjects assigned to this class.</span>
+                                        <span v-else>No teacher-subject mappings found.</span>
                                     </td>
                                 </tr>
 
@@ -1217,6 +1379,73 @@ const onDrop = (day, rowIndex, slotIndex) => {
                         </table>
                     </div>
 
+                    <div class="mt-5 rounded-lg border border-gray-200 bg-gray-50 p-4">
+                        <pre class="whitespace-pre-wrap text-[11px] leading-relaxed text-gray-700">Jedwali la Muhtasari wa Mzigo wa Mwalimu (Kwa Zoezi):
+No.	Subject	Form I &amp; II	Form III &amp; IV	Jumla kwa Wiki
+1.	Hisabati	5	5	10
+2.	Physics	3	4	7
+3.	Computer Science	4	4	8
+Jumla				25
+Vipengele vya Zoezi Unaweza Kufanya:
+Chagua mchanganyiko tofauti wa masomo.
+
+Badilisha ngazi za masomo (mfano: Fomu I &amp; II tu).
+
+Ongeza idadi ya walimu na uhesabu usambazaji wa mzigo kwa shule nzima.
+
+Tengeneza chati ya pie au bar kuonyesha usambazaji wa vipindi.
+
+Kama unataka, naweza kukusaidia kuandaa hii kwenye Excel na kukupa faili iliyo na:
+
+Jedwali linaloweza kurekebishwa
+
+Fomu za kuhesabu automatikali
+
+Chati za kuona
+
+Tuambie unapendelea kuendelea vipi!
+
+andika yote kama iluvo kwnye podf usibadilsihe andika kila kitu kama kilivyo
+Hapa ni nakala kamili ya maudhui ya faili yako kama ilivyo, bila mabadiliko yoyote:
+
+===== Page 1 =====
+
+Table 4: Compulsory Core Subjects and the Number of Periods per Week
+No.	Subject	Number of periods per week
+Form I &amp; II	Form III &amp; IV
+1.	Mathematics	5	5
+2.	Kiswahili	4	4
+3.	English	5	5
+4.	Business studies	3	3
+5.	Geography	2	3
+6.	Historia ya Tanzania na Maadili	3	3
+Table 5: Electric Subjects and Number of Periods per Week
+No.	Subject	Number of periods per week
+Form I &amp; II	Form III &amp; IV
+1.	Physics	3	4
+2.	Chemistry	3	4
+3.	Biology	3	4
+4.	Agriculture	5	5
+5.	Computer science	4	4
+6.	Food and Human Nutrition	5	5
+7.	Sports	4	4
+8.	Textile and Gurment Construction	5	5
+9.	Fine Art	4	4
+10.	Theatre Arts	4	4
+11.	Additional Mathematics	–	3
+12.	Literature in English	–	2
+13.	Fasihi ya Kiswahili	–	2
+14.	French	3	3
+15.	Arabic	3	3
+16.	Chinese	3	3
+17.	Music	4	4
+18.	History	3	4
+19.	Book-kooping	3	4
+20.	Bible Knowledge	3	3
+21.	Dani ya Kislamu	3	3
+ kwa kila osmo ziangtia usischangenye osmo lolote</pre>
+                    </div>
+
                     <div class="mt-4 flex items-center justify-end gap-2">
                         <button
                             type="button"
@@ -1230,7 +1459,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                             type="button"
                             class="inline-flex items-center rounded-md bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
                             :disabled="limitsSaving || !selectedLimitClassId"
-                            @click="saveLimits"
+                            @click="limitationsMode === 'subject_only' ? saveSubjectLimits() : saveLimits()"
                         >
                             {{ limitsSaving ? 'Saving...' : 'Save Limitations' }}
                         </button>

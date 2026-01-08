@@ -6595,6 +6595,80 @@ Route::middleware('auth')->group(function () {
         return response()->json(['success' => true]);
     })->name('timetables.weekly-limits.save');
 
+    Route::get('/timetables/class-subject-limits', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+
+        $query = \App\Models\TimetableClassSubjectLimit::query();
+        if ($schoolId) {
+            $query->where('school_id', $schoolId);
+        }
+
+        $classId = $request->query('school_class_id');
+        if ($classId) {
+            $query->where('school_class_id', $classId);
+        }
+
+        $limits = $query
+            ->orderBy('school_class_id')
+            ->orderBy('subject_id')
+            ->get([
+                'id',
+                'school_class_id',
+                'subject_id',
+                'periods_per_week',
+            ])
+            ->map(function (\App\Models\TimetableClassSubjectLimit $row) {
+                return [
+                    'id' => $row->id,
+                    'school_class_id' => $row->school_class_id,
+                    'subject_id' => $row->subject_id,
+                    'periods_per_week' => (int) $row->periods_per_week,
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'limits' => $limits,
+        ]);
+    })->name('timetables.class-subject-limits.index');
+
+    Route::post('/timetables/class-subject-limits', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+
+        $data = $request->validate([
+            'limits' => ['required', 'array'],
+            'limits.*.school_class_id' => ['required', 'integer', 'exists:school_classes,id'],
+            'limits.*.subject_id' => ['required', 'integer', 'exists:subjects,id'],
+            'limits.*.periods_per_week' => ['required', 'integer', 'min:0', 'max:50'],
+        ]);
+
+        $rows = collect($data['limits'])
+            ->map(function (array $row) use ($schoolId) {
+                return [
+                    'school_id' => $schoolId,
+                    'school_class_id' => (int) $row['school_class_id'],
+                    'subject_id' => (int) $row['subject_id'],
+                    'periods_per_week' => (int) $row['periods_per_week'],
+                    'updated_at' => now(),
+                    'created_at' => now(),
+                ];
+            })
+            ->values()
+            ->all();
+
+        if (! empty($rows)) {
+            \App\Models\TimetableClassSubjectLimit::upsert(
+                $rows,
+                ['school_id', 'school_class_id', 'subject_id'],
+                ['periods_per_week', 'updated_at']
+            );
+        }
+
+        return response()->json(['success' => true]);
+    })->name('timetables.class-subject-limits.save');
+
     Route::post('/timetables', function (Illuminate\Http\Request $request) {
         $user = $request->user();
         $schoolId = $user?->school_id;
