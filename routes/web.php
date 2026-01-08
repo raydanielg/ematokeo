@@ -5394,6 +5394,9 @@ Route::middleware('auth')->group(function () {
     Route::post('/subjects', [\App\Http\Controllers\SubjectController::class, 'store'])
         ->name('subjects.store');
 
+    Route::put('/subjects/{subject}', [\App\Http\Controllers\SubjectController::class, 'update'])
+        ->name('subjects.update');
+
     Route::post('/subjects/import', [\App\Http\Controllers\SubjectController::class, 'import'])
         ->name('subjects.import');
 

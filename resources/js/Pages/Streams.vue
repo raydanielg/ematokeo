@@ -1,7 +1,7 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head, router } from '@inertiajs/vue3';
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 
 const props = defineProps({
     classes: {
@@ -38,6 +38,23 @@ const form = reactive({
     subject_ids: [],
 });
 
+const selectedBaseClass = computed(() => {
+    const id = Number(form.class_id);
+    if (!Number.isFinite(id)) return null;
+    return (baseClasses.value || []).find((c) => Number(c.id) === id) || null;
+});
+
+const baseSubjectIds = computed(() => {
+    const ids = selectedBaseClass.value?.subject_ids;
+    return Array.isArray(ids) ? ids.map((v) => Number(v)).filter((v) => Number.isFinite(v)) : [];
+});
+
+const subjectsForSelectedBaseClass = computed(() => {
+    const allowed = new Set(baseSubjectIds.value);
+    if (!allowed.size) return [];
+    return (props.subjects || []).filter((s) => allowed.has(Number(s.id)));
+});
+
 const openForm = (baseClassId = '') => {
     showForm.value = true;
     isEditing.value = false;
@@ -45,13 +62,33 @@ const openForm = (baseClassId = '') => {
     form.class_id = baseClassId ? String(baseClassId) : '';
     form.stream = '';
 
-    // Default: select first few subjects if available
-    const ids = (props.subjects || []).slice(0, 7).map((s) => s.id);
+    const base = (baseClasses.value || []).find((c) => Number(c.id) === Number(baseClassId));
+    const ids = Array.isArray(base?.subject_ids)
+        ? base.subject_ids.map((v) => Number(v)).filter((v) => Number.isFinite(v))
+        : [];
     form.subject_ids = ids;
 };
 
 const closeForm = () => {
     showForm.value = false;
+};
+
+watch(
+    () => form.class_id,
+    () => {
+        if (!showForm.value) return;
+        if (isEditing.value) return;
+        const ids = baseSubjectIds.value;
+        form.subject_ids = Array.isArray(ids) ? [...ids] : [];
+    }
+);
+
+const selectAllSubjects = () => {
+    form.subject_ids = [...baseSubjectIds.value];
+};
+
+const clearSubjects = () => {
+    form.subject_ids = [];
 };
 
 const toggleSubject = (id) => {
@@ -169,9 +206,30 @@ const saveStream = () => {
                     <div class="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                         Subjects (minimum 1)
                     </div>
+                    <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <p class="text-[11px] text-gray-500">
+                            Showing <span class="font-semibold">{{ subjectsForSelectedBaseClass.length }}</span> subject(s) assigned to this class.
+                        </p>
+                        <div class="flex gap-2">
+                            <button
+                                type="button"
+                                class="rounded-md bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
+                                @click="selectAllSubjects"
+                            >
+                                Select all
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-md bg-white px-2 py-1 text-[11px] font-medium text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
+                                @click="clearSubjects"
+                            >
+                                Clear
+                            </button>
+                        </div>
+                    </div>
                     <div class="flex flex-wrap gap-2">
                         <label
-                            v-for="s in subjects"
+                            v-for="s in subjectsForSelectedBaseClass"
                             :key="s.id"
                             class="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] text-gray-700 hover:bg-gray-100"
                         >
@@ -186,7 +244,7 @@ const saveStream = () => {
                         </label>
                     </div>
                     <p class="mt-1 text-[10px] text-gray-500">
-                        Select subjects for this specific stream (you can choose just one if needed).
+                        Masomo hapa yanatoka kwenye base class. Unaweza kupunguza kwa ku-uncheck yasiyotakiwa kwa stream hii.
                     </p>
                 </div>
 

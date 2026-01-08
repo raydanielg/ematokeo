@@ -20,13 +20,20 @@ class SubjectController extends Controller
         }
 
         $subjects = $query
+            ->with('classes:id,name')
             ->orderBy('subject_code')
             ->get([
-            'id',
-            'subject_code',
-            'name',
-            'class_levels',
-        ]);
+                'id',
+                'subject_code',
+                'name',
+                'class_levels',
+            ])
+            ->map(function (Subject $subject) {
+                $subject->setAttribute('assigned_class_ids', $subject->classes->pluck('id')->map(fn ($v) => (int) $v)->values()->all());
+                $subject->setAttribute('assigned_classes', $subject->classes->pluck('name')->values()->all());
+                $subject->unsetRelation('classes');
+                return $subject;
+            });
 
         $classes = SchoolClass::orderBy('id')->get([
             'id',
@@ -122,6 +129,39 @@ class SubjectController extends Controller
         $subject->delete();
 
         return redirect()->route('subjects.index')->with('success', 'Subject deleted successfully.');
+    }
+
+    public function update(Request $request, Subject $subject)
+    {
+        $validated = $request->validate([
+            'subject_code' => ['required', 'string', 'max:10'],
+            'name' => ['required', 'string', 'max:255'],
+            'class_ids' => ['sometimes', 'array'],
+            'class_ids.*' => ['integer', 'exists:school_classes,id'],
+        ]);
+
+        $classIds = [];
+        if (! empty($validated['class_ids']) && is_array($validated['class_ids'])) {
+            $classIds = $validated['class_ids'];
+        }
+
+        $classLevels = null;
+        if (! empty($classIds)) {
+            $classLevels = SchoolClass::whereIn('id', $classIds)
+                ->orderBy('id')
+                ->pluck('name')
+                ->implode(', ');
+        }
+
+        $subject->update([
+            'subject_code' => $validated['subject_code'],
+            'name' => $validated['name'],
+            'class_levels' => $classLevels,
+        ]);
+
+        $subject->classes()->sync($classIds);
+
+        return redirect()->route('subjects.index')->with('success', 'Subject updated successfully.');
     }
 
     public function import(Request $request)

@@ -19,6 +19,16 @@ const isSavingSubject = ref(false);
 const isDeleteModalOpen = ref(false);
 const isDeletingSubject = ref(false);
 const selectedSubject = ref(null);
+const isViewModalOpen = ref(false);
+const isEditModalOpen = ref(false);
+const isUpdatingSubject = ref(false);
+
+const editForm = reactive({
+    id: null,
+    subject_code: '',
+    name: '',
+    class_ids: [],
+});
 
 const form = reactive({
     class_ids: [],
@@ -104,6 +114,55 @@ const saveSubject = () => {
         },
         onError: () => {
             isSavingSubject.value = false;
+        },
+    });
+};
+
+const openViewModal = (subject) => {
+    selectedSubject.value = subject;
+    isViewModalOpen.value = true;
+};
+
+const closeViewModal = () => {
+    isViewModalOpen.value = false;
+};
+
+const openEditModal = (subject) => {
+    selectedSubject.value = subject;
+    editForm.id = subject.id;
+    editForm.subject_code = subject.subject_code || '';
+    editForm.name = subject.name || '';
+    editForm.class_ids = Array.isArray(subject.assigned_class_ids)
+        ? subject.assigned_class_ids.map((v) => Number(v)).filter((v) => Number.isFinite(v))
+        : [];
+    isEditModalOpen.value = true;
+};
+
+const closeEditModal = () => {
+    if (isUpdatingSubject.value) return;
+    isEditModalOpen.value = false;
+};
+
+const updateSubject = () => {
+    if (!editForm.id || isUpdatingSubject.value) return;
+    isUpdatingSubject.value = true;
+
+    router.put(route('subjects.update', editForm.id), {
+        subject_code: editForm.subject_code,
+        name: editForm.name,
+        class_ids: editForm.class_ids,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => {
+            isUpdatingSubject.value = false;
+            isEditModalOpen.value = false;
+            router.reload({ only: ['subjects'] });
+        },
+        onError: () => {
+            isUpdatingSubject.value = false;
+        },
+        onFinish: () => {
+            isUpdatingSubject.value = false;
         },
     });
 };
@@ -229,12 +288,14 @@ watch(
                                     <button
                                         type="button"
                                         class="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700 ring-1 ring-blue-100 hover:bg-blue-100"
+                                        @click="openViewModal(subject)"
                                     >
                                         View
                                     </button>
                                     <button
                                         type="button"
                                         class="rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100"
+                                        @click="openEditModal(subject)"
                                     >
                                         Edit
                                     </button>
@@ -420,6 +481,145 @@ watch(
                         {{ isDeletingSubject ? 'Deleting...' : 'Delete' }}
                     </button>
                 </div>
+            </div>
+        </div>
+
+        <!-- View Subject modal -->
+        <div
+            v-if="isViewModalOpen && selectedSubject"
+            class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6 backdrop-blur-sm"
+        >
+            <div class="w-full max-w-md rounded-xl bg-white p-5 text-xs text-gray-700 shadow-xl">
+                <div class="mb-3 flex items-start justify-between gap-3">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-900">Subject details</h3>
+                        <p class="mt-0.5 text-[11px] text-gray-500">Full details and assigned classes.</p>
+                    </div>
+                    <button
+                        type="button"
+                        class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-[11px] font-bold text-gray-600 hover:bg-gray-200"
+                        @click="closeViewModal"
+                    >
+                        ×
+                    </button>
+                </div>
+
+                <dl class="space-y-2 text-[11px]">
+                    <div class="flex justify-between gap-3">
+                        <dt class="font-semibold text-gray-600">Code</dt>
+                        <dd class="text-right font-mono text-gray-900">{{ selectedSubject.subject_code }}</dd>
+                    </div>
+                    <div class="flex justify-between gap-3">
+                        <dt class="font-semibold text-gray-600">Name</dt>
+                        <dd class="text-right text-gray-900">{{ selectedSubject.name }}</dd>
+                    </div>
+                    <div class="flex justify-between gap-3">
+                        <dt class="font-semibold text-gray-600">Classes</dt>
+                        <dd class="max-w-[65%] text-right">
+                            <div
+                                v-if="Array.isArray(selectedSubject.assigned_classes) && selectedSubject.assigned_classes.length"
+                                class="flex flex-wrap justify-end gap-1"
+                            >
+                                <span
+                                    v-for="c in selectedSubject.assigned_classes"
+                                    :key="c"
+                                    class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700"
+                                >
+                                    {{ c }}
+                                </span>
+                            </div>
+                            <span v-else class="text-gray-500">—</span>
+                        </dd>
+                    </div>
+                </dl>
+
+                <div class="mt-4 flex justify-end">
+                    <button
+                        type="button"
+                        class="rounded-md bg-emerald-50 px-3 py-1.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100"
+                        @click="closeViewModal"
+                    >
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Edit Subject modal -->
+        <div
+            v-if="isEditModalOpen && selectedSubject"
+            class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6 backdrop-blur-sm"
+        >
+            <div class="w-full max-w-lg rounded-xl bg-white p-5 text-xs text-gray-700 shadow-xl">
+                <div class="mb-3 flex items-start justify-between gap-3">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-900">Edit subject</h3>
+                        <p class="mt-0.5 text-[11px] text-gray-500">Update subject details and assigned classes.</p>
+                    </div>
+                    <button
+                        type="button"
+                        class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-[11px] font-bold text-gray-600 hover:bg-gray-200"
+                        :disabled="isUpdatingSubject"
+                        @click="closeEditModal"
+                    >
+                        ×
+                    </button>
+                </div>
+
+                <form class="space-y-3" @submit.prevent="updateSubject">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="mb-1 block text-[11px] font-medium">Subject code</label>
+                            <input
+                                v-model="editForm.subject_code"
+                                type="text"
+                                class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] font-mono focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                required
+                            />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-[11px] font-medium">Subject name</label>
+                            <input
+                                v-model="editForm.name"
+                                type="text"
+                                class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                required
+                            />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-[11px] font-medium">Assigned classes</label>
+                        <select
+                            v-model="editForm.class_ids"
+                            multiple
+                            class="w-full rounded-md border border-gray-300 px-2 py-2 text-[11px] text-gray-800 focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                        >
+                            <option v-for="cls in classes" :key="cls.id" :value="cls.id">
+                                {{ cls.name }}
+                            </option>
+                        </select>
+                        <p class="mt-1 text-[10px] text-gray-500">Chagua madarasa yatakayopata somo hili.</p>
+                    </div>
+
+                    <div class="mt-4 flex justify-end gap-2">
+                        <button
+                            type="button"
+                            class="rounded-md bg-gray-50 px-3 py-1.5 text-[11px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100"
+                            :disabled="isUpdatingSubject"
+                            @click="closeEditModal"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            class="rounded-md bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+                            :disabled="isUpdatingSubject"
+                        >
+                            {{ isUpdatingSubject ? 'Saving...' : 'Save changes' }}
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
     </AuthenticatedLayout>
