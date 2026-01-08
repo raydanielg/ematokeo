@@ -572,6 +572,156 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
     })->name('change-password.update');
 
     Route::middleware(['teacher_password_changed'])->group(function () {
+        Route::get('/students', function (\Illuminate\Http\Request $request) {
+            $user = $request->user();
+            $schoolId = $user?->school_id;
+            $teacherId = $user?->id;
+
+            $classFilter = trim((string) $request->query('class', ''));
+            $q = trim((string) $request->query('q', ''));
+
+            $assignedClassesQuery = \App\Models\SchoolClass::query()
+                ->join('teacher_class_subject as tcs', 'tcs.school_class_id', '=', 'school_classes.id')
+                ->where('tcs.teacher_id', $teacherId)
+                ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
+                ->select('school_classes.id', 'school_classes.level', 'school_classes.stream', 'school_classes.school_id')
+                ->distinct();
+
+            $assignedClasses = $assignedClassesQuery->get();
+
+            $classes = $assignedClasses
+                ->map(fn ($c) => trim((string) ($c->level ?? '')))
+                ->filter(fn ($name) => $name !== '')
+                ->unique()
+                ->values()
+                ->all();
+
+            $allowedKeys = $assignedClasses
+                ->map(fn ($c) => trim((string) ($c->level ?? '')) . '|' . trim((string) ($c->stream ?? '')))
+                ->unique()
+                ->values();
+
+            $studentsQuery = \App\Models\Student::query();
+            if ($schoolId) {
+                $studentsQuery->where('school_id', $schoolId);
+            }
+
+            if ($allowedKeys->count() > 0) {
+                $studentsQuery->whereIn(
+                    \Illuminate\Support\Facades\DB::raw("CONCAT(class_level, '|', COALESCE(stream, ''))"),
+                    $allowedKeys->all(),
+                );
+            } else {
+                $studentsQuery->whereRaw('1=0');
+            }
+
+            if ($classFilter !== '') {
+                $studentsQuery->where('class_level', $classFilter);
+            }
+
+            if ($q !== '') {
+                $studentsQuery->where(function ($qb) use ($q) {
+                    $qb->where('full_name', 'like', "%{$q}%")
+                        ->orWhere('exam_number', 'like', "%{$q}%");
+                });
+            }
+
+            $students = $studentsQuery
+                ->orderBy('class_level')
+                ->orderBy('stream')
+                ->orderBy('full_name')
+                ->get(['id', 'exam_number', 'full_name', 'class_level', 'stream', 'gender']);
+
+            return Inertia::render('Teacher/Students', [
+                'students' => $students,
+                'classes' => $classes,
+                'filters' => [
+                    'class' => $classFilter !== '' ? $classFilter : null,
+                    'q' => $q !== '' ? $q : '',
+                ],
+            ]);
+        })->name('students.index');
+
+        Route::get('/students/{student}', function (\Illuminate\Http\Request $request, \App\Models\Student $student) {
+            $user = $request->user();
+            $schoolId = $user?->school_id;
+            $teacherId = $user?->id;
+
+            if ($schoolId && $student->school_id && (int) $student->school_id !== (int) $schoolId) {
+                abort(403);
+            }
+
+            $allowed = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
+                ->join('school_classes as sc', 'sc.id', '=', 'tcs.school_class_id')
+                ->where('tcs.teacher_id', $teacherId)
+                ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
+                ->where('sc.level', $student->class_level)
+                ->whereRaw('COALESCE(sc.stream, "") = COALESCE(?, "")', [$student->stream])
+                ->exists();
+
+            if (! $allowed) {
+                abort(403);
+            }
+
+            $examId = \App\Models\ExamResult::query()
+                ->where('student_id', $student->id)
+                ->join('exams', 'exams.id', '=', 'exam_results.exam_id')
+                ->orderByDesc('exams.created_at')
+                ->value('exam_results.exam_id');
+
+            $latestExam = $examId ? \App\Models\Exam::find($examId, ['id', 'name', 'academic_year']) : null;
+
+            $latestResults = [];
+            $latestSummary = [
+                'total' => null,
+                'average' => null,
+            ];
+
+            if ($examId) {
+                $rows = \App\Models\ExamResult::with('subject:id,subject_code,name')
+                    ->where('student_id', $student->id)
+                    ->where('exam_id', $examId)
+                    ->orderBy('subject_id')
+                    ->get();
+
+                $latestResults = $rows->map(function (\App\Models\ExamResult $r) {
+                    return [
+                        'subject_code' => optional($r->subject)->subject_code,
+                        'subject_name' => optional($r->subject)->name,
+                        'marks' => $r->marks ?? $r->standardized_marks ?? $r->raw_marks,
+                        'grade' => $r->grade,
+                    ];
+                })->values()->all();
+
+                $marks = $rows
+                    ->map(fn (\App\Models\ExamResult $r) => $r->marks ?? $r->standardized_marks ?? $r->raw_marks)
+                    ->filter(fn ($m) => is_numeric($m));
+
+                if ($marks->count() > 0) {
+                    $latestSummary['total'] = (float) $marks->sum();
+                    $latestSummary['average'] = round((float) $marks->avg(), 2);
+                }
+            }
+
+            return Inertia::render('Teacher/StudentShow', [
+                'student' => $student->only([
+                    'id',
+                    'exam_number',
+                    'full_name',
+                    'class_level',
+                    'stream',
+                    'gender',
+                    'date_of_birth',
+                    'guardian_name',
+                    'guardian_phone',
+                    'guardian_address',
+                ]),
+                'latestExam' => $latestExam,
+                'latestResults' => $latestResults,
+                'latestSummary' => $latestSummary,
+            ]);
+        })->name('students.show');
+
         Route::get('/', function () {
             $user = request()->user();
 

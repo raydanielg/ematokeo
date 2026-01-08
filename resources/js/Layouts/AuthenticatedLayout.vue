@@ -268,7 +268,9 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
     if (sectionKey === 'teachers' && itemName === 'Add Teacher') return route('teachers.create');
     if (sectionKey === 'teachers' && itemName === 'Credentials') return route('teachers.credentials');
     if (sectionKey === 'teachers' && itemName === 'Roles & Permissions') return route('roles.index');
-    if (sectionKey === 'students' && (itemName === 'View Students' || itemName === 'Add Student')) return route('students.index');
+    if (sectionKey === 'students' && (itemName === 'View Students' || itemName === 'Add Student')) {
+        return isTeacher.value ? route('teacher.students.index') : route('students.index');
+    }
     if (sectionKey === 'students' && itemName === 'Promote Students') return route('students.promote');
     if (sectionKey === 'classes' && itemName === 'Manage Classes') return route('classes.index');
     if (sectionKey === 'classes' && itemName === 'Manage Streams') return route('streams.index');
