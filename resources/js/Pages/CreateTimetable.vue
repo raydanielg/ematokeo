@@ -597,6 +597,23 @@ const generateSampleTimetable = () => {
                 .filter(Boolean);
         };
 
+        const desiredPeriodsByCode = {};
+        if (limitationsMode.value === 'subject_only' && selectedLimitClassId.value && String(classId) === String(selectedLimitClassId.value)) {
+            classSubjectCodes.forEach((code) => {
+                const sid = subjectIdByCode.value?.[String(code)] || null;
+                if (!sid) return;
+                const key = subjectLimitKey(sid);
+                const val = subjectLimitsById.value?.[key];
+                const n = val === '' || val === null || val === undefined ? 0 : Number(val);
+                if (Number.isFinite(n) && n > 0) {
+                    desiredPeriodsByCode[String(code)] = Math.floor(n);
+                }
+            });
+        }
+
+        const remainingNeeded = { ...desiredPeriodsByCode };
+        const hasQuotas = Object.keys(remainingNeeded).length > 0;
+
         const setSlot = (day, slotIndex, subject) => {
             const picked = pickTeacherInitialForSlot(classId, subject, day, slotIndex);
             const teacher = picked || (classHasTeacherAssignments(classId) ? '' : (teachers[subject] || ''));
@@ -612,42 +629,46 @@ const generateSampleTimetable = () => {
 
         // 1) Coverage-first: try to place every subject at least once (respecting session rules).
         const unconstrainedSubjects = [];
-        classSubjectCodes.forEach((code) => {
-            const sid = subjectIdByCode.value?.[String(code)] || null;
-            const rule = getSubjectSessionRule(classId, sid);
-            if (rule === 'morning') {
-                const pos = morningPositions.pop();
-                if (pos) setSlot(pos.day, pos.slotIndex, code);
-            } else if (rule === 'afternoon') {
-                const pos = afternoonPositions.pop();
-                if (pos) setSlot(pos.day, pos.slotIndex, code);
-            } else {
-                unconstrainedSubjects.push(code);
-            }
-        });
+        if (!hasQuotas) {
+            classSubjectCodes.forEach((code) => {
+                const sid = subjectIdByCode.value?.[String(code)] || null;
+                const rule = getSubjectSessionRule(classId, sid);
+                if (rule === 'morning') {
+                    const pos = morningPositions.pop();
+                    if (pos) setSlot(pos.day, pos.slotIndex, code);
+                } else if (rule === 'afternoon') {
+                    const pos = afternoonPositions.pop();
+                    if (pos) setSlot(pos.day, pos.slotIndex, code);
+                } else {
+                    unconstrainedSubjects.push(code);
+                }
+            });
+        }
 
         // 2) Place remaining subjects (any-time) at least once into remaining teachable slots.
         const remainingPositions = [...morningPositions, ...otherPositions, ...afternoonPositions];
         shuffle(remainingPositions);
-        unconstrainedSubjects.filter(Boolean).forEach((code) => {
-            const pos = remainingPositions.pop();
-            if (!pos) return;
-            if (classId && !isSubjectAllowedInSlot(classId, code, pos.slotIndex)) {
-                // try to find any other slot that fits
-                let foundIndex = -1;
-                for (let j = remainingPositions.length - 1; j >= 0; j -= 1) {
-                    if (isSubjectAllowedInSlot(classId, code, remainingPositions[j].slotIndex)) {
-                        foundIndex = j;
-                        break;
+        if (!hasQuotas) {
+            unconstrainedSubjects.filter(Boolean).forEach((code) => {
+                const pos = remainingPositions.pop();
+                if (!pos) return;
+                if (classId && !isSubjectAllowedInSlot(classId, code, pos.slotIndex)) {
+                    // try to find any other slot that fits
+                    let foundIndex = -1;
+                    for (let j = remainingPositions.length - 1; j >= 0; j -= 1) {
+                        if (isSubjectAllowedInSlot(classId, code, remainingPositions[j].slotIndex)) {
+                            foundIndex = j;
+                            break;
+                        }
                     }
+                    if (foundIndex === -1) return;
+                    const swapPos = remainingPositions.splice(foundIndex, 1)[0];
+                    setSlot(swapPos.day, swapPos.slotIndex, code);
+                    return;
                 }
-                if (foundIndex === -1) return;
-                const swapPos = remainingPositions.splice(foundIndex, 1)[0];
-                setSlot(swapPos.day, swapPos.slotIndex, code);
-                return;
-            }
-            setSlot(pos.day, pos.slotIndex, code);
-        });
+                setSlot(pos.day, pos.slotIndex, code);
+            });
+        }
 
         // 3) Fill every remaining teachable slot using rotation, respecting session rules.
         const allTeachablePositions = [];
@@ -668,25 +689,61 @@ const generateSampleTimetable = () => {
             const prevSubject = prev?.subject ? String(prev.subject) : '';
 
             let picked = null;
-            for (let tries = 0; tries < classSubjectCodes.length; tries += 1) {
-                const candidate = classSubjectCodes[(cursor + tries) % classSubjectCodes.length];
+
+            const quotaCandidates = Object.keys(remainingNeeded)
+                .filter((code) => Number(remainingNeeded[code] || 0) > 0);
+
+            const ordered = quotaCandidates.length
+                ? [...quotaCandidates, ...classSubjectCodes.filter((c) => !quotaCandidates.includes(String(c)))]
+                : classSubjectCodes;
+
+            for (let tries = 0; tries < ordered.length; tries += 1) {
+                const candidate = ordered[(cursor + tries) % ordered.length];
                 if (candidate && prevSubject && String(candidate) === prevSubject) continue;
                 if (!classId || isSubjectAllowedInSlot(classId, candidate, pos.slotIndex)) {
                     picked = candidate;
-                    cursor = (cursor + tries + 1) % classSubjectCodes.length;
+                    cursor = (cursor + tries + 1) % ordered.length;
                     break;
                 }
             }
-            if (!picked) {
-                picked = classSubjectCodes[Math.floor(Math.random() * (classSubjectCodes.length || 1))] || '';
+
+            if (picked && remainingNeeded[String(picked)] > 0) {
+                remainingNeeded[String(picked)] -= 1;
+                if (remainingNeeded[String(picked)] <= 0) {
+                    delete remainingNeeded[String(picked)];
+                }
             }
+
             return picked;
         };
 
         allTeachablePositions.forEach((pos) => {
-            let picked = null;
-            picked = pickSubjectForPos(pos);
-            setSlot(pos.day, pos.slotIndex, picked);
+            let picked = pickSubjectForPos(pos);
+            if (!picked) {
+                // Fallback: choose any subject that is allowed in this slot (session rules) and avoid immediate doubles
+                const hasPrevious = pos.slotIndex > 0 && ![4, 7].includes(pos.slotIndex);
+                const prev = hasPrevious ? rowByDay[pos.day].slots[pos.slotIndex - 1] : null;
+                const prevSubject = prev?.subject ? String(prev.subject) : '';
+
+                const allowed = classSubjectCodes.filter((code) => {
+                    if (!code) return false;
+                    if (prevSubject && String(code) === prevSubject) return false;
+                    return !classId || isSubjectAllowedInSlot(classId, code, pos.slotIndex);
+                });
+
+                picked = allowed.length
+                    ? allowed[Math.floor(Math.random() * allowed.length)]
+                    : (classSubjectCodes[Math.floor(Math.random() * (classSubjectCodes.length || 1))] || '');
+
+                if (picked && remainingNeeded[String(picked)] > 0) {
+                    remainingNeeded[String(picked)] -= 1;
+                    if (remainingNeeded[String(picked)] <= 0) {
+                        delete remainingNeeded[String(picked)];
+                    }
+                }
+            }
+
+            setSlot(pos.day, pos.slotIndex, picked || '');
         });
 
         // 3b) Post-process: try to ensure every teacher initials appears at least once
