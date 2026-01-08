@@ -41,6 +41,10 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Inertia\Inertia;
 
 Route::get('/', function () {
+    return redirect('/home');
+});
+
+Route::get('/home', function () {
     $schoolModel = School::query()->first();
     $school = $schoolModel ? [
         'email' => $schoolModel->email,
@@ -51,7 +55,7 @@ Route::get('/', function () {
         'canLogin' => Route::has('login'),
         'school' => $school,
     ]);
-});
+})->name('home');
 
 Route::get('/about', function () {
     return redirect()->route('login');

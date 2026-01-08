@@ -16,6 +16,9 @@ const props = defineProps({
 
 const isAddModalOpen = ref(false);
 const isSavingSubject = ref(false);
+const isDeleteModalOpen = ref(false);
+const isDeletingSubject = ref(false);
+const selectedSubject = ref(null);
 
 const form = reactive({
     class_ids: [],
@@ -101,6 +104,37 @@ const saveSubject = () => {
         },
         onError: () => {
             isSavingSubject.value = false;
+        },
+    });
+};
+
+const openDeleteModal = (subject) => {
+    selectedSubject.value = subject;
+    isDeleteModalOpen.value = true;
+};
+
+const closeDeleteModal = () => {
+    if (isDeletingSubject.value) return;
+    isDeleteModalOpen.value = false;
+    selectedSubject.value = null;
+};
+
+const deleteSubject = () => {
+    if (!selectedSubject.value || isDeletingSubject.value) return;
+    isDeletingSubject.value = true;
+
+    router.delete(route('subjects.destroy', selectedSubject.value.id), {
+        preserveScroll: true,
+        onSuccess: () => {
+            isDeletingSubject.value = false;
+            closeDeleteModal();
+            router.reload({ only: ['subjects'] });
+        },
+        onError: () => {
+            isDeletingSubject.value = false;
+        },
+        onFinish: () => {
+            isDeletingSubject.value = false;
         },
     });
 };
@@ -207,6 +241,7 @@ watch(
                                     <button
                                         type="button"
                                         class="rounded-md bg-red-50 px-2 py-1 text-[11px] font-medium text-red-700 ring-1 ring-red-100 hover:bg-red-100"
+                                        @click="openDeleteModal(subject)"
                                     >
                                         Delete
                                     </button>
@@ -340,6 +375,51 @@ watch(
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+
+        <!-- Delete Subject confirmation -->
+        <div
+            v-if="isDeleteModalOpen && selectedSubject"
+            class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6 backdrop-blur-sm"
+        >
+            <div class="w-full max-w-sm rounded-xl bg-white p-5 text-xs text-gray-700 shadow-xl">
+                <div class="mb-2 flex items-start justify-between gap-3">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-900">Delete subject?</h3>
+                        <p class="mt-1 text-[11px] text-gray-600">
+                            This will remove <span class="font-semibold">{{ selectedSubject.subject_code }}</span> —
+                            <span class="font-semibold">{{ selectedSubject.name }}</span>.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-[11px] font-bold text-gray-600 hover:bg-gray-200"
+                        :disabled="isDeletingSubject"
+                        @click="closeDeleteModal"
+                    >
+                        ×
+                    </button>
+                </div>
+
+                <div class="mt-4 flex justify-end gap-2">
+                    <button
+                        type="button"
+                        class="rounded-md bg-gray-50 px-3 py-1.5 text-[11px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100"
+                        :disabled="isDeletingSubject"
+                        @click="closeDeleteModal"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="button"
+                        class="rounded-md bg-red-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-red-700 disabled:opacity-60"
+                        :disabled="isDeletingSubject"
+                        @click="deleteSubject"
+                    >
+                        {{ isDeletingSubject ? 'Deleting...' : 'Delete' }}
+                    </button>
+                </div>
             </div>
         </div>
     </AuthenticatedLayout>
