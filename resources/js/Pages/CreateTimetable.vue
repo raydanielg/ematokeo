@@ -131,6 +131,9 @@ const pickTeacherInitialForSlot = (schoolClassId, subjectCode, day, slotIndex) =
     if (!parts.length) return '';
     if (parts.length === 1) return parts[0];
 
+    // Co-teaching: show both teachers when exactly two are assigned
+    if (parts.length === 2) return `${parts[0]}/${parts[1]}`;
+
     const d = String(day || '').toUpperCase();
     const dayIdx = days.indexOf(d);
     const seed = (Math.max(0, dayIdx) * 31) + Number(slotIndex || 0);
