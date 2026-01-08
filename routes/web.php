@@ -5551,25 +5551,6 @@ Route::middleware('auth')->group(function () {
                 ];
             });
 
-        $classSubjectMap = [];
-        $baseClassIds = collect($classes)->pluck('id')->map(fn ($v) => (int) $v)->all();
-        if (! empty($baseClassIds)) {
-            $classSubjectPairs = DB::table('class_subject')
-                ->join('school_classes', 'school_classes.id', '=', 'class_subject.school_class_id')
-                ->when($schoolId, fn ($q) => $q->where('school_classes.school_id', $schoolId))
-                ->whereIn('class_subject.school_class_id', $baseClassIds)
-                ->select(['class_subject.school_class_id', 'class_subject.subject_id'])
-                ->get();
-
-            foreach ($classSubjectPairs as $row) {
-                $cid = (int) $row->school_class_id;
-                if (! isset($classSubjectMap[$cid])) {
-                    $classSubjectMap[$cid] = [];
-                }
-                $classSubjectMap[$cid][] = (int) $row->subject_id;
-            }
-        }
-
         $allClassesQuery = SchoolClass::query()->orderBy('level')->orderBy('stream')->orderBy('name');
         if ($schoolId) {
             $allClassesQuery->where('school_id', $schoolId);
@@ -5586,6 +5567,25 @@ Route::middleware('auth')->group(function () {
                     'parent_class_id' => $class->parent_class_id,
                 ];
             });
+
+        $classSubjectMap = [];
+        $allClassIds = collect($allClasses)->pluck('id')->map(fn ($v) => (int) $v)->all();
+        if (! empty($allClassIds)) {
+            $classSubjectPairs = DB::table('class_subject')
+                ->join('school_classes', 'school_classes.id', '=', 'class_subject.school_class_id')
+                ->when($schoolId, fn ($q) => $q->where('school_classes.school_id', $schoolId))
+                ->whereIn('class_subject.school_class_id', $allClassIds)
+                ->select(['class_subject.school_class_id', 'class_subject.subject_id'])
+                ->get();
+
+            foreach ($classSubjectPairs as $row) {
+                $cid = (int) $row->school_class_id;
+                if (! isset($classSubjectMap[$cid])) {
+                    $classSubjectMap[$cid] = [];
+                }
+                $classSubjectMap[$cid][] = (int) $row->subject_id;
+            }
+        }
 
         $subjectsQuery = Subject::orderBy('subject_code');
         if ($schoolId && Schema::hasColumn('subjects', 'school_id')) {
@@ -5623,6 +5623,14 @@ Route::middleware('auth')->group(function () {
         $teachers = $teachers->map(function (User $teacher) use ($assignmentsByTeacher) {
             $rows = $assignmentsByTeacher->get($teacher->id, collect());
 
+            $streamClassIds = $rows
+                ->pluck('school_class_id')
+                ->map(fn ($v) => (int) $v)
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
             $classLabels = $rows
                 ->map(function ($r) {
                     $label = trim(($r->class_level ?? '').' '.($r->class_stream ?? ''));
@@ -5633,33 +5641,40 @@ Route::middleware('auth')->group(function () {
                 ->values()
                 ->all();
 
-            $subjectCodes = $rows
-                ->map(fn ($r) => $r->subject_code)
-                ->filter()
-                ->unique()
-                ->values()
-                ->all();
-
-            $classIds = $rows
+            $baseClassIds = $rows
                 ->map(function ($r) {
-                    $baseId = $r->parent_class_id ?: $r->school_class_id;
-                    return (int) $baseId;
+                    $baseId = $r->parent_class_id ? (int) $r->parent_class_id : (int) $r->school_class_id;
+                    return $baseId;
                 })
+                ->filter()
                 ->unique()
                 ->values()
                 ->all();
 
             $subjectIds = $rows
                 ->pluck('subject_id')
+                ->map(fn ($v) => (int) $v)
+                ->filter()
                 ->unique()
                 ->values()
-                ->map(fn ($v) => (int) $v)
                 ->all();
 
+            $subjectLabels = $rows
+                ->map(function ($r) {
+                    $code = $r->subject_code ? trim($r->subject_code) : '';
+                    $name = $r->subject_name ? trim($r->subject_name) : '';
+                    return $code && $name ? ($code.' - '.$name) : ($code ?: $name);
+                })
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            $teacher->setAttribute('assigned_class_ids', $baseClassIds);
+            $teacher->setAttribute('assigned_stream_class_ids', $streamClassIds);
             $teacher->setAttribute('assigned_classes', $classLabels);
-            $teacher->setAttribute('assigned_subjects', $subjectCodes);
-            $teacher->setAttribute('assigned_class_ids', $classIds);
             $teacher->setAttribute('assigned_subject_ids', $subjectIds);
+            $teacher->setAttribute('assigned_subjects', $subjectLabels);
 
             return $teacher;
         });
@@ -5815,14 +5830,19 @@ Route::middleware('auth')->group(function () {
             'name' => ['required', 'string', 'max:255'],
             'phone' => ['nullable', 'string', 'max:50'],
             'check_number' => ['required', 'string', 'max:100'],
-            'teaching_classes' => ['required', 'string', 'max:255'],
+            'teaching_classes' => ['nullable', 'string', 'max:255'],
             'class_ids' => ['sometimes', 'array'],
             'class_ids.*' => ['integer', 'exists:school_classes,id'],
             'subject_ids' => ['sometimes', 'array'],
             'subject_ids.*' => ['integer', 'exists:subjects,id'],
         ]);
 
-        $teacher->update($validated);
+        $teacher->update([
+            'name' => $validated['name'],
+            'phone' => $validated['phone'] ?? null,
+            'check_number' => $validated['check_number'],
+            'teaching_classes' => $validated['teaching_classes'] ?? '',
+        ]);
 
         $classIds = collect($validated['class_ids'] ?? [])->map(fn ($v) => (int) $v)->filter()->unique()->values();
         $subjectIds = collect($validated['subject_ids'] ?? [])->map(fn ($v) => (int) $v)->filter()->unique()->values();

@@ -41,6 +41,8 @@ const addForm = reactive({
     subject_ids: [],
 });
 
+const addBaseClassIds = ref([]);
+
 const editForm = reactive({
     id: null,
     name: '',
@@ -51,26 +53,66 @@ const editForm = reactive({
     subject_ids: [],
 });
 
+const editBaseClassIds = ref([]);
+
 const selectedClassIdsToAllowedSubjectIds = (classIds) => {
     const ids = (classIds || []).map((v) => Number(v)).filter((v) => Number.isFinite(v));
     if (!ids.length) return null;
 
-    const sets = ids
-        .map((cid) => Array.isArray(props.classSubjectMap?.[cid]) ? props.classSubjectMap[cid] : [])
-        .map((arr) => new Set(arr.map((v) => Number(v)).filter((v) => Number.isFinite(v))));
-
-    if (!sets.length) return null;
-
-    let intersection = sets[0];
-    for (let i = 1; i < sets.length; i++) {
-        const next = new Set();
-        for (const v of intersection) {
-            if (sets[i].has(v)) next.add(v);
+    const union = new Set();
+    for (const cid of ids) {
+        const arr = Array.isArray(props.classSubjectMap?.[cid]) ? props.classSubjectMap[cid] : [];
+        for (const v of arr) {
+            const n = Number(v);
+            if (Number.isFinite(n)) union.add(n);
         }
-        intersection = next;
     }
 
-    return intersection;
+    return union.size ? union : null;
+};
+
+const streamClassOptionsForBase = (baseClassId) => {
+    const baseId = Number(baseClassId);
+    if (!Number.isFinite(baseId) || baseId <= 0) return [];
+    return (props.allClasses || [])
+        .filter((c) => Number(c.parent_class_id) === baseId)
+        .map((c) => ({ id: Number(c.id), label: formatClassOption(c) }))
+        .sort((a, b) => String(a.label).localeCompare(String(b.label)));
+};
+
+const ensureStreamsBelongToSelectedBases = (baseIds, streamIds) => {
+    const allowed = new Set();
+    for (const bid of baseIds || []) {
+        for (const st of streamClassOptionsForBase(bid)) {
+            allowed.add(Number(st.id));
+        }
+    }
+    return (streamIds || []).filter((sid) => allowed.has(Number(sid)));
+};
+
+const toggleInArray = (arr, id) => {
+    const n = Number(id);
+    if (!Number.isFinite(n)) return;
+    const idx = arr.findIndex((v) => Number(v) === n);
+    if (idx === -1) arr.push(n);
+    else arr.splice(idx, 1);
+};
+
+const toggleAddClass = (id) => toggleInArray(addForm.class_ids, id);
+const toggleAddSubject = (id) => toggleInArray(addForm.subject_ids, id);
+const toggleEditClass = (id) => toggleInArray(editForm.class_ids, id);
+const toggleEditSubject = (id) => toggleInArray(editForm.subject_ids, id);
+
+const toggleAddBaseClass = (baseId) => {
+    toggleInArray(addBaseClassIds.value, baseId);
+    addForm.class_ids = ensureStreamsBelongToSelectedBases(addBaseClassIds.value, addForm.class_ids);
+    addForm.subject_ids = [];
+};
+
+const toggleEditBaseClass = (baseId) => {
+    toggleInArray(editBaseClassIds.value, baseId);
+    editForm.class_ids = ensureStreamsBelongToSelectedBases(editBaseClassIds.value, editForm.class_ids);
+    editForm.subject_ids = [];
 };
 
 const filteredSubjectsFor = (classIds) => {
@@ -87,7 +129,10 @@ watch(
     () => addForm.class_ids,
     () => {
         const allowed = selectedClassIdsToAllowedSubjectIds(addForm.class_ids);
-        if (!allowed) return;
+        if (!allowed) {
+            addForm.subject_ids = [];
+            return;
+        }
         addForm.subject_ids = (addForm.subject_ids || []).filter((sid) => allowed.has(Number(sid)));
     },
     { deep: true }
@@ -97,7 +142,10 @@ watch(
     () => editForm.class_ids,
     () => {
         const allowed = selectedClassIdsToAllowedSubjectIds(editForm.class_ids);
-        if (!allowed) return;
+        if (!allowed) {
+            editForm.subject_ids = [];
+            return;
+        }
         editForm.subject_ids = (editForm.subject_ids || []).filter((sid) => allowed.has(Number(sid)));
     },
     { deep: true }
@@ -114,6 +162,30 @@ const vipindiLoading = ref(false);
 const vipindiSaving = ref(false);
 const vipindiRows = ref([]);
 
+const streamOptionsForBase = (baseClassId) => {
+    const baseId = Number(baseClassId);
+    if (!Number.isFinite(baseId) || baseId <= 0) return [];
+    return (props.allClasses || [])
+        .filter((c) => Number(c.parent_class_id) === baseId)
+        .map((c) => ({ id: c.id, label: formatClassOption(c) }))
+        .sort((a, b) => String(a.label).localeCompare(String(b.label)));
+};
+
+const allowedSubjectsForClassId = (classId) => {
+    const cid = Number(classId);
+    if (!Number.isFinite(cid) || cid <= 0) return null;
+    const ids = Array.isArray(props.classSubjectMap?.[cid]) ? props.classSubjectMap[cid] : null;
+    if (!ids) return null;
+    return new Set(ids.map((v) => Number(v)).filter((v) => Number.isFinite(v)));
+};
+
+const vipindiSubjectOptionsForRow = (row) => {
+    const targetClassId = row.stream_id ? Number(row.stream_id) : Number(row.base_class_id);
+    const allowed = allowedSubjectsForClassId(targetClassId);
+    if (!allowed) return props.subjects || [];
+    return (props.subjects || []).filter((s) => allowed.has(Number(s.id)));
+};
+
 const weeklyTotal = computed(() => {
     return (timetablePreview.value?.limits || []).reduce((sum, r) => sum + (Number(r.periods_per_week) || 0), 0);
 });
@@ -123,6 +195,7 @@ const resetAddForm = () => {
     addForm.phone = '';
     addForm.class_ids = [];
     addForm.subject_ids = [];
+    addBaseClassIds.value = [];
 };
 
 const saveTeacher = () => {
@@ -158,8 +231,15 @@ const openEdit = (teacher) => {
     editForm.phone = teacher.phone;
     editForm.check_number = teacher.check_number;
     editForm.teaching_classes = teacher.teaching_classes;
-    editForm.class_ids = Array.isArray(teacher.assigned_class_ids) ? [...teacher.assigned_class_ids] : [];
+    editForm.class_ids = Array.isArray(teacher.assigned_stream_class_ids) ? [...teacher.assigned_stream_class_ids] : [];
     editForm.subject_ids = Array.isArray(teacher.assigned_subject_ids) ? [...teacher.assigned_subject_ids] : [];
+    const baseFromStreams = new Set();
+    for (const sid of editForm.class_ids || []) {
+        const found = (props.allClasses || []).find((c) => Number(c.id) === Number(sid));
+        const bid = found?.parent_class_id ? Number(found.parent_class_id) : Number(sid);
+        if (Number.isFinite(bid) && bid > 0) baseFromStreams.add(bid);
+    }
+    editBaseClassIds.value = Array.from(baseFromStreams);
     showEditModal.value = true;
 };
 
@@ -170,7 +250,6 @@ const updateTeacher = () => {
         name: editForm.name,
         phone: editForm.phone,
         check_number: editForm.check_number,
-        teaching_classes: editForm.teaching_classes,
         class_ids: editForm.class_ids,
         subject_ids: editForm.subject_ids,
     }, {
@@ -238,11 +317,18 @@ const openVipindiModal = async (teacher) => {
         });
         const json = await res.json();
         const limits = Array.isArray(json?.limits) ? json.limits : [];
-        vipindiRows.value = limits.map((r) => ({
-            school_class_id: Number(r.school_class_id) || '',
-            subject_id: Number(r.subject_id) || '',
-            periods_per_week: Number(r.periods_per_week) || 0,
-        }));
+        vipindiRows.value = limits.map((r) => {
+            const classId = Number(r.school_class_id) || '';
+            const found = (props.allClasses || []).find((c) => Number(c.id) === Number(classId));
+            const baseId = found?.parent_class_id ? Number(found.parent_class_id) : classId;
+            const streamId = found?.parent_class_id ? classId : '';
+            return {
+                base_class_id: baseId || '',
+                stream_id: streamId || '',
+                subject_id: Number(r.subject_id) || '',
+                periods_per_week: Number(r.periods_per_week) || 0,
+            };
+        });
     } catch {
         vipindiRows.value = [];
     } finally {
@@ -259,7 +345,7 @@ const closeVipindiModal = () => {
 const addVipindiRow = () => {
     vipindiRows.value = [
         ...vipindiRows.value,
-        { school_class_id: '', subject_id: '', periods_per_week: 0 },
+        { base_class_id: '', stream_id: '', subject_id: '', periods_per_week: 0 },
     ];
 };
 
@@ -271,15 +357,21 @@ const saveVipindi = async () => {
     if (!selectedTeacher.value || vipindiSaving.value) return;
 
     const cleaned = (vipindiRows.value || [])
-        .map((r) => ({
-            school_class_id: Number(r.school_class_id),
-            subject_id: Number(r.subject_id),
-            teacher_id: Number(selectedTeacher.value.id),
-            periods_per_week: Number(r.periods_per_week),
-        }))
+        .map((r) => {
+            const classId = r.stream_id ? Number(r.stream_id) : Number(r.base_class_id);
+            const ppw = r.periods_per_week === '' || r.periods_per_week === null || typeof r.periods_per_week === 'undefined'
+                ? 0
+                : Number(r.periods_per_week);
+
+            return {
+                school_class_id: classId,
+                subject_id: Number(r.subject_id),
+                teacher_id: Number(selectedTeacher.value.id),
+                periods_per_week: Number.isFinite(ppw) && ppw >= 0 ? ppw : 0,
+            };
+        })
         .filter((r) => Number.isFinite(r.school_class_id) && r.school_class_id > 0)
-        .filter((r) => Number.isFinite(r.subject_id) && r.subject_id > 0)
-        .filter((r) => Number.isFinite(r.periods_per_week) && r.periods_per_week >= 0);
+        .filter((r) => Number.isFinite(r.subject_id) && r.subject_id > 0);
 
     if (!cleaned.length) return;
 
@@ -303,8 +395,9 @@ const saveVipindi = async () => {
 };
 
 const formatClassOption = (cls) => {
+    const name = cls?.name ? String(cls.name).trim() : '';
     const level = cls?.level ? String(cls.level).trim() : '';
-    return level || (cls?.name || '');
+    return name || level;
 };
 
 const formatSubjectOption = (s) => {
@@ -394,14 +487,29 @@ const formatSubjectOption = (s) => {
                                 <tr v-for="(row, idx) in vipindiRows" :key="idx" class="hover:bg-gray-50">
                                     <td class="border-b border-gray-100 px-3 py-2">
                                         <select
-                                            v-model="row.school_class_id"
+                                            v-model="row.base_class_id"
                                             class="w-full rounded-md border border-gray-300 px-2 py-1 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
                                         >
                                             <option value="">Select class...</option>
-                                            <option v-for="c in allClasses" :key="c.id" :value="c.id">
+                                            <option v-for="c in classes" :key="c.id" :value="c.id">
                                                 {{ formatClassOption(c) }}
                                             </option>
                                         </select>
+                                        <div v-if="streamOptionsForBase(row.base_class_id).length" class="mt-1">
+                                            <select
+                                                v-model="row.stream_id"
+                                                class="w-full rounded-md border border-gray-300 px-2 py-1 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                            >
+                                                <option value="">No stream (base class)</option>
+                                                <option
+                                                    v-for="st in streamOptionsForBase(row.base_class_id)"
+                                                    :key="st.id"
+                                                    :value="st.id"
+                                                >
+                                                    {{ st.label }}
+                                                </option>
+                                            </select>
+                                        </div>
                                     </td>
                                     <td class="border-b border-gray-100 px-3 py-2">
                                         <select
@@ -409,7 +517,7 @@ const formatSubjectOption = (s) => {
                                             class="w-full rounded-md border border-gray-300 px-2 py-1 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
                                         >
                                             <option value="">Select subject...</option>
-                                            <option v-for="s in subjects" :key="s.id" :value="s.id">
+                                            <option v-for="s in vipindiSubjectOptionsForRow(row)" :key="s.id" :value="s.id">
                                                 {{ formatSubjectOption(s) }}
                                             </option>
                                         </select>
@@ -811,46 +919,67 @@ const formatSubjectOption = (s) => {
                             />
                         </div>
                     </div>
-                    <div>
-                        <label class="mb-1 block text-[11px] font-medium">Classes (one or more)</label>
-                        <input
-                            v-model="editForm.teaching_classes"
-                            type="text"
-                            class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            required
-                        />
-                    </div>
-
                     <div class="grid grid-cols-2 gap-3">
                         <div>
                             <label class="mb-1 block text-[11px] font-medium">Assigned classes</label>
-                            <select
-                                v-model="editForm.class_ids"
-                                multiple
-                                class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] text-gray-800 focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            >
-                                <option v-for="cls in classes" :key="cls.id" :value="cls.id">
-                                    {{ formatClassOption(cls) }}
-                                </option>
-                            </select>
-                            <p class="mt-1 text-[10px] text-gray-500">
-                                Chagua darasa (base class tu, bila streams). Masomo yatakayotangazwa chini yata-apply kwa madarasa yote.
-                            </p>
+                            <div class="max-h-52 space-y-2 overflow-auto rounded-md border border-gray-200 bg-white p-2">
+                                <div v-for="base in classes" :key="base.id" class="rounded-md border border-gray-100 bg-white">
+                                    <label class="flex items-center gap-2 rounded-md px-2 py-1.5 text-[11px] text-gray-700 hover:bg-slate-50">
+                                        <input
+                                            type="checkbox"
+                                            class="h-3.5 w-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                            :checked="editBaseClassIds.includes(base.id)"
+                                            @change="toggleEditBaseClass(base.id)"
+                                        />
+                                        <span class="font-medium text-gray-800">{{ formatClassOption(base) }}</span>
+                                    </label>
+
+                                    <div v-if="editBaseClassIds.includes(base.id)" class="border-t border-gray-100 px-2 pb-2 pt-2">
+                                        <div class="text-[10px] font-semibold text-gray-600">Streams</div>
+                                        <div class="mt-1 grid grid-cols-2 gap-1">
+                                            <label
+                                                v-for="st in streamClassOptionsForBase(base.id)"
+                                                :key="st.id"
+                                                class="flex items-center gap-2 rounded-md px-2 py-1 text-[11px] text-gray-700 hover:bg-slate-50"
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    class="h-3.5 w-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                                    :checked="editForm.class_ids.includes(st.id)"
+                                                    @change="toggleEditClass(st.id)"
+                                                />
+                                                <span class="text-gray-800">{{ st.label }}</span>
+                                            </label>
+                                            <div v-if="!streamClassOptionsForBase(base.id).length" class="col-span-2 px-2 py-1 text-[11px] text-gray-500">
+                                                Hakuna streams kwenye darasa hili.
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <p class="mt-1 text-[10px] text-gray-500">Chagua darasa, kisha chagua stream. Ukiacha stream bila kuchagua, hakuna assignment itahifadhiwa.</p>
                         </div>
                         <div>
                             <label class="mb-1 block text-[11px] font-medium">Assigned subjects</label>
-                            <select
-                                v-model="editForm.subject_ids"
-                                multiple
-                                class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] text-gray-800 focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            >
-                                <option v-for="s in editFilteredSubjects" :key="s.id" :value="s.id">
-                                    {{ formatSubjectOption(s) }}
-                                </option>
-                            </select>
-                            <p class="mt-1 text-[10px] text-gray-500">
-                                Ukichagua masomo na madarasa mengi, masomo hayo yataunganishwa kwa kila darasa.
-                            </p>
+                            <div class="max-h-44 space-y-1 overflow-auto rounded-md border border-gray-200 bg-white p-2">
+                                <label
+                                    v-for="s in editFilteredSubjects"
+                                    :key="s.id"
+                                    class="flex items-center gap-2 rounded-md px-2 py-1 text-[11px] text-gray-700 hover:bg-emerald-50/40"
+                                >
+                                    <input
+                                        type="checkbox"
+                                        class="h-3.5 w-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                        :checked="editForm.subject_ids.includes(s.id)"
+                                        @change="toggleEditSubject(s.id)"
+                                    />
+                                    <span class="font-medium text-gray-800">{{ formatSubjectOption(s) }}</span>
+                                </label>
+                                <div v-if="!editFilteredSubjects.length" class="px-2 py-2 text-[11px] text-gray-500">
+                                    Chagua stream kwanza ili masomo yaonekane.
+                                </div>
+                            </div>
+                            <p class="mt-1 text-[10px] text-gray-500">Masomo yanatokana na streams ulizochagua.</p>
                         </div>
                     </div>
 
@@ -948,27 +1077,62 @@ const formatSubjectOption = (s) => {
                     <div class="grid grid-cols-2 gap-3">
                         <div>
                             <label class="mb-1 block text-[11px] font-medium">Assigned classes</label>
-                            <select
-                                v-model="addForm.class_ids"
-                                multiple
-                                class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] text-gray-800 focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            >
-                                <option v-for="cls in classes" :key="cls.id" :value="cls.id">
-                                    {{ formatClassOption(cls) }}
-                                </option>
-                            </select>
+                            <div class="max-h-52 space-y-2 overflow-auto rounded-md border border-gray-200 bg-white p-2">
+                                <div v-for="base in classes" :key="base.id" class="rounded-md border border-gray-100 bg-white">
+                                    <label class="flex items-center gap-2 rounded-md px-2 py-1.5 text-[11px] text-gray-700 hover:bg-slate-50">
+                                        <input
+                                            type="checkbox"
+                                            class="h-3.5 w-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                            :checked="addBaseClassIds.includes(base.id)"
+                                            @change="toggleAddBaseClass(base.id)"
+                                        />
+                                        <span class="font-medium text-gray-800">{{ formatClassOption(base) }}</span>
+                                    </label>
+
+                                    <div v-if="addBaseClassIds.includes(base.id)" class="border-t border-gray-100 px-2 pb-2 pt-2">
+                                        <div class="text-[10px] font-semibold text-gray-600">Streams</div>
+                                        <div class="mt-1 grid grid-cols-2 gap-1">
+                                            <label
+                                                v-for="st in streamClassOptionsForBase(base.id)"
+                                                :key="st.id"
+                                                class="flex items-center gap-2 rounded-md px-2 py-1 text-[11px] text-gray-700 hover:bg-slate-50"
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    class="h-3.5 w-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                                    :checked="addForm.class_ids.includes(st.id)"
+                                                    @change="toggleAddClass(st.id)"
+                                                />
+                                                <span class="text-gray-800">{{ st.label }}</span>
+                                            </label>
+                                            <div v-if="!streamClassOptionsForBase(base.id).length" class="col-span-2 px-2 py-1 text-[11px] text-gray-500">
+                                                Hakuna streams kwenye darasa hili.
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                         <div>
                             <label class="mb-1 block text-[11px] font-medium">Assigned subjects</label>
-                            <select
-                                v-model="addForm.subject_ids"
-                                multiple
-                                class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-[11px] text-gray-800 focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            >
-                                <option v-for="s in addFilteredSubjects" :key="s.id" :value="s.id">
-                                    {{ formatSubjectOption(s) }}
-                                </option>
-                            </select>
+                            <div class="max-h-44 space-y-1 overflow-auto rounded-md border border-gray-200 bg-white p-2">
+                                <label
+                                    v-for="s in addFilteredSubjects"
+                                    :key="s.id"
+                                    class="flex items-center gap-2 rounded-md px-2 py-1 text-[11px] text-gray-700 hover:bg-emerald-50/40"
+                                >
+                                    <input
+                                        type="checkbox"
+                                        class="h-3.5 w-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                        :checked="addForm.subject_ids.includes(s.id)"
+                                        @change="toggleAddSubject(s.id)"
+                                    />
+                                    <span class="font-medium text-gray-800">{{ formatSubjectOption(s) }}</span>
+                                </label>
+                                <div v-if="!addFilteredSubjects.length" class="px-2 py-2 text-[11px] text-gray-500">
+                                    Chagua stream kwanza ili masomo yaonekane.
+                                </div>
+                            </div>
                         </div>
                     </div>
 
