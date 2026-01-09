@@ -18,6 +18,10 @@ class TimetableClassSubjectLimit extends Model
         'subject_id',
         'periods_per_week',
         'is_double',
+        'morning_single',
+        'morning_double',
+        'afternoon_single',
+        'afternoon_double',
     ];
 
     public function school()
