@@ -668,6 +668,7 @@ const generateSampleTimetable = () => {
         const desiredPeriodsByCode = {};
         const desiredDoubleByCode = {};
         const sessionQuotaByCode = {};
+        const requiredDoubleCountByCode = {};
         const appliesSubjectLimits = limitationsMode.value === 'subject_only'
             && selectedLimitClassId.value
             && (
@@ -727,6 +728,14 @@ const generateSampleTimetable = () => {
                 if (!desiredDoubleByCode[String(code)] && eff >= 4) {
                     desiredDoubleByCode[String(code)] = true;
                 }
+
+                // Hard rule: minimum doubles per week (per stream)
+                // - ENG and B/MAT => 3 doubles
+                // - others => 2 doubles
+                // capped by floor(periods/week / 2)
+                const upper = Math.floor(eff / 2);
+                const baseNeed = ['ENG', 'B/MAT'].includes(String(code).toUpperCase()) ? 3 : 2;
+                requiredDoubleCountByCode[String(code)] = Math.max(0, Math.min(baseNeed, upper));
             });
         }
 
@@ -867,6 +876,13 @@ const generateSampleTimetable = () => {
             return false;
         };
 
+        // Track how many doubles were successfully placed for each subject.
+        const placedDoublesByCode = {};
+        const bumpDoubleCount = (code) => {
+            const k = String(code);
+            placedDoublesByCode[k] = Number(placedDoublesByCode[k] || 0) + 1;
+        };
+
         const tryPlaceDoubleInSession = (code, session) => {
             for (let d = 0; d < days.length; d += 1) {
                 const day = days[d];
@@ -917,6 +933,7 @@ const generateSampleTimetable = () => {
                 for (let k = 0; k < (q.morning_double || 0); k += 1) {
                     const ok = tryPlaceDoubleInSession(code, 'morning');
                     if (!ok) break;
+                    bumpDoubleCount(code);
                 }
                 for (let k = 0; k < (q.morning_single || 0); k += 1) {
                     const ok = tryPlaceSingleInSession(code, 'morning');
@@ -925,10 +942,25 @@ const generateSampleTimetable = () => {
                 for (let k = 0; k < (q.afternoon_double || 0); k += 1) {
                     const ok = tryPlaceDoubleInSession(code, 'afternoon');
                     if (!ok) break;
+                    bumpDoubleCount(code);
                 }
                 for (let k = 0; k < (q.afternoon_single || 0); k += 1) {
                     const ok = tryPlaceSingleInSession(code, 'afternoon');
                     if (!ok) break;
+                }
+            });
+        }
+
+        // 0b) Enforce minimum doubles per subject per week (after session quotas, before other filling)
+        if (hasQuotas && Object.keys(requiredDoubleCountByCode).length > 0) {
+            Object.keys(requiredDoubleCountByCode).forEach((code) => {
+                const need = Number(requiredDoubleCountByCode[String(code)] || 0);
+                if (need <= 0) return;
+
+                while (Number(placedDoublesByCode[String(code)] || 0) < need && Number(remainingNeeded[String(code)] || 0) >= 2) {
+                    const ok = tryPlaceDoubleForCode(code);
+                    if (!ok) break;
+                    bumpDoubleCount(code);
                 }
             });
         }
@@ -974,6 +1006,7 @@ const generateSampleTimetable = () => {
                     while (remainingNeeded[String(code)] >= 2) {
                         const ok = tryPlaceDoubleForCode(code);
                         if (!ok) break;
+                        bumpDoubleCount(code);
                     }
                 });
         }
