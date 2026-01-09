@@ -471,6 +471,39 @@ const isTeachableLessonSlot = (day, slotIndex) => {
     return true;
 };
 
+const sessionCapacityForClass = () => {
+    let morningSlots = 0;
+    let afternoonSlots = 0;
+    let morningDoubleStarts = 0;
+    let afternoonDoubleStarts = 0;
+
+    days.forEach((day) => {
+        for (let i = 0; i < 9; i += 1) {
+            if (!isTeachableLessonSlot(day, i)) continue;
+            const session = getSlotSession(i);
+            if (session === 'morning') morningSlots += 1;
+            if (session === 'afternoon') afternoonSlots += 1;
+        }
+
+        for (let s = 0; s <= 2; s += 1) {
+            if (isTeachableLessonSlot(day, s) && isTeachableLessonSlot(day, s + 1)) {
+                morningDoubleStarts += 1;
+            }
+        }
+
+        if (isTeachableLessonSlot(day, 7) && isTeachableLessonSlot(day, 8)) {
+            afternoonDoubleStarts += 1;
+        }
+    });
+
+    return {
+        morningSlots,
+        afternoonSlots,
+        morningDoubleStarts,
+        afternoonDoubleStarts,
+    };
+};
+
 const scheduleStorageKey = computed(() => {
     const schoolId = props.school?.id ?? 'school';
     return `timetable_schedule_v3_${schoolId}`;
@@ -517,6 +550,7 @@ const saveLimitationsDraftToStorage = () => {
         window.localStorage.setItem(limitationsDraftStorageKey.value, JSON.stringify({
             mode: limitationsMode.value,
             selected_class_id: selectedLimitClassId.value,
+            apply_to_all_classes: applyLimitsToAllClasses.value,
             limits_by_key: limitsByKey.value || {},
             subject_limits_by_id: subjectLimitsById.value || {},
             subject_double_by_id: subjectDoubleById.value || {},
@@ -533,7 +567,7 @@ const saveLimitationsDraftToStorage = () => {
 // Function to validate double periods
 const validateDoublePeriods = () => {
     const doubleCounts = {};
-    
+
     days.forEach((day) => {
         const rows = schedule.value[day] || [];
         rows.forEach((row) => {
@@ -541,24 +575,23 @@ const validateDoublePeriods = () => {
                 if (!canBeDoubleStart(i)) continue;
                 const current = row.slots[i];
                 const next = row.slots[i + 1];
-                
-                if (current?.subject && next?.subject && 
-                    String(current.subject) === String(next.subject)) {
+
+                if (current?.subject && next?.subject && String(current.subject) === String(next.subject)) {
                     const code = String(current.subject);
                     const classId = row.school_class_id;
                     const key = `${classId}_${code}`;
-                    
+
                     doubleCounts[key] = (doubleCounts[key] || 0) + 1;
                 }
             }
         });
     });
-    
+
     // Check if ENG and B/MAT have 2 doubles
     Object.keys(doubleCounts).forEach((key) => {
         const [classId, code] = key.split('_');
         const subjectUpper = String(code).toUpperCase();
-        
+
         if (subjectUpper === 'ENG' || subjectUpper === 'B/MAT') {
             if (doubleCounts[key] < 2) {
                 console.warn(`${code} for class ${classId} has only ${doubleCounts[key]} double(s), expected 2`);
@@ -569,7 +602,7 @@ const validateDoublePeriods = () => {
             }
         }
     });
-    
+
     return doubleCounts;
 };
 
@@ -774,18 +807,34 @@ const generateSampleTimetable = () => {
         const sessionQuotaByCode = {};
         const requiredDoubleCountByCode = {};
         const maxDoubleCountByCode = {};
+        const hasGlobalApply = limitationsMode.value === 'subject_only' && applyLimitsToAllClasses.value;
         const appliesSubjectLimits = limitationsMode.value === 'subject_only'
-            && selectedLimitClassId.value
             && (
-                String(classId) === String(selectedLimitClassId.value)
-                || String(c?.parent_class_id || '') === String(selectedLimitClassId.value)
+                hasGlobalApply
+                || (
+                    selectedLimitClassId.value
+                    && (
+                        String(classId) === String(selectedLimitClassId.value)
+                        || String(c?.parent_class_id || '') === String(selectedLimitClassId.value)
+                    )
+                )
             );
 
         if (appliesSubjectLimits) {
-            const baseId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
-            const baseClass = baseId ? (classById.value?.[String(baseId)] || null) : null;
-            const formNumber = getFormOrder(baseClass);
+            const clsForDefaults = classById.value?.[String(classId)] || null;
+            const formNumber = getFormOrder(clsForDefaults);
             const defaultsByCode = defaultSubjectPeriodsByFormGroup(formNumber);
+
+            const limitsForClass = hasGlobalApply
+                ? (subjectLimitsByClassId.value?.[String(classId)] || {})
+                : {
+                    periodsBySubjectId: subjectLimitsById.value || {},
+                    doubleBySubjectId: subjectDoubleById.value || {},
+                    morningSingleBySubjectId: subjectMorningSingleById.value || {},
+                    morningDoubleBySubjectId: subjectMorningDoubleById.value || {},
+                    afternoonSingleBySubjectId: subjectAfternoonSingleById.value || {},
+                    afternoonDoubleBySubjectId: subjectAfternoonDoubleById.value || {},
+                };
 
             classSubjectCodes.forEach((code) => {
                 const sid = subjectIdByCode.value?.[String(code)] || null;
@@ -796,21 +845,21 @@ const generateSampleTimetable = () => {
                     // HARD-CODE: use the default table when it contains this subject
                     desiredPeriodsByCode[String(code)] = Math.floor(Number(def));
                 } else {
-                    const val = subjectLimitsById.value?.[key];
+                    const val = limitsForClass?.periodsBySubjectId?.[key];
                     const n = val === '' || val === null || val === undefined ? null : Number(val);
                     if (Number.isFinite(n) && n > 0) {
                         desiredPeriodsByCode[String(code)] = Math.floor(n);
                     }
                 }
 
-                if (subjectDoubleById.value?.[key]) {
+                if (limitsForClass?.doubleBySubjectId?.[key]) {
                     desiredDoubleByCode[String(code)] = true;
                 }
 
-                const ms = Number(subjectMorningSingleById.value?.[key] ?? 0) || 0;
-                const md = Number(subjectMorningDoubleById.value?.[key] ?? 0) || 0;
-                const as = Number(subjectAfternoonSingleById.value?.[key] ?? 0) || 0;
-                const ad = Number(subjectAfternoonDoubleById.value?.[key] ?? 0) || 0;
+                const ms = Number(limitsForClass?.morningSingleBySubjectId?.[key] ?? 0) || 0;
+                const md = Number(limitsForClass?.morningDoubleBySubjectId?.[key] ?? 0) || 0;
+                const as = Number(limitsForClass?.afternoonSingleBySubjectId?.[key] ?? 0) || 0;
+                const ad = Number(limitsForClass?.afternoonDoubleBySubjectId?.[key] ?? 0) || 0;
 
                 if (ms > 0 || md > 0 || as > 0 || ad > 0) {
                     sessionQuotaByCode[String(code)] = {
@@ -831,36 +880,15 @@ const generateSampleTimetable = () => {
                 // RULE 2: Other subjects - double 1, single 1 (periods = 3)
                 const eff = Number(desiredPeriodsByCode[String(code)] || 0);
                 const subjectUpper = String(code).toUpperCase();
-                
                 if (subjectUpper === 'ENG' || subjectUpper === 'B/MAT') {
-                    // ENG na B/MAT: periods = 5, double 2, single 1
                     if (eff >= 5) {
                         requiredDoubleCountByCode[String(code)] = 2;
                         maxDoubleCountByCode[String(code)] = 2;
-                        // Ensure single period remains
-                        if (!sessionQuotaByCode[String(code)]) {
-                            sessionQuotaByCode[String(code)] = {
-                                morning_single: 1,
-                                morning_double: 0,
-                                afternoon_single: 0,
-                                afternoon_double: 0,
-                            };
-                        }
                     }
                 } else {
-                    // Other subjects: double 1, single 1 (periods = 3)
                     if (eff >= 3) {
                         requiredDoubleCountByCode[String(code)] = 1;
                         maxDoubleCountByCode[String(code)] = 1;
-                        // Ensure single period remains
-                        if (!sessionQuotaByCode[String(code)]) {
-                            sessionQuotaByCode[String(code)] = {
-                                morning_single: 1,
-                                morning_double: 0,
-                                afternoon_single: 0,
-                                afternoon_double: 0,
-                            };
-                        }
                     }
                 }
 
@@ -869,227 +897,33 @@ const generateSampleTimetable = () => {
                     desiredDoubleByCode[String(code)] = true;
                 }
             });
+
+            const classKey = `${getClassLabel(c) || c?.name || ''}${c?.stream ? ` ${String(c.stream).toUpperCase()}` : ''}`.trim();
+            const cap = sessionCapacityForClass();
+            Object.keys(sessionQuotaByCode).forEach((code) => {
+                const q = sessionQuotaByCode[String(code)] || {};
+                const ms = Number(q.morning_single || 0);
+                const md = Number(q.morning_double || 0);
+                const as = Number(q.afternoon_single || 0);
+                const ad = Number(q.afternoon_double || 0);
+
+                if ((ms + (2 * md)) > cap.morningSlots) {
+                    generationWarnings.value.push(`${classKey}: ${code} morning quota exceeds available morning slots`);
+                }
+                if (md > cap.morningDoubleStarts) {
+                    generationWarnings.value.push(`${classKey}: ${code} morning double quota exceeds available morning double slots`);
+                }
+                if ((as + (2 * ad)) > cap.afternoonSlots) {
+                    generationWarnings.value.push(`${classKey}: ${code} afternoon quota exceeds available afternoon slots`);
+                }
+                if (ad > cap.afternoonDoubleStarts) {
+                    generationWarnings.value.push(`${classKey}: ${code} afternoon double quota exceeds available afternoon double slots`);
+                }
+            });
         }
 
-        const remainingNeeded = { ...desiredPeriodsByCode };
-        const hasQuotas = Object.keys(remainingNeeded).length > 0;
-
-        // Per-class per-day constraints to reduce repetition:
-        // - A subject should appear at most once per day (unless it is a double)
-        // - A teacher should teach a class at most once per day (either a single or a double)
-        const subjectCountByDay = {};
-        const teacherUsedInClassDay = {};
-        days.forEach((day) => {
-            subjectCountByDay[day] = {};
-            teacherUsedInClassDay[day] = new Set();
-        });
-
-        const isPartOfDouble = (day, slotIndex, subject) => {
-            if (!subject) return false;
-            const leftAllowed = slotIndex > 0 && ![4, 7].includes(slotIndex);
-            const rightAllowed = slotIndex < 8 && ![3, 6].includes(slotIndex);
-            
-            const left = leftAllowed ? rowByDay[day].slots[slotIndex - 1] : null;
-            const right = rightAllowed ? rowByDay[day].slots[slotIndex + 1] : null;
-            const leftSubject = left?.subject ? String(left.subject).trim().toUpperCase() : '';
-            const rightSubject = right?.subject ? String(right.subject).trim().toUpperCase() : '';
-            const code = String(subject).trim().toUpperCase();
-
-            return (leftSubject && leftSubject === code) || (rightSubject && rightSubject === code);
-        };
-
-        const clearSlot = (day, slotIndex) => {
-            const existing = rowByDay[day]?.slots?.[slotIndex];
-            const busy = existing?._busy;
-            const busySet = teacherBusy[String(day)]?.[Number(slotIndex)];
-
-            if (busySet && Array.isArray(busy)) {
-                busy.forEach((t) => busySet.delete(t));
-            }
-
-            // Remove day from overall set only if teacher has no other lessons that day (safe but expensive); skip removal.
-            // We keep teacherDaysUsedOverall as monotonic within one generation pass.
-
-            const teacherDaySet = teacherUsedInClassDay[String(day)];
-            if (teacherDaySet && Array.isArray(busy)) {
-                busy.forEach((t) => teacherDaySet.delete(t));
-            }
-
-            const subject = existing?.subject ? String(existing.subject).trim().toUpperCase() : '';
-            if (subject) {
-                const counts = subjectCountByDay[String(day)] || {};
-                if (counts[subject]) {
-                    counts[subject] = Math.max(0, Number(counts[subject]) - 1);
-                    if (counts[subject] <= 0) delete counts[subject];
-                }
-            }
-            rowByDay[day].slots[slotIndex] = null;
-        };
-
-        const setSlot = (day, slotIndex, subject) => {
-            if (!subject) return false;
-
-            const subjectCode = String(subject).trim().toUpperCase();
-            const counts = subjectCountByDay[String(day)] || {};
-            const alreadyToday = Number(counts[subjectCode] || 0) > 0;
-
-            const partOfDouble = isPartOfDouble(day, slotIndex, subjectCode);
-
-            // Prevent repeating the same subject multiple times in one day unless it forms a double.
-            if (alreadyToday && !partOfDouble) {
-                return false;
-            }
-
-            const picked = chooseTeacherForSlot(classId, subjectCode, day, slotIndex);
-            if (!picked.ok) return false;
-
-            // Prevent the same teacher from appearing multiple times in the same class/day.
-            // (Allow blank teacher cells when there is no assignment.)
-            const teacherDaySet = teacherUsedInClassDay[String(day)] || new Set();
-            if (picked.busyList && picked.busyList.length) {
-                for (let i = 0; i < picked.busyList.length; i += 1) {
-                    if (!teacherDaySet.has(picked.busyList[i])) continue;
-
-                    // Allow the second cell of a double (same subject) to reuse the same teacher(s)
-                    // without violating the per-day-per-class teacher rule.
-                    if (!partOfDouble) return false;
-
-                    const leftAllowed = slotIndex > 0 && ![4, 7].includes(slotIndex);
-                    const rightAllowed = slotIndex < 8 && ![3, 6].includes(slotIndex);
-                    const left = leftAllowed ? rowByDay[day].slots[slotIndex - 1] : null;
-                    const right = rightAllowed ? rowByDay[day].slots[slotIndex + 1] : null;
-
-                    const neighbor = (left?.subject && String(left.subject).trim().toUpperCase() === subjectCode) ? left
-                        : ((right?.subject && String(right.subject).trim().toUpperCase() === subjectCode) ? right : null);
-
-                    const neighborBusy = Array.isArray(neighbor?._busy) ? neighbor._busy : [];
-                    const sameBusy = Array.isArray(picked.busyList)
-                        && picked.busyList.length
-                        && picked.busyList.length === neighborBusy.length
-                        && picked.busyList.every((t) => neighborBusy.includes(t));
-
-                    if (!neighbor || !sameBusy) return false;
-                }
-            }
-
-            const teacherInitials = picked.teacher || (classHasTeacherAssignments(classId) ? '' : (teachers[subjectCode] || ''));
-            const teacherName = teacherInitials;
-
-            rowByDay[day].slots[slotIndex] = {
-                subject: subjectCode,
-                teacher: teacherInitials,
-                teacher_initials: teacherInitials,
-                teacher_name: teacherName,
-                _busy: picked.busyList || [],
-            };
-
-            // Mark teachers as busy for this day+slot.
-            const busySet = teacherBusy[String(day)]?.[Number(slotIndex)];
-            if (busySet && picked.busyList && picked.busyList.length) {
-                picked.busyList.forEach((t) => busySet.add(t));
-            }
-
-            // Update overall workload tracking
-            if (picked.busyList && picked.busyList.length) {
-                picked.busyList.forEach((t) => {
-                    const ds = ensureTeacherDaySet(t);
-                    if (ds) ds.add(String(day));
-                    teacherLastPlacement[String(t)] = {
-                        day: String(day),
-                        slotIndex: Number(slotIndex),
-                        baseClassId: c?.parent_class_id ? Number(c.parent_class_id) : Number(classId || 0),
-                    };
-                });
-            }
-
-            if (teacherDaySet && picked.busyList && picked.busyList.length) {
-                picked.busyList.forEach((t) => teacherDaySet.add(t));
-            }
-
-            counts[subjectCode] = Number(counts[subjectCode] || 0) + 1;
-            subjectCountByDay[String(day)] = counts;
-            teacherUsedInClassDay[String(day)] = teacherDaySet;
-
-            return true;
-        };
-
-        const isEmptyTeachableSlot = (day, slotIndex) => {
-            if (!isTeachableLessonSlot(day, slotIndex)) return false;
-            const v = rowByDay[day].slots[slotIndex];
-            return v === null;
-        };
-
-        const canBeDoubleStartInSession = (slotIndex, session) => {
-            if (session === 'morning') return slotIndex >= 0 && slotIndex <= 2; // 0-1,1-2,2-3
-            if (session === 'afternoon') return slotIndex === 7; // 7-8
-            return false;
-        };
-
-        // Track how many doubles were successfully placed for each subject.
-        const placedDoublesByCode = {};
-        const bumpDoubleCount = (code) => {
-            const k = String(code);
-            placedDoublesByCode[k] = Number(placedDoublesByCode[k] || 0) + 1;
-        };
-
-        const tryPlaceDoubleInSession = (code, session) => {
-            const candidates = [];
-            const startSlots = session === 'morning' ? [0, 1, 2] : [7];
-            const normCode = String(code || '').trim().toUpperCase();
-
-            for (let d = 0; d < days.length; d += 1) {
-                const day = days[d];
-                // Spread doubles across different days for the same subject.
-                if (subjectCountByDay[String(day)]?.[normCode]) continue;
-                for (let s = 0; s < startSlots.length; s += 1) {
-                    const i = startSlots[s];
-                    if (!canBeDoubleStartInSession(i, session)) continue;
-                    if (!isEmptyTeachableSlot(day, i) || !isEmptyTeachableSlot(day, i + 1)) continue;
-                    if (classId && (!isSubjectAllowedInSlot(classId, code, i) || !isSubjectAllowedInSlot(classId, code, i + 1))) continue;
-                    if (getSlotSession(i) !== session || getSlotSession(i + 1) !== session) continue;
-                    candidates.push({ day, slotIndex: i });
-                }
-            }
-
-            shuffle(candidates);
-
-            for (let k = 0; k < candidates.length; k += 1) {
-                const pos = candidates[k];
-                const day = pos.day;
-                const i = pos.slotIndex;
-
-                if (!setSlot(day, i, code)) continue;
-                if (!setSlot(day, i + 1, code)) {
-                    clearSlot(day, i);
-                    continue;
-                }
-
-                remainingNeeded[String(code)] = Math.max(0, (remainingNeeded[String(code)] || 0) - 2);
-                if (remainingNeeded[String(code)] <= 0) delete remainingNeeded[String(code)];
-                return true;
-            }
-
-            return false;
-        };
-
-        const tryPlaceSingleInSession = (code, session) => {
-            for (let d = 0; d < days.length; d += 1) {
-                const day = days[d];
-                for (let i = 0; i < 9; i += 1) {
-                    if (getSlotSession(i) !== session) continue;
-                    if (!isEmptyTeachableSlot(day, i)) continue;
-                    if (classId && !isSubjectAllowedInSlot(classId, code, i)) continue;
-                    if (!setSlot(day, i, code)) continue;
-                    remainingNeeded[String(code)] = Math.max(0, (remainingNeeded[String(code)] || 0) - 1);
-                    if (remainingNeeded[String(code)] <= 0) delete remainingNeeded[String(code)];
-                    return true;
-                }
-            }
-            return false;
-        };
-
         // 0) If session quotas are specified, force-place them first.
-        if (hasQuotas && Object.keys(sessionQuotaByCode).length > 0) {
+        if (hasQuotas && Object.keys(sessionQuotaByCode || {}).length > 0) {
             Object.keys(sessionQuotaByCode).forEach((code) => {
                 const q = sessionQuotaByCode[code];
                 if (!q) return;
@@ -1104,7 +938,7 @@ const generateSampleTimetable = () => {
                     }
                     bumpDoubleCount(code);
                 }
-                
+
                 // Place morning singles
                 for (let k = 0; k < (q.morning_single || 0); k += 1) {
                     const ok = tryPlaceSingleInSession(code, 'morning');
@@ -1114,14 +948,14 @@ const generateSampleTimetable = () => {
                         if (!ok2) break;
                     }
                 }
-                
+
                 // Place afternoon doubles
                 for (let k = 0; k < (q.afternoon_double || 0); k += 1) {
                     const ok = tryPlaceDoubleInSession(code, 'afternoon');
                     if (!ok) break;
                     bumpDoubleCount(code);
                 }
-                
+
                 // Place afternoon singles
                 for (let k = 0; k < (q.afternoon_single || 0); k += 1) {
                     const ok = tryPlaceSingleInSession(code, 'afternoon');
@@ -1131,17 +965,16 @@ const generateSampleTimetable = () => {
         }
 
         // 0b) Enforce minimum doubles per subject per week (after session quotas, before other filling)
-        if (hasQuotas && Object.keys(requiredDoubleCountByCode).length > 0) {
+        if (hasQuotas && Object.keys(requiredDoubleCountByCode || {}).length > 0) {
             Object.keys(requiredDoubleCountByCode).forEach((code) => {
                 const need = Number(requiredDoubleCountByCode[String(code)] || 0);
                 if (need <= 0) return;
 
                 const subjectUpper = String(code).toUpperCase();
-                const isEngOrMath = subjectUpper === 'ENG' || subjectUpper === 'B/MAT';
-                
+
                 while (Number(placedDoublesByCode[String(code)] || 0) < need && Number(remainingNeeded[String(code)] || 0) >= 2) {
                     // Try morning first for ENG/B/MAT
-                    if (isEngOrMath) {
+                    if (subjectUpper === 'ENG' || subjectUpper === 'B/MAT') {
                         const ok = tryPlaceDoubleInSession(code, 'morning');
                         if (!ok) {
                             // Fallback to any session
@@ -1163,28 +996,27 @@ const generateSampleTimetable = () => {
             return slotIndex >= 0 && slotIndex < 8 && ![3, 6].includes(slotIndex);
         };
 
-        const tryPlaceDoubleForCode = (code) => {
-            // need at least 2 remaining to form a double
-            if (!remainingNeeded[String(code)] || remainingNeeded[String(code)] < 2) return false;
-
+        const tryPlaceDoubleInSession = (code, session) => {
             const candidates = [];
+            const startSlots = session === 'morning' ? [0, 1, 2] : [7];
             const normCode = String(code || '').trim().toUpperCase();
-            
+
             // Prioritize morning slots for ENG and B/MAT
             const subjectUpper = String(code).toUpperCase();
             const isEngOrMath = subjectUpper === 'ENG' || subjectUpper === 'B/MAT';
-            
+
             for (let d = 0; d < days.length; d += 1) {
                 const day = days[d];
                 // Spread doubles across different days for the same subject.
                 if (subjectCountByDay[String(day)]?.[normCode]) continue;
-                for (let i = 0; i < 8; i += 1) {
-                    if (!canBeDoubleStart(i)) continue;
+                for (let s = 0; s < startSlots.length; s += 1) {
+                    const i = startSlots[s];
+                    if (!canBeDoubleStartInSession(i, session)) continue;
                     if (!isTeachableLessonSlot(day, i) || !isTeachableLessonSlot(day, i + 1)) continue;
                     if (rowByDay[day].slots[i] !== null) continue;
                     if (rowByDay[day].slots[i + 1] !== null) continue;
                     if (classId && (!isSubjectAllowedInSlot(classId, code, i) || !isSubjectAllowedInSlot(classId, code, i + 1))) continue;
-                    
+
                     // Score based on session preference
                     let score = 0;
                     const session = getSlotSession(i);
@@ -1193,14 +1025,14 @@ const generateSampleTimetable = () => {
                     } else if (!isEngOrMath && session === 'morning') {
                         score += 5; // Morning preference for other subjects
                     }
-                    
+
                     candidates.push({ day, slotIndex: i, score });
                 }
             }
 
             // Sort by score descending
             candidates.sort((a, b) => b.score - a.score);
-            
+
             // Try highest scored candidates first
             for (let k = 0; k < candidates.length; k += 1) {
                 const pos = candidates[k];
@@ -1221,23 +1053,21 @@ const generateSampleTimetable = () => {
             return false;
         };
 
-        if (hasQuotas) {
-            // Place double periods first so we can reserve consecutive slots.
-            Object.keys(desiredDoubleByCode)
-                .filter((code) => desiredDoubleByCode[code])
-                .forEach((code) => {
-                    const cap = Number(maxDoubleCountByCode[String(code)] ?? 999);
-                    // keep placing while possible
-                    while (
-                        remainingNeeded[String(code)] >= 2
-                        && Number(placedDoublesByCode[String(code)] || 0) < cap
-                    ) {
-                        const ok = tryPlaceDoubleForCode(code);
-                        if (!ok) break;
-                        bumpDoubleCount(code);
-                    }
-                });
-        }
+        const tryPlaceSingleInSession = (code, session) => {
+            for (let d = 0; d < days.length; d += 1) {
+                const day = days[d];
+                for (let i = 0; i < 9; i += 1) {
+                    if (getSlotSession(i) !== session) continue;
+                    if (!isEmptyTeachableSlot(day, i)) continue;
+                    if (classId && !isSubjectAllowedInSlot(classId, code, i)) continue;
+                    if (!setSlot(day, i, code)) continue;
+                    remainingNeeded[String(code)] -= 1;
+                    if (remainingNeeded[String(code)] <= 0) delete remainingNeeded[String(code)];
+                    return true;
+                }
+            }
+            return false;
+        };
 
         // 1) Coverage-first: try to place every subject at least once (respecting session rules).
         const unconstrainedSubjects = [];
@@ -1434,14 +1264,12 @@ const generateSampleTimetable = () => {
                     if (classId && !isSubjectAllowedInSlot(classId, subjectCode, i)) continue;
                     const current = rowByDay[day].slots[i];
                     const currentSubject = current?.subject ? String(current.subject) : '';
-                    if (currentSubject === String(subjectCode)) return null; // already present
 
-                    const prev = i > 0 && ![4, 7].includes(i) ? rowByDay[day].slots[i - 1] : null;
+                    const prevAllowed = i > 0 && ![4, 7].includes(i);
                     const nextSlot = i < 8 && ![3, 6].includes(i) ? rowByDay[day].slots[i + 1] : null;
-                    const prevSubject = prev?.subject ? String(prev.subject) : '';
+                    const prevSubject = prevAllowed ? rowByDay[day].slots[i - 1]?.subject : '';
                     const nextSubject = nextSlot?.subject ? String(nextSlot.subject) : '';
 
-                    // avoid creating doubles
                     if (prevSubject && prevSubject === String(subjectCode)) continue;
                     if (nextSubject && nextSubject === String(subjectCode)) continue;
 
@@ -1500,6 +1328,7 @@ const generateSampleTimetable = () => {
                 const nextSlot = nextAllowed ? rowByDay[day].slots[slotIndex + 1] : null;
                 const prevCode = prev?.subject ? String(prev.subject) : '';
                 const nextCode = nextSlot?.subject ? String(nextSlot.subject) : '';
+
                 if (prevCode && prevCode === String(newCode)) return false;
                 if (nextCode && nextCode === String(newCode)) return false;
                 return true;
@@ -1637,8 +1466,12 @@ const generateSampleTimetable = () => {
 
 const regenerateSampleTimetable = async () => {
     // Ensure regenerate uses DB limitations (subject_only) even if modal is closed.
-    if (limitationsMode.value === 'subject_only' && selectedLimitClassId.value) {
-        await loadSubjectLimits();
+    if (limitationsMode.value === 'subject_only') {
+        if (applyLimitsToAllClasses.value) {
+            await loadAllSubjectLimits();
+        } else if (selectedLimitClassId.value) {
+            await loadSubjectLimits();
+        }
     }
     generateSampleTimetable();
 };
@@ -1851,6 +1684,9 @@ onMounted(() => {
         if (limitationsDraft.selected_class_id) {
             selectedLimitClassId.value = String(limitationsDraft.selected_class_id);
         }
+        if (limitationsDraft.apply_to_all_classes !== null && limitationsDraft.apply_to_all_classes !== undefined) {
+            applyLimitsToAllClasses.value = !!limitationsDraft.apply_to_all_classes;
+        }
         if (limitationsDraft.limits_by_key && typeof limitationsDraft.limits_by_key === 'object') {
             limitsByKey.value = limitationsDraft.limits_by_key;
         }
@@ -1997,6 +1833,10 @@ const limitsLoading = ref(false);
 const limitsSaving = ref(false);
 const limitsByKey = ref({});
 
+const applyLimitsToAllClasses = ref(false);
+
+const subjectLimitsByClassId = ref({});
+
 const limitationsMode = ref('subject_only');
 const subjectLimitsById = ref({});
 const subjectDoubleById = ref({});
@@ -2044,186 +1884,6 @@ const defaultSubjectPeriodsByFormGroup = (formNumber) => {
     if (formNumber === 3 || formNumber === 4) return form34;
     return {};
 };
-
-const scheduleAutoLimitSave = () => {
-    if (!showLimitationsModal.value) return;
-    if (!selectedLimitClassId.value) return;
-    if (limitsLoading.value || limitsSaving.value) return;
-    if (suppressAutoLimitSave.value) return;
-
-    if (autoLimitSaveTimer.value) {
-        window.clearTimeout(autoLimitSaveTimer.value);
-    }
-
-    autoLimitSaveTimer.value = window.setTimeout(async () => {
-        if (!showLimitationsModal.value) return;
-        if (!selectedLimitClassId.value) return;
-        if (limitsLoading.value || limitsSaving.value) return;
-
-        if (limitationsMode.value === 'subject_only') {
-            await saveSubjectLimits({ closeModal: false });
-        } else {
-            await saveLimits({ closeModal: false });
-        }
-    }, 600);
-};
-
-const syncSubjectPeriodsFromTeacherLimits = () => {
-    if (!selectedLimitClassId.value) return;
-
-    const next = { ...(subjectLimitsById.value || {}) };
-    const totalsBySubjectId = {};
-
-    (teacherSubjectRows.value || []).forEach((row) => {
-        const subjectId = row?.subject_id ? Number(row.subject_id) : null;
-        const teacherId = row?.teacher_id ? Number(row.teacher_id) : null;
-        if (!subjectId || !teacherId) return;
-
-        const key = limitKey(teacherId, subjectId);
-        const raw = limitsByKey.value?.[key];
-        const val = raw === '' || raw === null || raw === undefined ? 0 : Number(raw);
-        if (!Number.isFinite(val) || val < 0) return;
-
-        totalsBySubjectId[String(subjectId)] = Number(totalsBySubjectId[String(subjectId)] || 0) + val;
-    });
-
-    Object.keys(totalsBySubjectId).forEach((sid) => {
-        next[subjectLimitKey(sid)] = totalsBySubjectId[sid];
-    });
-
-    subjectLimitsById.value = next;
-};
-
-watch([
-    limitsByKey,
-    subjectLimitsById,
-    subjectDoubleById,
-    subjectMorningSingleById,
-    subjectMorningDoubleById,
-    subjectAfternoonSingleById,
-    subjectAfternoonDoubleById,
-    selectedLimitClassId,
-    limitationsMode,
-], () => {
-    saveLimitationsDraftToStorage();
-}, { deep: true });
-
-const selectedLimitClass = computed(() => {
-    const selectedId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
-    if (!Number.isFinite(selectedId)) return null;
-    const base = (props.classes || []).filter((c) => !c?.parent_class_id);
-    return base.find((c) => Number(c?.id) === selectedId) || null;
-});
-
-const selectedLimitClassHasSubjects = computed(() => {
-    const baseId = selectedLimitClass.value?.id ? Number(selectedLimitClass.value.id) : null;
-    if (!Number.isFinite(baseId) || !baseId) return false;
-
-    const all = Array.isArray(props.classes) ? props.classes : [];
-    const streams = all.filter((c) => Number(c?.parent_class_id) === baseId);
-    const codes = new Set();
-    if (streams.length) {
-        streams.forEach((s) => (Array.isArray(s?.subject_codes) ? s.subject_codes : []).forEach((code) => codes.add(code)));
-    } else {
-        (Array.isArray(selectedLimitClass.value?.subject_codes) ? selectedLimitClass.value.subject_codes : []).forEach((code) => codes.add(code));
-    }
-    return codes.size > 0;
-});
-
-const csrfToken = () => {
-    return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-};
-
-const teacherSubjectRows = computed(() => {
-    const rows = [];
-
-    (props.subjects || []).forEach((s) => {
-        const teachers = Array.isArray(s.teachers) ? s.teachers : [];
-        teachers.forEach((t) => {
-            if (!t?.id) return;
-            rows.push({
-                teacher_id: t.id,
-                teacher_name: t.name,
-                teacher_initials: t.initials,
-                subject_id: s.id,
-                subject_code: s.subject_code,
-                subject_name: s.name,
-            });
-        });
-    });
-
-    const selectedId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
-    const selectedClass = Number.isFinite(selectedId)
-        ? (props.classes || []).filter((c) => !c?.parent_class_id).find((c) => Number(c?.id) === selectedId)
-        : null;
-
-    const all = Array.isArray(props.classes) ? props.classes : [];
-    const streams = selectedClass?.id ? all.filter((c) => Number(c?.parent_class_id) === Number(selectedClass.id)) : [];
-    const codesSet = new Set();
-    if (streams.length) {
-        streams.forEach((s) => (Array.isArray(s?.subject_codes) ? s.subject_codes : []).forEach((code) => codesSet.add(code)));
-    } else {
-        (Array.isArray(selectedClass?.subject_codes) ? selectedClass.subject_codes : []).forEach((code) => codesSet.add(code));
-    }
-    const classSubjectCodes = Array.from(codesSet.values());
-
-    if (!selectedClass) {
-        return [];
-    }
-
-    const filtered = selectedClass
-        ? rows.filter((r) => classSubjectCodes.includes(r.subject_code))
-        : rows;
-
-    return filtered.sort((a, b) => {
-        const tc = String(a.teacher_name || '').localeCompare(String(b.teacher_name || ''));
-        if (tc !== 0) return tc;
-        return String(a.subject_code || '').localeCompare(String(b.subject_code || ''));
-    });
-});
-
-const classSubjectRows = computed(() => {
-    const selectedId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
-    const selectedClass = Number.isFinite(selectedId)
-        ? (props.classes || []).filter((c) => !c?.parent_class_id).find((c) => Number(c?.id) === selectedId)
-        : null;
-
-    if (!selectedClass) {
-        return [];
-    }
-
-    const all = Array.isArray(props.classes) ? props.classes : [];
-    const streams = selectedClass?.id ? all.filter((c) => Number(c?.parent_class_id) === Number(selectedClass.id)) : [];
-    const codesSet = new Set();
-    if (streams.length) {
-        streams.forEach((s) => (Array.isArray(s?.subject_codes) ? s.subject_codes : []).forEach((code) => codesSet.add(code)));
-    } else {
-        (Array.isArray(selectedClass?.subject_codes) ? selectedClass.subject_codes : []).forEach((code) => codesSet.add(code));
-    }
-    const codes = Array.from(codesSet.values());
-    const subjects = (props.subjects || [])
-        .filter((s) => codes.includes(s.subject_code))
-        .map((s) => ({
-            subject_id: s.id,
-            subject_code: s.subject_code,
-            subject_name: s.name,
-        }));
-
-    return subjects.sort((a, b) => String(a.subject_code || '').localeCompare(String(b.subject_code || '')));
-});
-
-const limitationClassOptions = computed(() => {
-    const base = (props.classes || []).filter((c) => !c?.parent_class_id);
-    return base
-        .map((c) => {
-            const label = getClassLabel(c) || c.name || '';
-            return {
-                id: String(c.id),
-                display: label,
-            };
-        })
-        .sort((a, b) => (Number(a.id || 0) - Number(b.id || 0)));
-});
 
 const limitKey = (teacherId, subjectId) => `${teacherId}:${subjectId}`;
 
@@ -2274,6 +1934,7 @@ const loadSubjectLimits = async () => {
         const cls = classById.value?.[String(selectedLimitClassId.value)] || null;
         const formNumber = getFormOrder(cls);
         const defaults = defaultSubjectPeriodsByFormGroup(formNumber);
+
         Object.keys(defaults).forEach((code) => {
             const sid = subjectIdByCode.value?.[String(code)] || null;
             if (!sid) return;
@@ -2286,7 +1947,7 @@ const loadSubjectLimits = async () => {
             // RULE 2: Other subjects - double 1, single 1 (periods = 3)
             const eff = Number(defaults[code] || 0);
             const subjectUpper = String(code).toUpperCase();
-            
+
             if (subjectUpper === 'ENG' || subjectUpper === 'B/MAT') {
                 // ENG na B/MAT: periods = 5, double 2, single 1
                 if (eff >= 5) {
@@ -2315,6 +1976,56 @@ const loadSubjectLimits = async () => {
         subjectAfternoonDoubleById.value = {};
     } finally {
         limitsLoading.value = false;
+        window.setTimeout(() => {
+            suppressAutoLimitSave.value = false;
+        }, 0);
+    }
+};
+
+const loadAllSubjectLimits = async () => {
+    limitsLoading.value = true;
+    suppressAutoLimitSave.value = true;
+    try {
+        subjectLimitsByClassId.value = {};
+        const res = await fetch(
+            `${route('timetables.class-subject-limits.index')}`,
+            {
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    Accept: 'application/json',
+                },
+                credentials: 'same-origin',
+            }
+        );
+
+        const json = await res.json();
+        (json?.limits || []).forEach((row) => {
+            const cid = row?.school_class_id ? String(row.school_class_id) : '';
+            if (!cid) return;
+
+            if (!subjectLimitsByClassId.value[cid]) {
+                subjectLimitsByClassId.value[cid] = {
+                    periodsBySubjectId: {},
+                    doubleBySubjectId: {},
+                    morningSingleBySubjectId: {},
+                    morningDoubleBySubjectId: {},
+                    afternoonSingleBySubjectId: {},
+                    afternoonDoubleBySubjectId: {},
+                };
+            }
+            const key = subjectLimitKey(row.subject_id);
+            subjectLimitsByClassId.value[cid].periodsBySubjectId[key] = row.periods_per_week;
+            subjectLimitsByClassId.value[cid].doubleBySubjectId[key] = !!row.is_double;
+            subjectLimitsByClassId.value[cid].morningSingleBySubjectId[key] = Number(row.morning_single || 0);
+            subjectLimitsByClassId.value[cid].morningDoubleBySubjectId[key] = Number(row.morning_double || 0);
+            subjectLimitsByClassId.value[cid].afternoonSingleBySubjectId[key] = Number(row.afternoon_single || 0);
+            subjectLimitsByClassId.value[cid].afternoonDoubleBySubjectId[key] = Number(row.afternoon_double || 0);
+        });
+    } catch {
+        subjectLimitsByClassId.value = {};
+    } finally {
+        limitsLoading.value = false;
+
         window.setTimeout(() => {
             suppressAutoLimitSave.value = false;
         }, 0);
@@ -2351,6 +2062,7 @@ const loadLimits = async () => {
         limitsByKey.value = {};
     } finally {
         limitsLoading.value = false;
+
         window.setTimeout(() => {
             suppressAutoLimitSave.value = false;
         }, 0);
@@ -2400,7 +2112,7 @@ const saveSubjectLimits = async ({ closeModal = true } = {}) => {
 
     limitsSaving.value = true;
     try {
-        const limits = classSubjectRows.value
+        const selectedRows = classSubjectRows.value
             .map((row) => {
                 const key = subjectLimitKey(row.subject_id);
                 const val = subjectLimitsById.value[key];
@@ -2414,7 +2126,6 @@ const saveSubjectLimits = async ({ closeModal = true } = {}) => {
                 // If any session quota is provided, let backend derive periods_per_week from quotas.
                 const hasSessionQuotas = ms > 0 || md > 0 || as > 0 || ad > 0;
                 return {
-                    school_class_id: Number(selectedLimitClassId.value),
                     subject_id: row.subject_id,
                     periods_per_week: hasSessionQuotas
                         ? null
@@ -2427,6 +2138,20 @@ const saveSubjectLimits = async ({ closeModal = true } = {}) => {
                 };
             })
             .filter((r) => r.periods_per_week === null || (Number.isFinite(r.periods_per_week) && r.periods_per_week >= 0));
+
+        const targetClassIds = applyLimitsToAllClasses.value
+            ? (timetableClasses.value || []).map((c) => Number(c?.id)).filter((v) => Number.isFinite(v) && v > 0)
+            : [Number(selectedLimitClassId.value)];
+
+        const limits = [];
+        targetClassIds.forEach((cid) => {
+            selectedRows.forEach((row) => {
+                limits.push({
+                    school_class_id: cid,
+                    ...row,
+                });
+            });
+        });
 
         await fetch(route('timetables.class-subject-limits.save'), {
             method: 'POST',
@@ -2859,89 +2584,6 @@ const onDrop = (day, rowIndex, slotIndex) => {
                         >
                             Limitations &amp; Resolve
                         </button>
-                    </div>
-                </div>
-
-                <div
-                    v-if="showResolveModal"
-                    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 py-6 sm:px-0"
-                    @click.self="showResolveModal = false"
-                >
-                    <div class="max-h-full w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 text-xs text-gray-700 shadow-2xl ring-1 ring-gray-200">
-                        <div class="mb-3 flex items-center justify-between">
-                            <div>
-                                <h3 class="text-sm font-semibold text-gray-800">Limitations &amp; Resolve</h3>
-                                <p class="mt-0.5 text-[11px] text-gray-500">
-                                    Inaonyesha Periods/Week ulivyo-set na ukaguzi wa ratiba kama imekamilika kwa kila stream.
-                                </p>
-                            </div>
-                            <button type="button" class="text-[11px] text-gray-500 hover:text-gray-700" @click="showResolveModal = false">Close</button>
-                        </div>
-
-                        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-                            <div class="text-[11px]">
-                                Status:
-                                <span
-                                    class="ml-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                                    :class="resolveSummary.completed ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'"
-                                >
-                                    {{ resolveSummary.completed ? 'Completed' : `Not completed (${resolveSummary.missingCount})` }}
-                                </span>
-                            </div>
-
-                            <div class="flex items-center gap-2">
-                                <button
-                                    type="button"
-                                    class="rounded-md bg-white px-3 py-1.5 text-[11px] font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
-                                    @click="loadSubjectLimits"
-                                >
-                                    Reload Limitations
-                                </button>
-                                <button
-                                    type="button"
-                                    class="rounded-md bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
-                                    :disabled="resolveRunning"
-                                    @click="runResolve"
-                                >
-                                    {{ resolveRunning ? 'Resolving...' : 'Resolve' }}
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="overflow-hidden rounded-lg border border-gray-200">
-                            <table class="min-w-full border-collapse text-[11px]">
-                                <thead>
-                                    <tr class="bg-gray-50 text-left">
-                                        <th class="border-b border-gray-200 px-3 py-2">Class</th>
-                                        <th class="border-b border-gray-200 px-3 py-2">Subject</th>
-                                        <th class="border-b border-gray-200 px-3 py-2">Desired</th>
-                                        <th class="border-b border-gray-200 px-3 py-2">Actual</th>
-                                        <th class="border-b border-gray-200 px-3 py-2">Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr v-if="!resolveReport.length">
-                                        <td colspan="5" class="px-3 py-4 text-center text-[11px] text-gray-500">
-                                            Select a class in Limitations first.
-                                        </td>
-                                    </tr>
-                                    <tr v-for="(r, idx) in resolveReport" :key="idx" class="border-b border-gray-100 hover:bg-gray-50">
-                                        <td class="px-3 py-2">{{ r.class_label }}</td>
-                                        <td class="px-3 py-2 font-semibold">{{ r.subject_code }}</td>
-                                        <td class="px-3 py-2">{{ r.desired }}</td>
-                                        <td class="px-3 py-2">{{ r.actual }}</td>
-                                        <td class="px-3 py-2">
-                                            <span
-                                                class="inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                                                :class="r.completed ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'"
-                                            >
-                                                {{ r.completed ? 'Completed' : 'Not completed' }}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
                     </div>
                 </div>
 
@@ -3423,6 +3065,15 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                     <option value="teacher_subject">Teacher + Subject limitation</option>
                                 </select>
                             </div>
+
+                            <label class="flex items-center gap-2 text-[11px] text-gray-600">
+                                <input
+                                    v-model="applyLimitsToAllClasses"
+                                    type="checkbox"
+                                    class="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                />
+                                Apply to all classes/streams
+                            </label>
 
                             <div v-if="limitsLoading" class="text-[11px] text-gray-500">Loading...</div>
                         </div>
