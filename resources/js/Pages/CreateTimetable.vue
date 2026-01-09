@@ -2471,6 +2471,25 @@ watch([
 }, { deep: true });
 
 const draggedCell = ref(null);
+const draggedSubjectCode = ref('');
+
+const showSubjectMenu = ref(false);
+const subjectMenuSearch = ref('');
+const subjectMenuPos = ref({ x: 0, y: 0 });
+const subjectMenuTarget = ref({ day: '', rowIndex: -1, slotIndex: -1 });
+
+const paletteSubjectCodes = computed(() => {
+    const codes = (props.subjects || [])
+        .map((s) => String(s?.subject_code || '').trim())
+        .filter(Boolean);
+    return Array.from(new Set(codes)).sort((a, b) => a.localeCompare(b));
+});
+
+const filteredPaletteCodes = computed(() => {
+    const q = String(subjectMenuSearch.value || '').trim().toUpperCase();
+    if (!q) return paletteSubjectCodes.value;
+    return paletteSubjectCodes.value.filter((c) => String(c).toUpperCase().includes(q));
+});
 
 const isDraggableSlot = (day, slotIndex) => {
     // Morning lessons (08:00-10:00) always draggable
@@ -2501,7 +2520,94 @@ const onDragStart = (day, rowIndex, slotIndex) => {
     draggedCell.value = { day, rowIndex, slotIndex };
 };
 
+const onSubjectDragStart = (code) => {
+    draggedSubjectCode.value = String(code || '').trim();
+    draggedCell.value = null;
+};
+
+const closeSubjectMenu = () => {
+    showSubjectMenu.value = false;
+    subjectMenuSearch.value = '';
+    subjectMenuTarget.value = { day: '', rowIndex: -1, slotIndex: -1 };
+};
+
+const openSubjectMenu = (evt, day, rowIndex, slotIndex) => {
+    if (!isDraggableSlot(day, slotIndex)) return;
+    evt?.preventDefault?.();
+
+    subjectMenuPos.value = { x: Number(evt?.clientX || 0), y: Number(evt?.clientY || 0) };
+    subjectMenuTarget.value = { day: String(day), rowIndex: Number(rowIndex), slotIndex: Number(slotIndex) };
+    showSubjectMenu.value = true;
+
+    window.setTimeout(() => {
+        const handler = () => {
+            closeSubjectMenu();
+            document.removeEventListener('click', handler, true);
+        };
+        document.addEventListener('click', handler, true);
+    }, 0);
+};
+
+const wouldCauseTeacherClash = (targetDay, targetSlotIndex, targetRowIndex, subjectCode) => {
+    const day = String(targetDay);
+    const slotIndex = Number(targetSlotIndex);
+    const code = String(subjectCode || '').trim();
+    if (!code) return false;
+
+    const targetRow = schedule.value?.[day]?.[Number(targetRowIndex)];
+    const targetClassId = Number(targetRow?.school_class_id || targetRow?.id || targetRow?.class_id || 0) || null;
+    const picked = pickTeacherInitialForSlot(targetClassId, code, day, slotIndex);
+    const parts = String(picked || '').split('/').map((s) => s.trim()).filter(Boolean);
+    if (!parts.length) return false;
+
+    const rows = schedule.value?.[day] || [];
+    for (let r = 0; r < rows.length; r += 1) {
+        if (r === Number(targetRowIndex)) continue;
+        const row = rows[r];
+        const cell = row?.slots?.[slotIndex];
+        const otherCode = cell?.subject ? String(cell.subject) : '';
+        if (!otherCode) continue;
+
+        const otherClassId = Number(row?.school_class_id || row?.id || row?.class_id || 0) || null;
+        const otherPicked = pickTeacherInitialForSlot(otherClassId, otherCode, day, slotIndex);
+        const otherParts = String(otherPicked || '').split('/').map((s) => s.trim()).filter(Boolean);
+        if (!otherParts.length) continue;
+
+        for (let i = 0; i < parts.length; i += 1) {
+            if (otherParts.includes(parts[i])) return true;
+        }
+    }
+
+    return false;
+};
+
+const assignSubjectToCell = (day, rowIndex, slotIndex, subjectCode) => {
+    const d = String(day);
+    const r = Number(rowIndex);
+    const s = Number(slotIndex);
+    const code = String(subjectCode || '').trim();
+
+    if (!isDraggableSlot(d, s)) return false;
+    const row = schedule.value?.[d]?.[r];
+    if (!row) return false;
+
+    const classId = Number(row?.school_class_id || row?.id || row?.class_id || 0) || null;
+    if (code && !isSubjectAllowedInSlot(classId, code, s)) return false;
+    if (code && wouldCauseTeacherClash(d, s, r, code)) return false;
+
+    row.slots[s] = code ? { subject: code, teacher: pickTeacherInitialForSlot(classId, code, d, s) } : null;
+    saveScheduleToStorage();
+    return true;
+};
+
 const onDrop = (day, rowIndex, slotIndex) => {
+    if (draggedSubjectCode.value) {
+        const ok = assignSubjectToCell(day, rowIndex, slotIndex, draggedSubjectCode.value);
+        draggedSubjectCode.value = '';
+        draggedCell.value = null;
+        return;
+    }
+
     if (!draggedCell.value) return;
 
     const from = draggedCell.value;
@@ -2541,6 +2647,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
 
     draggedCell.value = null;
 };
+
 </script>
 
 <template>
