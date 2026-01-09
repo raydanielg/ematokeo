@@ -524,7 +524,50 @@ const saveLimitationsDraftToStorage = () => {
     }
 };
 
-const generateSampleTimetable = (opts = {}) => {
+// Function to validate double periods
+const validateDoublePeriods = () => {
+    const doubleCounts = {};
+    
+    days.forEach((day) => {
+        const rows = schedule.value[day] || [];
+        rows.forEach((row) => {
+            for (let i = 0; i < 8; i += 1) {
+                if (!canBeDoubleStart(i)) continue;
+                const current = row.slots[i];
+                const next = row.slots[i + 1];
+                
+                if (current?.subject && next?.subject && 
+                    String(current.subject) === String(next.subject)) {
+                    const code = String(current.subject);
+                    const classId = row.school_class_id;
+                    const key = `${classId}_${code}`;
+                    
+                    doubleCounts[key] = (doubleCounts[key] || 0) + 1;
+                }
+            }
+        });
+    });
+    
+    // Check if ENG and B/MAT have 2 doubles
+    Object.keys(doubleCounts).forEach((key) => {
+        const [classId, code] = key.split('_');
+        const subjectUpper = String(code).toUpperCase();
+        
+        if (subjectUpper === 'ENG' || subjectUpper === 'B/MAT') {
+            if (doubleCounts[key] < 2) {
+                console.warn(`${code} for class ${classId} has only ${doubleCounts[key]} double(s), expected 2`);
+            }
+        } else {
+            if (doubleCounts[key] < 1) {
+                console.warn(`${code} for class ${classId} has no double period, expected at least 1`);
+            }
+        }
+    });
+    
+    return doubleCounts;
+};
+
+const generateSampleTimetable = () => {
     const next = {};
     generationWarnings.value = [];
 
@@ -778,23 +821,17 @@ const generateSampleTimetable = (opts = {}) => {
                     }
                 }
 
-                // If user hasn't explicitly configured doubles, encourage doubles for heavier subjects.
-                // Example: 5 periods => 2 doubles + 1 single.
+                // RULE 1: ENG na B/MAT - double 2, single 1 (periods = 5)
+                // RULE 2: Other subjects - double 1, single 1 (periods = 3)
                 const eff = Number(desiredPeriodsByCode[String(code)] || 0);
-                if (!desiredDoubleByCode[String(code)] && eff >= 4) {
-                    desiredDoubleByCode[String(code)] = true;
-                }
-
-                // RULE 1: ENG na B/MAT => double 2 + single 1 (periods = 5)
-                // RULE 2: Other subjects => double 1 + single 1 (periods >= 3)
                 const subjectUpper = String(code).toUpperCase();
-
+                
                 if (subjectUpper === 'ENG' || subjectUpper === 'B/MAT') {
+                    // ENG na B/MAT: periods = 5, double 2, single 1
                     if (eff >= 5) {
                         requiredDoubleCountByCode[String(code)] = 2;
                         maxDoubleCountByCode[String(code)] = 2;
-
-                        // Ensure single period remains (default to morning; subject rules may constrain anyway)
+                        // Ensure single period remains
                         if (!sessionQuotaByCode[String(code)]) {
                             sessionQuotaByCode[String(code)] = {
                                 morning_single: 1,
@@ -805,11 +842,11 @@ const generateSampleTimetable = (opts = {}) => {
                         }
                     }
                 } else {
+                    // Other subjects: double 1, single 1 (periods = 3)
                     if (eff >= 3) {
                         requiredDoubleCountByCode[String(code)] = 1;
                         maxDoubleCountByCode[String(code)] = 1;
-
-                        // Ensure single period remains (default to morning)
+                        // Ensure single period remains
                         if (!sessionQuotaByCode[String(code)]) {
                             sessionQuotaByCode[String(code)] = {
                                 morning_single: 1,
@@ -822,7 +859,7 @@ const generateSampleTimetable = (opts = {}) => {
                 }
 
                 // Auto-enable doubles for subjects with required doubles
-                if (Number(requiredDoubleCountByCode[String(code)] || 0) > 0) {
+                if (requiredDoubleCountByCode[String(code)] > 0) {
                     desiredDoubleByCode[String(code)] = true;
                 }
             });
@@ -1047,32 +1084,34 @@ const generateSampleTimetable = (opts = {}) => {
                 const q = sessionQuotaByCode[code];
                 if (!q) return;
 
-                // Place morning doubles first (fallback to afternoon)
+                // Place morning doubles first (for ENG and B/MAT)
                 for (let k = 0; k < (q.morning_double || 0); k += 1) {
                     const ok = tryPlaceDoubleInSession(code, 'morning');
                     if (!ok) {
+                        // Try afternoon as fallback for doubles
                         const ok2 = tryPlaceDoubleInSession(code, 'afternoon');
                         if (!ok2) break;
                     }
                     bumpDoubleCount(code);
                 }
-
-                // Place morning singles (fallback to afternoon)
+                
+                // Place morning singles
                 for (let k = 0; k < (q.morning_single || 0); k += 1) {
                     const ok = tryPlaceSingleInSession(code, 'morning');
                     if (!ok) {
+                        // Try afternoon as fallback for singles
                         const ok2 = tryPlaceSingleInSession(code, 'afternoon');
                         if (!ok2) break;
                     }
                 }
-
+                
                 // Place afternoon doubles
                 for (let k = 0; k < (q.afternoon_double || 0); k += 1) {
                     const ok = tryPlaceDoubleInSession(code, 'afternoon');
                     if (!ok) break;
                     bumpDoubleCount(code);
                 }
-
+                
                 // Place afternoon singles
                 for (let k = 0; k < (q.afternoon_single || 0); k += 1) {
                     const ok = tryPlaceSingleInSession(code, 'afternoon');
@@ -1089,15 +1128,18 @@ const generateSampleTimetable = (opts = {}) => {
 
                 const subjectUpper = String(code).toUpperCase();
                 const isEngOrMath = subjectUpper === 'ENG' || subjectUpper === 'B/MAT';
-
+                
                 while (Number(placedDoublesByCode[String(code)] || 0) < need && Number(remainingNeeded[String(code)] || 0) >= 2) {
+                    // Try morning first for ENG/B/MAT
                     if (isEngOrMath) {
                         const ok = tryPlaceDoubleInSession(code, 'morning');
                         if (!ok) {
+                            // Fallback to any session
                             const ok2 = tryPlaceDoubleForCode(code);
                             if (!ok2) break;
                         }
                     } else {
+                        // For other subjects, try any session
                         const ok = tryPlaceDoubleForCode(code);
                         if (!ok) break;
                     }
@@ -1116,9 +1158,11 @@ const generateSampleTimetable = (opts = {}) => {
             if (!remainingNeeded[String(code)] || remainingNeeded[String(code)] < 2) return false;
 
             const candidates = [];
+            
+            // Prioritize morning slots for ENG and B/MAT
             const subjectUpper = String(code).toUpperCase();
             const isEngOrMath = subjectUpper === 'ENG' || subjectUpper === 'B/MAT';
-
+            
             for (let d = 0; d < days.length; d += 1) {
                 const day = days[d];
                 for (let i = 0; i < 8; i += 1) {
@@ -1127,18 +1171,24 @@ const generateSampleTimetable = (opts = {}) => {
                     if (rowByDay[day].slots[i] !== null) continue;
                     if (rowByDay[day].slots[i + 1] !== null) continue;
                     if (classId && (!isSubjectAllowedInSlot(classId, code, i) || !isSubjectAllowedInSlot(classId, code, i + 1))) continue;
-
+                    
+                    // Score based on session preference
                     let score = 0;
                     const session = getSlotSession(i);
-                    if (isEngOrMath && session === 'morning') score += 10;
-                    else if (!isEngOrMath && session === 'morning') score += 5;
-
+                    if (isEngOrMath && session === 'morning') {
+                        score += 10; // Morning preference for ENG/B/MAT
+                    } else if (!isEngOrMath && session === 'morning') {
+                        score += 5; // Morning preference for other subjects
+                    }
+                    
                     candidates.push({ day, slotIndex: i, score });
                 }
             }
 
-            candidates.sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
-
+            // Sort by score descending
+            candidates.sort((a, b) => b.score - a.score);
+            
+            // Try highest scored candidates first
             for (let k = 0; k < candidates.length; k += 1) {
                 const pos = candidates[k];
                 const day = pos.day;
@@ -1568,10 +1618,8 @@ const generateSampleTimetable = (opts = {}) => {
     });
 
     schedule.value = next;
-    if (!opts?.skipSave) {
-        saveScheduleToStorage();
-    }
-    return next;
+    saveScheduleToStorage();
+    validateDoublePeriods();
 };
 
 const regenerateSampleTimetable = async () => {
@@ -1579,185 +1627,7 @@ const regenerateSampleTimetable = async () => {
     if (limitationsMode.value === 'subject_only' && selectedLimitClassId.value) {
         await loadSubjectLimits();
     }
-
-    const baseId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
-    const base = baseId ? (classById.value?.[String(baseId)] || null) : null;
-    const formNumber = getFormOrder(base);
-    const defaultsByCode = defaultSubjectPeriodsByFormGroup(formNumber);
-
-    const codes = (resolveSubjectCodesForBase.value || []).map((c) => String(c)).filter(Boolean);
-    const targetClassIds = (resolveTargetClassIds.value || []).map((v) => Number(v)).filter((v) => Number.isFinite(v));
-
-    const canBeDoubleStart = (slotIndex) => slotIndex >= 0 && slotIndex < 8 && ![3, 6].includes(slotIndex);
-    const isTeachable = (day, slotIndex) => isTeachableLessonSlot(day, slotIndex);
-
-    const countForRow = (row, day) => {
-        const slots = Array.isArray(row?.slots) ? row.slots : [];
-        const res = { periods: {}, doubles: {} };
-
-        // periods
-        for (let i = 0; i < 9; i += 1) {
-            if (!isTeachable(day, i)) continue;
-            const code = slots[i]?.subject ? String(slots[i].subject) : '';
-            if (!code) continue;
-            res.periods[code] = Number(res.periods[code] || 0) + 1;
-        }
-
-        // doubles
-        for (let i = 0; i < 8; i += 1) {
-            if (!canBeDoubleStart(i)) continue;
-            if (!isTeachable(day, i) || !isTeachable(day, i + 1)) continue;
-            const a = slots[i]?.subject ? String(slots[i].subject) : '';
-            const b = slots[i + 1]?.subject ? String(slots[i + 1].subject) : '';
-            if (!a || !b) continue;
-            if (a !== b) continue;
-            res.doubles[a] = Number(res.doubles[a] || 0) + 1;
-        }
-
-        return res;
-    };
-
-    const scoreSchedule = (cand) => {
-        // Lower is better. 0 means policy satisfied for all targets.
-        let score = 0;
-        const byClass = {};
-
-        days.forEach((day) => {
-            const rows = cand?.[day] || [];
-            rows.forEach((row) => {
-                const cid = row?.class_id ? Number(row.class_id) : null;
-                if (!cid || !targetClassIds.includes(cid)) return;
-                if (!byClass[String(cid)]) byClass[String(cid)] = { periods: {}, doubles: {} };
-
-                const c = countForRow(row, day);
-                Object.keys(c.periods).forEach((k) => {
-                    byClass[String(cid)].periods[k] = Number(byClass[String(cid)].periods[k] || 0) + Number(c.periods[k] || 0);
-                });
-                Object.keys(c.doubles).forEach((k) => {
-                    byClass[String(cid)].doubles[k] = Number(byClass[String(cid)].doubles[k] || 0) + Number(c.doubles[k] || 0);
-                });
-            });
-        });
-
-        targetClassIds.forEach((cid) => {
-            const agg = byClass[String(cid)] || { periods: {}, doubles: {} };
-            codes.forEach((code) => {
-                const wantPeriods = Number(defaultsByCode?.[String(code)] || 0);
-                if (wantPeriods <= 0) return;
-
-                const gotPeriods = Number(agg.periods?.[String(code)] || 0);
-                const gotDoubles = Number(agg.doubles?.[String(code)] || 0);
-                const gotSingles = Math.max(0, gotPeriods - (2 * gotDoubles));
-
-                const upperEngMath = Math.floor(wantPeriods / 2);
-                const upperKeepSingle = Math.floor(Math.max(0, wantPeriods - 1) / 2);
-                const isEngMath = ['ENG', 'B/MAT'].includes(String(code).toUpperCase());
-
-                const needDoubles = isEngMath ? Math.min(2, upperEngMath) : (wantPeriods >= 3 ? 1 : 0);
-                const maxDoubles = isEngMath ? upperEngMath : upperKeepSingle;
-                const needSingles = wantPeriods >= 3 ? 1 : (wantPeriods === 1 ? 1 : 0);
-
-                // periods deficit
-                score += Math.max(0, wantPeriods - gotPeriods) * 5;
-
-                // enforce doubles min
-                score += Math.max(0, needDoubles - gotDoubles) * 20;
-
-                // avoid too many doubles eating singles
-                score += Math.max(0, gotDoubles - maxDoubles) * 10;
-
-                // enforce at least one single when applicable
-                score += Math.max(0, needSingles - gotSingles) * 15;
-            });
-        });
-
-        return score;
-    };
-
-    const maxAttempts = 18;
-    let best = null;
-    let bestScore = Number.POSITIVE_INFINITY;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-        const cand = generateSampleTimetable({ skipSave: true });
-        const candCopy = JSON.parse(JSON.stringify(cand || {}));
-        const sc = scoreSchedule(candCopy);
-        if (sc < bestScore) {
-            bestScore = sc;
-            best = candCopy;
-        }
-        if (sc === 0) break;
-    }
-
-    if (best) {
-        schedule.value = best;
-        saveScheduleToStorage();
-        // Developer validation to ensure doubles/singles policy is met as expected.
-        validateDoublePeriods(best, targetClassIds, defaultsByCode);
-    }
-};
-
-const validateDoublePeriods = (scheduleObj, targetClassIds, defaultsByCode) => {
-    try {
-        const canBeDoubleStart = (slotIndex) => slotIndex >= 0 && slotIndex < 8 && ![3, 6].includes(slotIndex);
-        const doubleCounts = {};
-        const periodCounts = {};
-
-        days.forEach((day) => {
-            const rows = scheduleObj?.[day] || [];
-            rows.forEach((row) => {
-                const cid = row?.class_id ? Number(row.class_id) : null;
-                if (!cid) return;
-                if (Array.isArray(targetClassIds) && targetClassIds.length && !targetClassIds.includes(cid)) return;
-
-                for (let i = 0; i < 9; i += 1) {
-                    if (!isTeachableLessonSlot(day, i)) continue;
-                    const code = row?.slots?.[i]?.subject ? String(row.slots[i].subject) : '';
-                    if (!code) continue;
-                    const key = `${cid}_${code}`;
-                    periodCounts[key] = Number(periodCounts[key] || 0) + 1;
-                }
-
-                for (let i = 0; i < 8; i += 1) {
-                    if (!canBeDoubleStart(i)) continue;
-                    if (!isTeachableLessonSlot(day, i) || !isTeachableLessonSlot(day, i + 1)) continue;
-                    const cur = row?.slots?.[i];
-                    const nxt = row?.slots?.[i + 1];
-                    if (!cur?.subject || !nxt?.subject) continue;
-                    if (String(cur.subject) !== String(nxt.subject)) continue;
-                    const code = String(cur.subject);
-                    const key = `${cid}_${code}`;
-                    doubleCounts[key] = Number(doubleCounts[key] || 0) + 1;
-                }
-            });
-        });
-
-        Object.keys(periodCounts).forEach((key) => {
-            const [cidStr, code] = key.split('_');
-            const cid = Number(cidStr);
-            const wantPeriods = Number(defaultsByCode?.[String(code)] || 0);
-            if (!wantPeriods) return;
-
-            const gotPeriods = Number(periodCounts[key] || 0);
-            const gotDoubles = Number(doubleCounts[key] || 0);
-            const gotSingles = Math.max(0, gotPeriods - (2 * gotDoubles));
-            const upper = String(code).toUpperCase();
-
-            if (upper === 'ENG' || upper === 'B/MAT') {
-                if (gotDoubles < 2 || gotSingles < 1) {
-                    console.warn(`${code} for class ${cid} => doubles=${gotDoubles}, singles=${gotSingles} (expected doubles>=2 and singles>=1)`);
-                }
-            } else if (wantPeriods >= 3) {
-                if (gotDoubles < 1 || gotSingles < 1) {
-                    console.warn(`${code} for class ${cid} => doubles=${gotDoubles}, singles=${gotSingles} (expected doubles>=1 and singles>=1)`);
-                }
-            }
-        });
-
-        return { doubleCounts, periodCounts };
-    } catch {
-        return { doubleCounts: {}, periodCounts: {} };
-    }
+    generateSampleTimetable();
 };
 
 const resolveTargetClassIds = computed(() => {
@@ -2108,34 +1978,34 @@ const autoLimitSaveTimer = ref(null);
 
 const defaultSubjectPeriodsByFormGroup = (formNumber) => {
     const form12 = {
-        'B/MAT': 5,
-        BIO: 3,
-        BUS: 3,
-        CHE: 3,
-        CS: 4,
-        ENG: 5,
-        GEO: 2,
-        HIS: 3,
-        HTM: 3,
-        KIS: 4,
-        PHY: 3,
+        'B/MAT': 5,  // double 2 + single 1
+        'BIO': 3,    // double 1 + single 1
+        'BUS': 3,    // double 1 + single 1
+        'CHE': 3,    // double 1 + single 1
+        'CS': 4,     // double 1 + single 2
+        'ENG': 5,    // double 2 + single 1
+        'GEO': 2,    // single 2 or double 1
+        'HIS': 3,    // double 1 + single 1
+        'HTM': 3,    // double 1 + single 1
+        'KIS': 4,    // double 1 + single 2
+        'PHY': 3,    // double 1 + single 1
     };
 
     const form34 = {
-        'B/MAT': 5,
-        BIO: 4,
-        BUS: 3,
-        CHE: 4,
-        CIV: 3,
-        CS: 4,
-        ENG: 5,
-        FK: 2,
-        GEO: 3,
-        HIS: 4,
-        HTM: 3,
-        KIS: 4,
-        LIT: 2,
-        PHY: 4,
+        'B/MAT': 5,  // double 2 + single 1
+        'BIO': 4,    // double 1 + single 2
+        'BUS': 3,    // double 1 + single 1
+        'CHE': 4,    // double 1 + single 2
+        'CIV': 3,    // double 1 + single 1
+        'CS': 4,     // double 1 + single 2
+        'ENG': 5,    // double 2 + single 1
+        'FK': 2,     // single 2 or double 1
+        'GEO': 3,    // double 1 + single 1
+        'HIS': 4,    // double 1 + single 2
+        'HTM': 3,    // double 1 + single 1
+        'KIS': 4,    // double 1 + single 2
+        'LIT': 2,    // single 2 or double 1
+        'PHY': 4,    // double 1 + single 2
     };
 
     if (formNumber === 1 || formNumber === 2) return form12;
@@ -2372,7 +2242,6 @@ const loadSubjectLimits = async () => {
         const cls = classById.value?.[String(selectedLimitClassId.value)] || null;
         const formNumber = getFormOrder(cls);
         const defaults = defaultSubjectPeriodsByFormGroup(formNumber);
-        const defaultDoubleCodes = new Set(['ENG', 'B/MAT', 'CS']);
         Object.keys(defaults).forEach((code) => {
             const sid = subjectIdByCode.value?.[String(code)] || null;
             if (!sid) return;
@@ -2381,10 +2250,21 @@ const loadSubjectLimits = async () => {
             // Override periods/week to match the default table
             map[key] = Number(defaults[code]);
 
-            // Encourage doubles for heavier subjects (>=4) and also force key ones.
+            // RULE 1: ENG na B/MAT - double 2, single 1 (periods = 5)
+            // RULE 2: Other subjects - double 1, single 1 (periods = 3)
             const eff = Number(defaults[code] || 0);
-            if (doubleMap[key] === undefined) {
-                doubleMap[key] = (eff >= 4) || defaultDoubleCodes.has(String(code).toUpperCase());
+            const subjectUpper = String(code).toUpperCase();
+            
+            if (subjectUpper === 'ENG' || subjectUpper === 'B/MAT') {
+                // ENG na B/MAT: periods = 5, double 2, single 1
+                if (eff >= 5) {
+                    doubleMap[key] = true;
+                }
+            } else {
+                // Other subjects: double 1, single 1 (periods = 3)
+                if (eff >= 3) {
+                    doubleMap[key] = true;
+                }
             }
         });
 
