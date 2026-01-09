@@ -33,7 +33,7 @@ const myPeriods = (id) => {
             <div>
                 <h2 class="text-2xl font-semibold leading-tight text-gray-800">My Timetable</h2>
                 <p class="mt-1 text-sm text-gray-500">
-                    Timetables for your assigned classes only.
+                    Open a saved timetable and view only your own periods automatically.
                 </p>
             </div>
         </template>
@@ -75,7 +75,7 @@ const myPeriods = (id) => {
                         <tbody class="divide-y divide-gray-100">
                             <tr v-if="!timetables || timetables.length === 0">
                                 <td colspan="4" class="px-5 py-6 text-center text-sm text-gray-500">
-                                    No timetables found for your assigned classes.
+                                    No saved timetables found yet. Ask the admin to generate and save a timetable.
                                 </td>
                             </tr>
 

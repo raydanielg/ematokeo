@@ -1036,15 +1036,13 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 ->map(fn ($v) => trim((string) $v))
                 ->values();
 
+            // Teachers should be able to view their own periods from any saved timetable for the school.
+            // We filter by school_id (when available) and require schedule_json to exist.
             $timetablesQuery = \App\Models\Timetable::query()
                 ->when($schoolId && \Illuminate\Support\Facades\Schema::hasColumn('timetables', 'school_id'), function ($q) use ($schoolId) {
                     $q->where('school_id', $schoolId);
                 })
-                ->when($assignedClassNames->isNotEmpty(), function ($q) use ($assignedClassNames) {
-                    $q->whereIn('class_name', $assignedClassNames->all());
-                }, function ($q) {
-                    $q->whereRaw('1=0');
-                })
+                ->whereNotNull('schedule_json')
                 ->orderByDesc('created_at');
 
             $timetables = $timetablesQuery->get([
@@ -1073,19 +1071,8 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 abort(403);
             }
 
-            $assignedClassNames = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
-                ->join('school_classes as sc', 'sc.id', '=', 'tcs.school_class_id')
-                ->where('tcs.teacher_id', $teacherId)
-                ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
-                ->distinct()
-                ->pluck('sc.name')
-                ->filter(fn ($v) => $v !== null && trim((string) $v) !== '')
-                ->map(fn ($v) => trim((string) $v))
-                ->values();
-
-            if ($assignedClassNames->isEmpty() || ! $assignedClassNames->contains($timetable->class_name)) {
-                abort(403);
-            }
+            // Do not restrict by timetable.class_name. A saved timetable can contain multiple classes/streams.
+            // We will filter the schedule by the logged-in teacher's initials below.
 
             $parts = preg_split('/\s+/', trim((string) ($user?->name ?? '')));
             $initials = collect($parts)
@@ -1099,24 +1086,27 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 $schedule = is_array($decoded) ? $decoded : null;
             }
 
+            if (!is_array($schedule)) {
+                abort(404);
+            }
+
             $periods = [];
-            if (is_array($schedule)) {
-                foreach ($schedule as $day => $rows) {
-                    foreach ((array) $rows as $row) {
-                        $slots = (array) ($row['slots'] ?? []);
-                        foreach ($slots as $idx => $slot) {
-                            $teacher = trim((string) (($slot['teacher_initials'] ?? $slot['teacher'] ?? '')));
-                            if ($teacher === '') continue;
-                            $initialParts = array_values(array_filter(array_map('trim', explode('/', $teacher))));
-                            if (! in_array($initials, $initialParts, true)) continue;
-                            $periods[] = [
-                                'day' => $day,
-                                'class_label' => $row['class_label'] ?? ($row['form'] ?? ''),
-                                'stream' => $row['stream'] ?? '',
-                                'subject' => $slot['subject'] ?? '',
-                                'slot_index' => (int) $idx,
-                            ];
-                        }
+            foreach ($schedule as $day => $rows) {
+                foreach ((array) $rows as $row) {
+                    $slots = (array) ($row['slots'] ?? []);
+                    foreach ($slots as $idx => $slot) {
+                        if (!is_array($slot)) continue;
+                        $teacher = trim((string) (($slot['teacher_initials'] ?? $slot['teacher'] ?? '')));
+                        if ($teacher === '') continue;
+                        $initialParts = array_values(array_filter(array_map('trim', explode('/', $teacher))));
+                        if (! in_array($initials, $initialParts, true)) continue;
+                        $periods[] = [
+                            'day' => $day,
+                            'class_label' => $row['class_label'] ?? ($row['form'] ?? ''),
+                            'stream' => $row['stream'] ?? '',
+                            'subject' => $slot['subject'] ?? '',
+                            'slot_index' => (int) $idx,
+                        ];
                     }
                 }
             }
