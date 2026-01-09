@@ -646,6 +646,43 @@ const regenerateSampleTimetable = () => {
     generateSampleTimetable();
 };
 
+const getFilteredRows = (day) => {
+    const rows = schedule.value?.[String(day)] || [];
+    return (rows || []).map((row, originalIndex) => ({ row, originalIndex }));
+};
+
+const getGroupedRows = (day) => {
+    const rows = getFilteredRows(day);
+    const groups = new Map();
+
+    (rows || []).forEach((item) => {
+        const row = item?.row || {};
+        const label = String(row.class_label || row.form || row.class_name || '').trim() || 'CLASS';
+        if (!groups.has(label)) {
+            groups.set(label, { key: label, label, rows: [] });
+        }
+        groups.get(label).rows.push(item);
+    });
+
+    const out = Array.from(groups.values());
+    out.forEach((g) => {
+        g.rows.sort((a, b) => {
+            const sa = String(a?.row?.stream || '').toUpperCase();
+            const sb = String(b?.row?.stream || '').toUpperCase();
+            return sa.localeCompare(sb);
+        });
+    });
+
+    // Keep stable order by label
+    out.sort((a, b) => String(a.label || '').localeCompare(String(b.label || '')));
+    return out;
+};
+
+const getGroupedRowCount = (day) => {
+    const groups = getGroupedRows(day);
+    return (groups || []).reduce((sum, g) => sum + (g?.rows?.length || 0), 0);
+};
+
 onMounted(() => {
     sessionRulesByClassId.value = loadSessionRulesFromStorage();
 
