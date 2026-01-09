@@ -840,9 +840,9 @@ const generateSampleTimetable = () => {
                 const sid = subjectIdByCode.value?.[String(code)] || null;
                 if (!sid) return;
                 const key = subjectLimitKey(sid);
+
                 const def = defaultsByCode?.[String(code)] ?? null;
                 if (Number.isFinite(Number(def)) && Number(def) > 0) {
-                    // HARD-CODE: use the default table when it contains this subject
                     desiredPeriodsByCode[String(code)] = Math.floor(Number(def));
                 } else {
                     const val = limitsForClass?.periodsBySubjectId?.[key];
@@ -869,18 +869,35 @@ const generateSampleTimetable = () => {
                         afternoon_double: ad,
                     };
 
-                    // Ensure overall weekly quota exists when session quotas are used
                     const derived = (ms + as) + (2 * md) + (2 * ad);
                     if (!desiredPeriodsByCode[String(code)] || desiredPeriodsByCode[String(code)] < derived) {
                         desiredPeriodsByCode[String(code)] = derived;
                     }
                 }
 
-                // RULE 1: ENG na B/MAT - double 2, single 1 (periods = 5)
-                // RULE 2: Other subjects - double 1, single 1 (periods = 3)
-                const eff = Number(desiredPeriodsByCode[String(code)] || 0);
                 const subjectUpper = String(code).toUpperCase();
-                if (subjectUpper === 'ENG' || subjectUpper === 'B/MAT') {
+                const isEngOrMath = subjectUpper === 'ENG' || subjectUpper === 'B/MAT';
+                const isCs = subjectUpper === 'CS' || subjectUpper === 'COMP' || subjectUpper === 'ICT';
+                const isBusiness = subjectUpper === 'BUS';
+
+                const targetWeeklyPeriods = isEngOrMath
+                    ? 7
+                    : (isCs || isBusiness)
+                        ? 5
+                        : 3;
+
+                const currentWeekly = Number(desiredPeriodsByCode[String(code)] || 0);
+                if (!Number.isFinite(currentWeekly) || currentWeekly < targetWeeklyPeriods) {
+                    desiredPeriodsByCode[String(code)] = targetWeeklyPeriods;
+                }
+
+                const eff = Number(desiredPeriodsByCode[String(code)] || 0);
+                if (isEngOrMath) {
+                    if (eff >= 7) {
+                        requiredDoubleCountByCode[String(code)] = 2;
+                        maxDoubleCountByCode[String(code)] = 2;
+                    }
+                } else if (isCs || isBusiness) {
                     if (eff >= 5) {
                         requiredDoubleCountByCode[String(code)] = 2;
                         maxDoubleCountByCode[String(code)] = 2;
@@ -892,7 +909,6 @@ const generateSampleTimetable = () => {
                     }
                 }
 
-                // Auto-enable doubles for subjects with required doubles
                 if (requiredDoubleCountByCode[String(code)] > 0) {
                     desiredDoubleByCode[String(code)] = true;
                 }
