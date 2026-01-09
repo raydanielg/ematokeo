@@ -308,6 +308,12 @@ const timetableClasses = computed(() => {
     });
 
     return unique.sort((a, b) => {
+        const baseClassA = a?.parent_class_id ? (all.find((c) => Number(c?.id) === Number(a.parent_class_id)) || a) : a;
+        const baseClassB = b?.parent_class_id ? (all.find((c) => Number(c?.id) === Number(b.parent_class_id)) || b) : b;
+        const formA = getFormOrder(baseClassA);
+        const formB = getFormOrder(baseClassB);
+        if (formA !== formB) return Number(formA || 0) - Number(formB || 0);
+
         const baseA = a?.parent_class_id ? Number(a.parent_class_id) : Number(a?.id || 0);
         const baseB = b?.parent_class_id ? Number(b.parent_class_id) : Number(b?.id || 0);
         if (baseA !== baseB) return baseA - baseB;
