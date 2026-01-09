@@ -1797,13 +1797,32 @@ const getGroupedRows = (day) => {
         groups[indexByKey.get(key)].rows.push(item);
     });
 
-    return groups.sort((a, b) => {
-        const fa = levelToForm(a.label);
-        const fb = levelToForm(b.label);
+    // Ensure streams/rows within a class group follow DB ordering by id.
+    groups.forEach((g) => {
+        g.rows.sort((a, b) => {
+            const ca = Number(a?.row?.school_class_id || a?.row?.class_id || 0);
+            const cb = Number(b?.row?.school_class_id || b?.row?.class_id || 0);
+            if (ca !== cb) return ca - cb;
+            const sa = String(a?.row?.stream || '');
+            const sb = String(b?.row?.stream || '');
+            return sa.localeCompare(sb);
+        });
+    });
 
-        const oa = romanToNumber(fa) ?? Number.POSITIVE_INFINITY;
-        const ob = romanToNumber(fb) ?? Number.POSITIVE_INFINITY;
-        if (oa !== ob) return oa - ob;
+    return groups.sort((a, b) => {
+        const firstA = a?.rows?.[0]?.row || null;
+        const firstB = b?.rows?.[0]?.row || null;
+
+        const idA = Number(firstA?.school_class_id || firstA?.class_id || 0) || 0;
+        const idB = Number(firstB?.school_class_id || firstB?.class_id || 0) || 0;
+
+        const clsA = classById.value?.[String(idA)] || null;
+        const clsB = classById.value?.[String(idB)] || null;
+        const baseA = clsA?.parent_class_id ? Number(clsA.parent_class_id) : idA;
+        const baseB = clsB?.parent_class_id ? Number(clsB.parent_class_id) : idB;
+        if (baseA !== baseB) return baseA - baseB;
+
+        if (idA !== idB) return idA - idB;
 
         return String(a.label || '').localeCompare(String(b.label || ''));
     });
