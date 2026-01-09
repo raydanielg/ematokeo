@@ -1080,6 +1080,18 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 ->map(fn ($p) => \Illuminate\Support\Str::upper(mb_substr($p, 0, 1)))
                 ->implode('');
 
+            $assignedClassIds = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
+                ->where('tcs.teacher_id', $teacherId)
+                ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
+                ->distinct()
+                ->pluck('tcs.school_class_id')
+                ->filter(fn ($v) => is_numeric($v))
+                ->map(fn ($v) => (int) $v)
+                ->values()
+                ->all();
+
+            $assignedClassIdSet = array_fill_keys($assignedClassIds, true);
+
             $schedule = $timetable->schedule_json;
             if (is_string($schedule)) {
                 $decoded = json_decode($schedule, true);
@@ -1093,6 +1105,13 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
             $periods = [];
             foreach ($schedule as $day => $rows) {
                 foreach ((array) $rows as $row) {
+                    $rowClassId = (int) ($row['school_class_id'] ?? $row['class_id'] ?? 0);
+                    if ($rowClassId > 0 && $assignedClassIdSet) {
+                        if (! isset($assignedClassIdSet[$rowClassId])) {
+                            continue;
+                        }
+                    }
+
                     $slots = (array) ($row['slots'] ?? []);
                     foreach ($slots as $idx => $slot) {
                         if (!is_array($slot)) continue;
@@ -1102,6 +1121,7 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                         if (! in_array($initials, $initialParts, true)) continue;
                         $periods[] = [
                             'day' => $day,
+                            'class_id' => $rowClassId,
                             'class_label' => $row['class_label'] ?? ($row['form'] ?? ''),
                             'stream' => $row['stream'] ?? '',
                             'subject' => $slot['subject'] ?? '',
