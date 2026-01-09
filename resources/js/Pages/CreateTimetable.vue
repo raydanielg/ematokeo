@@ -711,6 +711,30 @@ const generateSampleTimetable = () => {
         const remainingNeeded = { ...desiredPeriodsByCode };
         const hasQuotas = Object.keys(remainingNeeded).length > 0;
 
+        // Per-class per-day constraints to reduce repetition:
+        // - A subject should appear at most once per day (unless it is a double)
+        // - A teacher should teach a class at most once per day (either a single or a double)
+        const subjectCountByDay = {};
+        const teacherUsedInClassDay = {};
+        days.forEach((day) => {
+            subjectCountByDay[day] = {};
+            teacherUsedInClassDay[day] = new Set();
+        });
+
+        const isPartOfDouble = (day, slotIndex, subject) => {
+            if (!subject) return false;
+            const leftAllowed = slotIndex > 0 && ![4, 7].includes(slotIndex);
+            const rightAllowed = slotIndex < 8 && ![3, 6].includes(slotIndex);
+
+            const left = leftAllowed ? rowByDay[day].slots[slotIndex - 1] : null;
+            const right = rightAllowed ? rowByDay[day].slots[slotIndex + 1] : null;
+            const leftSubject = left?.subject ? String(left.subject) : '';
+            const rightSubject = right?.subject ? String(right.subject) : '';
+            const code = String(subject);
+
+            return (leftSubject && leftSubject === code) || (rightSubject && rightSubject === code);
+        };
+
         const clearSlot = (day, slotIndex) => {
             const existing = rowByDay[day]?.slots?.[slotIndex];
             const busy = existing?._busy;
@@ -718,12 +742,46 @@ const generateSampleTimetable = () => {
             if (busySet && Array.isArray(busy)) {
                 busy.forEach((t) => busySet.delete(t));
             }
+
+            const teacherDaySet = teacherUsedInClassDay[String(day)];
+            if (teacherDaySet && Array.isArray(busy)) {
+                busy.forEach((t) => teacherDaySet.delete(t));
+            }
+
+            const subject = existing?.subject ? String(existing.subject) : '';
+            if (subject) {
+                const counts = subjectCountByDay[String(day)] || {};
+                if (counts[subject]) {
+                    counts[subject] = Math.max(0, Number(counts[subject]) - 1);
+                    if (counts[subject] <= 0) delete counts[subject];
+                }
+            }
             rowByDay[day].slots[slotIndex] = null;
         };
 
         const setSlot = (day, slotIndex, subject) => {
+            if (!subject) return false;
+
+            const subjectCode = String(subject);
+            const counts = subjectCountByDay[String(day)] || {};
+            const alreadyToday = Number(counts[subjectCode] || 0) > 0;
+
+            // Prevent repeating the same subject multiple times in one day unless it forms a double.
+            if (alreadyToday && !isPartOfDouble(day, slotIndex, subjectCode)) {
+                return false;
+            }
+
             const picked = chooseTeacherForSlot(classId, subject, day, slotIndex);
             if (!picked.ok) return false;
+
+            // Prevent the same teacher from appearing multiple times in the same class/day.
+            // (Allow blank teacher cells when there is no assignment.)
+            const teacherDaySet = teacherUsedInClassDay[String(day)] || new Set();
+            if (picked.busyList && picked.busyList.length) {
+                for (let i = 0; i < picked.busyList.length; i += 1) {
+                    if (teacherDaySet.has(picked.busyList[i])) return false;
+                }
+            }
 
             const teacherInitials = picked.teacher || (classHasTeacherAssignments(classId) ? '' : (teachers[subject] || ''));
             const teacherName = teacherInitials;
@@ -741,6 +799,14 @@ const generateSampleTimetable = () => {
             if (busySet && picked.busyList && picked.busyList.length) {
                 picked.busyList.forEach((t) => busySet.add(t));
             }
+
+            if (teacherDaySet && picked.busyList && picked.busyList.length) {
+                picked.busyList.forEach((t) => teacherDaySet.add(t));
+            }
+
+            counts[subjectCode] = Number(counts[subjectCode] || 0) + 1;
+            subjectCountByDay[String(day)] = counts;
+            teacherUsedInClassDay[String(day)] = teacherDaySet;
 
             return true;
         };
@@ -944,9 +1010,12 @@ const generateSampleTimetable = () => {
                 ? [...quotaCandidates, ...classSubjectCodes.filter((c) => !quotaCandidates.includes(String(c)))]
                 : classSubjectCodes;
 
+            const dayCounts = subjectCountByDay[String(pos.day)] || {};
+
             for (let tries = 0; tries < ordered.length; tries += 1) {
                 const candidate = ordered[(cursor + tries) % ordered.length];
                 if (candidate && prevSubject && String(candidate) === prevSubject) continue;
+                if (candidate && Number(dayCounts[String(candidate)] || 0) > 0) continue;
                 if (!classId || isSubjectAllowedInSlot(classId, candidate, pos.slotIndex)) {
                     picked = candidate;
                     cursor = (cursor + tries + 1) % ordered.length;
@@ -2027,8 +2096,13 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             @dragover.prevent
                                             @drop="isDraggableSlot(day, index) && onDrop(day, originalIndex, index)"
                                         >
-                                            <div>{{ slot?.subject || '' }}</div>
-                                            <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot?.teacher || '' }}</div>
+                                            <template v-if="slot && slot.subject">
+                                                <div>{{ slot.subject }}</div>
+                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
+                                            </template>
+                                            <template v-else>
+                                                <div class="font-semibold text-gray-400">PS</div>
+                                            </template>
                                         </td>
 
                                         <!-- First BREAK column (10:40-11:05) -->
@@ -2051,8 +2125,13 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                                 <div class="font-semibold text-orange-700">MEWAKA</div>
                                             </template>
                                             <template v-else>
-                                                <div>{{ slot?.subject || '' }}</div>
-                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot?.teacher || '' }}</div>
+                                                <template v-if="slot && slot.subject">
+                                                    <div>{{ slot.subject }}</div>
+                                                    <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
+                                                </template>
+                                                <template v-else>
+                                                    <div class="font-semibold text-gray-400">PS</div>
+                                                </template>
                                             </template>
                                         </td>
 
@@ -2090,8 +2169,13 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                                 <div>SPORTS AND GAMES</div>
                                             </template>
                                             <template v-else>
-                                                <div>{{ slot?.subject || '' }}</div>
-                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot?.teacher || '' }}</div>
+                                                <template v-if="slot && slot.subject">
+                                                    <div>{{ slot.subject }}</div>
+                                                    <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
+                                                </template>
+                                                <template v-else>
+                                                    <div class="font-semibold text-gray-400">PS</div>
+                                                </template>
                                             </template>
                                         </td>
 
