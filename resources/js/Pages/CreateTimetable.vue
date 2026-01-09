@@ -546,6 +546,11 @@ const generateSampleTimetable = () => {
         teacherBusy[day] = Array.from({ length: 9 }).map(() => new Set());
     });
 
+    // Track overall teacher workload distribution across the week.
+    // Goal: prefer keeping at least one free day per teacher and prefer consecutive blocks.
+    const teacherDaysUsedOverall = {};
+    const teacherLastPlacement = {};
+
     const splitTeacherInitials = (raw) => {
         return String(raw || '')
             .split('/')
@@ -553,9 +558,51 @@ const generateSampleTimetable = () => {
             .filter(Boolean);
     };
 
+    const ensureTeacherDaySet = (initial) => {
+        const k = String(initial || '').trim();
+        if (!k) return null;
+        if (!teacherDaysUsedOverall[k]) teacherDaysUsedOverall[k] = new Set();
+        return teacherDaysUsedOverall[k];
+    };
+
+    const teacherScore = (initial, day, slotIndex, baseClassId) => {
+        const k = String(initial || '').trim();
+        if (!k) return -999999;
+
+        const daysSet = ensureTeacherDaySet(k) || new Set();
+        const daysCount = daysSet.size;
+        const last = teacherLastPlacement[k] || null;
+
+        // Prefer fewer distinct days (try to keep at least 1 free day)
+        // Heavy penalty once teacher already teaches 5 days.
+        let score = 0;
+        score -= (daysCount * 10);
+        if (daysCount >= 5) score -= 50;
+
+        // Prefer continuing on same day
+        if (last && last.day === String(day)) score += 8;
+
+        // Prefer adjacent slot progression (teacher stays in flow)
+        if (last && last.day === String(day)) {
+            const diff = Math.abs(Number(slotIndex) - Number(last.slotIndex));
+            if (diff === 1) score += 10;
+            else if (diff === 2) score += 4;
+        }
+
+        // Prefer staying within the same base class group (streams A/B/C of same Form)
+        if (last && baseClassId && last.baseClassId && Number(last.baseClassId) === Number(baseClassId)) {
+            score += 4;
+        }
+
+        return score;
+    };
+
     const chooseTeacherForSlot = (schoolClassId, subjectCode, day, slotIndex) => {
         const raw = teacherInitialsForClassSubject(schoolClassId, subjectCode);
         const parts = splitTeacherInitials(raw);
+
+        const cls = classById.value?.[String(schoolClassId)] || null;
+        const baseClassId = cls?.parent_class_id ? Number(cls.parent_class_id) : Number(schoolClassId || 0);
 
         // Strict mode: if this class has assignments but none found for this subject, treat as no-teacher (blocked).
         if (classHasTeacherAssignments(schoolClassId) && !parts.length) {
@@ -574,6 +621,8 @@ const generateSampleTimetable = () => {
             const a = parts[0];
             const b = parts[1];
             if (busySet.has(a) || busySet.has(b)) return { ok: false, teacher: '', busyList: [] };
+            // Prefer co-teaching pair that keeps workload low (use min score).
+            const score = Math.min(teacherScore(a, day, slotIndex, baseClassId), teacherScore(b, day, slotIndex, baseClassId));
             return { ok: true, teacher: `${a}/${b}`, busyList: [a, b] };
         }
 
@@ -584,16 +633,22 @@ const generateSampleTimetable = () => {
             return { ok: true, teacher: a, busyList: [a] };
         }
 
-        // More than 2 teachers: pick a free teacher deterministically by day+slot.
-        const d = String(day || '').toUpperCase();
-        const dayIdx = days.indexOf(d);
-        const seed = (Math.max(0, dayIdx) * 31) + Number(slotIndex || 0);
-
-        for (let step = 0; step < parts.length; step += 1) {
-            const candidate = parts[(seed + step) % parts.length];
+        // More than 2 teachers: pick a free teacher with best workload score.
+        let best = null;
+        let bestScore = -999999;
+        for (let i = 0; i < parts.length; i += 1) {
+            const candidate = parts[i];
             if (!candidate) continue;
             if (busySet.has(candidate)) continue;
-            return { ok: true, teacher: candidate, busyList: [candidate] };
+            const sc = teacherScore(candidate, day, slotIndex, baseClassId);
+            if (sc > bestScore) {
+                bestScore = sc;
+                best = candidate;
+            }
+        }
+
+        if (best) {
+            return { ok: true, teacher: best, busyList: [best] };
         }
 
         return { ok: false, teacher: '', busyList: [] };
@@ -729,13 +784,26 @@ const generateSampleTimetable = () => {
                     desiredDoubleByCode[String(code)] = true;
                 }
 
-                // Hard rule: minimum doubles per week (per stream)
-                // - ENG and B/MAT => 3 doubles
-                // - others => 2 doubles
-                // capped by floor(periods/week / 2)
-                const upper = Math.floor(eff / 2);
-                const baseNeed = ['ENG', 'B/MAT'].includes(String(code).toUpperCase()) ? 3 : 2;
+                // Hard rule: doubles policy per week (per stream)
+                // - ENG and B/MAT (periods=5) => double 2 + single 1
+                // - other subjects => at least double 1 + single 1 (only if periods >= 3)
+                // Cap max doubles to keep at least one single.
+                const upperEngMath = Math.floor(eff / 2);
+                const upperKeepSingle = Math.floor(Math.max(0, eff - 1) / 2);
+
+                const upper = ['ENG', 'B/MAT'].includes(String(code).toUpperCase())
+                    ? upperEngMath
+                    : upperKeepSingle;
+
+                const baseNeed = ['ENG', 'B/MAT'].includes(String(code).toUpperCase())
+                    ? 2
+                    : (eff >= 3 ? 1 : 0);
+
                 requiredDoubleCountByCode[String(code)] = Math.max(0, Math.min(baseNeed, upper));
+
+                if (requiredDoubleCountByCode[String(code)] > 0) {
+                    desiredDoubleByCode[String(code)] = true;
+                }
             });
         }
 
@@ -773,6 +841,9 @@ const generateSampleTimetable = () => {
             if (busySet && Array.isArray(busy)) {
                 busy.forEach((t) => busySet.delete(t));
             }
+
+            // Remove day from overall set only if teacher has no other lessons that day (safe but expensive); skip removal.
+            // We keep teacherDaysUsedOverall as monotonic within one generation pass.
 
             const teacherDaySet = teacherUsedInClassDay[String(day)];
             if (teacherDaySet && Array.isArray(busy)) {
@@ -853,6 +924,19 @@ const generateSampleTimetable = () => {
                 picked.busyList.forEach((t) => busySet.add(t));
             }
 
+            // Update overall workload tracking
+            if (picked.busyList && picked.busyList.length) {
+                picked.busyList.forEach((t) => {
+                    const ds = ensureTeacherDaySet(t);
+                    if (ds) ds.add(String(day));
+                    teacherLastPlacement[String(t)] = {
+                        day: String(day),
+                        slotIndex: Number(slotIndex),
+                        baseClassId: c?.parent_class_id ? Number(c.parent_class_id) : Number(classId || 0),
+                    };
+                });
+            }
+
             if (teacherDaySet && picked.busyList && picked.busyList.length) {
                 picked.busyList.forEach((t) => teacherDaySet.add(t));
             }
@@ -884,27 +968,39 @@ const generateSampleTimetable = () => {
         };
 
         const tryPlaceDoubleInSession = (code, session) => {
+            const candidates = [];
+            const startSlots = session === 'morning' ? [0, 1, 2] : [7];
+
             for (let d = 0; d < days.length; d += 1) {
                 const day = days[d];
-                const startSlots = session === 'morning' ? [0, 1, 2] : [7];
                 for (let s = 0; s < startSlots.length; s += 1) {
                     const i = startSlots[s];
                     if (!canBeDoubleStartInSession(i, session)) continue;
                     if (!isEmptyTeachableSlot(day, i) || !isEmptyTeachableSlot(day, i + 1)) continue;
                     if (classId && (!isSubjectAllowedInSlot(classId, code, i) || !isSubjectAllowedInSlot(classId, code, i + 1))) continue;
                     if (getSlotSession(i) !== session || getSlotSession(i + 1) !== session) continue;
-
-                    if (!setSlot(day, i, code)) continue;
-                    if (!setSlot(day, i + 1, code)) {
-                        // rollback
-                        clearSlot(day, i);
-                        continue;
-                    }
-                    remainingNeeded[String(code)] = Math.max(0, (remainingNeeded[String(code)] || 0) - 2);
-                    if (remainingNeeded[String(code)] <= 0) delete remainingNeeded[String(code)];
-                    return true;
+                    candidates.push({ day, slotIndex: i });
                 }
             }
+
+            shuffle(candidates);
+
+            for (let k = 0; k < candidates.length; k += 1) {
+                const pos = candidates[k];
+                const day = pos.day;
+                const i = pos.slotIndex;
+
+                if (!setSlot(day, i, code)) continue;
+                if (!setSlot(day, i + 1, code)) {
+                    clearSlot(day, i);
+                    continue;
+                }
+
+                remainingNeeded[String(code)] = Math.max(0, (remainingNeeded[String(code)] || 0) - 2);
+                if (remainingNeeded[String(code)] <= 0) delete remainingNeeded[String(code)];
+                return true;
+            }
+
             return false;
         };
 
@@ -974,6 +1070,7 @@ const generateSampleTimetable = () => {
             // need at least 2 remaining to form a double
             if (!remainingNeeded[String(code)] || remainingNeeded[String(code)] < 2) return false;
 
+            const candidates = [];
             for (let d = 0; d < days.length; d += 1) {
                 const day = days[d];
                 for (let i = 0; i < 8; i += 1) {
@@ -982,16 +1079,26 @@ const generateSampleTimetable = () => {
                     if (rowByDay[day].slots[i] !== null) continue;
                     if (rowByDay[day].slots[i + 1] !== null) continue;
                     if (classId && (!isSubjectAllowedInSlot(classId, code, i) || !isSubjectAllowedInSlot(classId, code, i + 1))) continue;
-
-                    setSlot(day, i, code);
-                    if (!setSlot(day, i + 1, code)) {
-                        clearSlot(day, i);
-                        continue;
-                    }
-                    remainingNeeded[String(code)] -= 2;
-                    if (remainingNeeded[String(code)] <= 0) delete remainingNeeded[String(code)];
-                    return true;
+                    candidates.push({ day, slotIndex: i });
                 }
+            }
+
+            shuffle(candidates);
+
+            for (let k = 0; k < candidates.length; k += 1) {
+                const pos = candidates[k];
+                const day = pos.day;
+                const i = pos.slotIndex;
+
+                if (!setSlot(day, i, code)) continue;
+                if (!setSlot(day, i + 1, code)) {
+                    clearSlot(day, i);
+                    continue;
+                }
+
+                remainingNeeded[String(code)] -= 2;
+                if (remainingNeeded[String(code)] <= 0) delete remainingNeeded[String(code)];
+                return true;
             }
 
             return false;
