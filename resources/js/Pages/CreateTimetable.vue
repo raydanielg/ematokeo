@@ -1065,8 +1065,8 @@ const generateSampleTimetable = () => {
             return false;
         };
 
-        // NEW RULE: every day must start with B/MAT double then ENG double.
-        // Slots: 0-1 => B/MAT, 2-3 => ENG.
+        // NEW RULE: every day must start with ENG/B/MAT doubles (stream pattern).
+        // Slots: 0-1 => first subject, 2-3 => second subject.
         days.forEach((day) => {
             const classKey = `${String(classLabel || c?.name || '')}${streamLabel ? ` ${streamLabel}` : ''}`.trim();
 
@@ -1076,6 +1076,26 @@ const generateSampleTimetable = () => {
             };
 
             const tryForceDouble = (code, startIndex) => {
+                const placeForcedNoTeacher = (slotIndex) => {
+                    if (!isTeachableLessonSlot(day, slotIndex)) return false;
+                    if (rowByDay[day].slots[slotIndex] !== null) return false;
+                    if (classId && !isSubjectAllowedInSlot(classId, code, slotIndex)) return false;
+
+                    rowByDay[day].slots[slotIndex] = {
+                        subject: String(code || ''),
+                        teacher: '',
+                        teacher_initials: '',
+                        teacher_name: '',
+                    };
+
+                    const k = String(code || '').trim().toUpperCase();
+                    if (k) {
+                        if (!subjectCountByDay[String(day)]) subjectCountByDay[String(day)] = {};
+                        subjectCountByDay[String(day)][k] = Number(subjectCountByDay[String(day)][k] || 0) + 1;
+                    }
+                    return true;
+                };
+
                 if (!hasSubjectCode(code)) {
                     generationWarnings.value.push(`${classKey}: ${code} not in class subject list, cannot force morning double`);
                     return false;
@@ -1089,11 +1109,14 @@ const generateSampleTimetable = () => {
                     return false;
                 }
 
-                if (!setSlot(day, startIndex, code)) {
+                const ok1 = setSlot(day, startIndex, code) || placeForcedNoTeacher(startIndex);
+                if (!ok1) {
                     generationWarnings.value.push(`${classKey}: failed to place ${code} at ${day} slot ${startIndex + 1}`);
                     return false;
                 }
-                if (!setSlot(day, startIndex + 1, code)) {
+
+                const ok2 = setSlot(day, startIndex + 1, code) || placeForcedNoTeacher(startIndex + 1);
+                if (!ok2) {
                     clearSlot(day, startIndex);
                     generationWarnings.value.push(`${classKey}: failed to complete ${code} double at ${day} start`);
                     return false;
