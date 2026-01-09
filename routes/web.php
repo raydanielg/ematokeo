@@ -6008,7 +6008,11 @@ Route::middleware('auth')->group(function () {
 
         $timetables = Timetable::query()
             ->when($schoolId && Schema::hasColumn('timetables', 'school_id'), function ($q) use ($schoolId) {
-                $q->where('school_id', $schoolId);
+                // Include legacy rows that have NULL school_id (created before school scoping)
+                // so that saved timetables don't disappear from the list.
+                $q->where(function ($qb) use ($schoolId) {
+                    $qb->where('school_id', $schoolId)->orWhereNull('school_id');
+                });
             })
             ->orderByDesc('created_at')
             ->get([

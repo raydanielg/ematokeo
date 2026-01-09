@@ -308,43 +308,35 @@ const timetableClasses = computed(() => {
     });
 
     return unique.sort((a, b) => {
-        const orderA = getFormOrder(a);
-        const orderB = getFormOrder(b);
-        if (orderA !== orderB) return orderA - orderB;
+        const baseA = a?.parent_class_id ? Number(a.parent_class_id) : Number(a?.id || 0);
+        const baseB = b?.parent_class_id ? Number(b.parent_class_id) : Number(b?.id || 0);
+        if (baseA !== baseB) return baseA - baseB;
 
         const streamA = (a?.stream ? String(a.stream) : '').toUpperCase();
         const streamB = (b?.stream ? String(b.stream) : '').toUpperCase();
         const streamCmp = streamA.localeCompare(streamB);
         if (streamCmp !== 0) return streamCmp;
 
-        return (a?.id || 0) - (b?.id || 0);
+        return (Number(a?.id || 0) - Number(b?.id || 0));
     });
 });
 
 const classLabels = computed(() => {
-    const unique = new Set();
+    // Preserve the same ordering used by `timetableClasses` (base class id asc, then stream).
+    // Do not alphabetically re-sort, because the user expects DB order (e.g. ids 1..4).
+    const seen = new Set();
+    const out = [];
 
-    timetableClasses.value.forEach((c) => {
+    (timetableClasses.value || []).forEach((c) => {
         const label = getClassLabel(c);
-        if (label) {
-            unique.add(label);
-        }
+        if (!label) return;
+        const key = String(label);
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push(label);
     });
 
-    if (unique.size === 0) {
-        return ['Form I', 'Form II', 'Form III', 'Form IV'];
-    }
-
-    const list = Array.from(unique.values());
-
-    return list.sort((a, b) => {
-        const fa = levelToForm(a);
-        const fb = levelToForm(b);
-        const na = romanToNumber(fa) ?? Number.POSITIVE_INFINITY;
-        const nb = romanToNumber(fb) ?? Number.POSITIVE_INFINITY;
-        if (na !== nb) return na - nb;
-        return String(a).localeCompare(String(b));
-    });
+    return out;
 });
 
 const streams = computed(() => {
@@ -401,6 +393,7 @@ const headerClassName = computed(() => {
 
 // schedule[day][formIndex][slotIndex] = { subject, teacher }
 const schedule = ref({});
+const generationWarnings = ref([]);
 
 const sessionRulesStorageKey = computed(() => {
     const schoolId = props.school?.id ?? 'school';
@@ -442,9 +435,15 @@ const getSubjectSessionRule = (schoolClassId, subjectId) => {
 };
 
 const isSubjectAllowedInSlot = (schoolClassId, subjectCode, slotIndex) => {
+    const forcedMorning = new Set(['ENG', 'B/MAT', 'CS']);
+    const code = String(subjectCode || '').trim().toUpperCase();
+    const slotSession = getSlotSession(slotIndex);
+    if (forcedMorning.has(code)) {
+        return slotSession === 'morning';
+    }
+
     const subjectId = subjectIdByCode.value?.[String(subjectCode)] || null;
     const rule = getSubjectSessionRule(schoolClassId, subjectId);
-    const slotSession = getSlotSession(slotIndex);
     if (rule === 'any') return true;
     return slotSession === rule;
 };
@@ -524,6 +523,7 @@ const saveLimitationsDraftToStorage = () => {
 
 const generateSampleTimetable = () => {
     const next = {};
+    generationWarnings.value = [];
 
     const codes = subjectPool.value;
     const teachers = teacherBySubject.value;
@@ -1129,6 +1129,123 @@ const generateSampleTimetable = () => {
         });
 
         // 4) Push into per-day arrays
+        // Validate against weekly quotas and attempt a small balancing pass.
+        if (hasQuotas && Object.keys(desiredPeriodsByCode || {}).length > 0) {
+            const countActual = () => {
+                const counts = {};
+                days.forEach((day) => {
+                    for (let i = 0; i < 9; i += 1) {
+                        if (!isTeachableLessonSlot(day, i)) continue;
+                        const slot = rowByDay[day].slots[i];
+                        const code = slot?.subject ? String(slot.subject) : '';
+                        if (!code) continue;
+                        counts[code] = Number(counts[code] || 0) + 1;
+                    }
+                });
+                return counts;
+            };
+
+            const isDoubleStart = (day, slotIndex) => {
+                if (!isTeachableLessonSlot(day, slotIndex)) return false;
+                if (!isTeachableLessonSlot(day, slotIndex + 1)) return false;
+                if (![0, 1, 2, 4, 5, 7].includes(slotIndex)) return false;
+                const a = rowByDay[day].slots[slotIndex];
+                const b = rowByDay[day].slots[slotIndex + 1];
+                return !!(a?.subject && b?.subject && String(a.subject) === String(b.subject));
+            };
+
+            const canReplaceAt = (day, slotIndex, newCode) => {
+                if (!isTeachableLessonSlot(day, slotIndex)) return false;
+                if (classId && !isSubjectAllowedInSlot(classId, newCode, slotIndex)) return false;
+
+                // Avoid breaking an existing double or creating a new double unintentionally.
+                if (isDoubleStart(day, slotIndex) || isDoubleStart(day, slotIndex - 1)) return false;
+
+                const prevAllowed = slotIndex > 0 && ![4, 7].includes(slotIndex);
+                const nextAllowed = slotIndex < 8 && ![3, 6].includes(slotIndex);
+                const prev = prevAllowed ? rowByDay[day].slots[slotIndex - 1] : null;
+                const nextSlot = nextAllowed ? rowByDay[day].slots[slotIndex + 1] : null;
+                const prevCode = prev?.subject ? String(prev.subject) : '';
+                const nextCode = nextSlot?.subject ? String(nextSlot.subject) : '';
+                if (prevCode && prevCode === String(newCode)) return false;
+                if (nextCode && nextCode === String(newCode)) return false;
+                return true;
+            };
+
+            const attemptSwapFor = (deficitCode, actualCounts, desiredCounts) => {
+                const desired = Number(desiredCounts[String(deficitCode)] || 0);
+                const current = Number(actualCounts[String(deficitCode)] || 0);
+                if (current >= desired) return false;
+
+                for (let d = 0; d < days.length; d += 1) {
+                    const day = days[d];
+                    for (let i = 0; i < 9; i += 1) {
+                        if (!isTeachableLessonSlot(day, i)) continue;
+                        const slot = rowByDay[day].slots[i];
+                        const fromCode = slot?.subject ? String(slot.subject) : '';
+                        if (!fromCode) continue;
+                        if (fromCode === String(deficitCode)) continue;
+
+                        const desiredFrom = Number(desiredCounts[String(fromCode)] || 0);
+                        const actualFrom = Number(actualCounts[String(fromCode)] || 0);
+
+                        // Only swap out from a subject that is above its desired quota.
+                        if (actualFrom <= desiredFrom) continue;
+                        if (!canReplaceAt(day, i, deficitCode)) continue;
+
+                        // Swap by clearing then setting (keeps teacherBusy/subjectCountByDay consistent)
+                        clearSlot(day, i);
+                        const ok = setSlot(day, i, deficitCode);
+                        if (!ok) {
+                            // rollback
+                            setSlot(day, i, fromCode);
+                            continue;
+                        }
+
+                        actualCounts[String(deficitCode)] = Number(actualCounts[String(deficitCode)] || 0) + 1;
+                        actualCounts[String(fromCode)] = Math.max(0, Number(actualCounts[String(fromCode)] || 0) - 1);
+                        return true;
+                    }
+                }
+
+                return false;
+            };
+
+            const desiredCounts = { ...desiredPeriodsByCode };
+            let actualCounts = countActual();
+            const codesToCheck = Object.keys(desiredCounts);
+
+            // Try a bounded number of swaps to reduce deficits.
+            let safety = 0;
+            while (safety < 250) {
+                safety += 1;
+                let didSomething = false;
+                for (let k = 0; k < codesToCheck.length; k += 1) {
+                    const code = codesToCheck[k];
+                    if (Number(actualCounts[String(code)] || 0) >= Number(desiredCounts[String(code)] || 0)) continue;
+                    const swapped = attemptSwapFor(code, actualCounts, desiredCounts);
+                    if (swapped) {
+                        didSomething = true;
+                    }
+                }
+                if (!didSomething) break;
+            }
+
+            // Final report for this class if deficits remain.
+            actualCounts = countActual();
+            const classKey = `${String(classLabel || c?.name || '')}${streamLabel ? ` ${streamLabel}` : ''}`.trim();
+            codesToCheck.forEach((code) => {
+                const desired = Number(desiredCounts[String(code)] || 0);
+                const actual = Number(actualCounts[String(code)] || 0);
+                if (desired > 0 && actual < desired) {
+                    generationWarnings.value.push(`${classKey}: ${code} missing ${desired - actual} periods`);
+                }
+                if (desired > 0 && actual > desired) {
+                    generationWarnings.value.push(`${classKey}: ${code} exceeds by ${actual - desired} periods`);
+                }
+            });
+        }
+
         days.forEach((day) => {
             next[day].push(rowByDay[day]);
         });
@@ -1356,6 +1473,95 @@ const subjectMorningDoubleById = ref({});
 const subjectAfternoonSingleById = ref({});
 const subjectAfternoonDoubleById = ref({});
 
+const suppressAutoLimitSave = ref(false);
+const autoLimitSaveTimer = ref(null);
+
+const defaultSubjectPeriodsByFormGroup = (formNumber) => {
+    const form12 = {
+        'B/MAT': 5,
+        BIO: 3,
+        BUS: 3,
+        CHE: 3,
+        CS: 4,
+        ENG: 5,
+        GEO: 2,
+        HIS: 3,
+        HTM: 3,
+        KIS: 4,
+        PHY: 3,
+    };
+
+    const form34 = {
+        'B/MAT': 5,
+        BIO: 4,
+        BUS: 3,
+        CHE: 4,
+        CIV: 3,
+        CS: 4,
+        ENG: 5,
+        FK: 2,
+        GEO: 3,
+        HIS: 4,
+        HTM: 3,
+        KIS: 4,
+        LIT: 2,
+        PHY: 4,
+    };
+
+    if (formNumber === 1 || formNumber === 2) return form12;
+    if (formNumber === 3 || formNumber === 4) return form34;
+    return {};
+};
+
+const scheduleAutoLimitSave = () => {
+    if (!showLimitationsModal.value) return;
+    if (!selectedLimitClassId.value) return;
+    if (limitsLoading.value || limitsSaving.value) return;
+    if (suppressAutoLimitSave.value) return;
+
+    if (autoLimitSaveTimer.value) {
+        window.clearTimeout(autoLimitSaveTimer.value);
+    }
+
+    autoLimitSaveTimer.value = window.setTimeout(async () => {
+        if (!showLimitationsModal.value) return;
+        if (!selectedLimitClassId.value) return;
+        if (limitsLoading.value || limitsSaving.value) return;
+
+        if (limitationsMode.value === 'subject_only') {
+            await saveSubjectLimits({ closeModal: false });
+        } else {
+            await saveLimits({ closeModal: false });
+        }
+    }, 600);
+};
+
+const syncSubjectPeriodsFromTeacherLimits = () => {
+    if (!selectedLimitClassId.value) return;
+
+    const next = { ...(subjectLimitsById.value || {}) };
+    const totalsBySubjectId = {};
+
+    (teacherSubjectRows.value || []).forEach((row) => {
+        const subjectId = row?.subject_id ? Number(row.subject_id) : null;
+        const teacherId = row?.teacher_id ? Number(row.teacher_id) : null;
+        if (!subjectId || !teacherId) return;
+
+        const key = limitKey(teacherId, subjectId);
+        const raw = limitsByKey.value?.[key];
+        const val = raw === '' || raw === null || raw === undefined ? 0 : Number(raw);
+        if (!Number.isFinite(val) || val < 0) return;
+
+        totalsBySubjectId[String(subjectId)] = Number(totalsBySubjectId[String(subjectId)] || 0) + val;
+    });
+
+    Object.keys(totalsBySubjectId).forEach((sid) => {
+        next[subjectLimitKey(sid)] = totalsBySubjectId[sid];
+    });
+
+    subjectLimitsById.value = next;
+};
+
 watch([
     limitsByKey,
     subjectLimitsById,
@@ -1484,7 +1690,7 @@ const limitationClassOptions = computed(() => {
                 display: label,
             };
         })
-        .sort((a, b) => String(a.display || '').localeCompare(String(b.display || '')));
+        .sort((a, b) => (Number(a.id || 0) - Number(b.id || 0)));
 });
 
 const limitKey = (teacherId, subjectId) => `${teacherId}:${subjectId}`;
@@ -1503,6 +1709,7 @@ const loadSubjectLimits = async () => {
     }
 
     limitsLoading.value = true;
+    suppressAutoLimitSave.value = true;
     try {
         const res = await fetch(
             `${route('timetables.class-subject-limits.index')}?school_class_id=${encodeURIComponent(selectedLimitClassId.value)}`,
@@ -1530,6 +1737,21 @@ const loadSubjectLimits = async () => {
             afternoonSingleMap[subjectLimitKey(row.subject_id)] = Number(row.afternoon_single || 0);
             afternoonDoubleMap[subjectLimitKey(row.subject_id)] = Number(row.afternoon_double || 0);
         });
+
+        // Hard-coded defaults: only fill missing values, do not overwrite existing DB values.
+        const cls = classById.value?.[String(selectedLimitClassId.value)] || null;
+        const formNumber = getFormOrder(cls);
+        const defaults = defaultSubjectPeriodsByFormGroup(formNumber);
+        Object.keys(defaults).forEach((code) => {
+            const sid = subjectIdByCode.value?.[String(code)] || null;
+            if (!sid) return;
+            const key = subjectLimitKey(sid);
+            const existing = map?.[key];
+            const hasExisting = !(existing === undefined || existing === null || existing === '');
+            if (hasExisting) return;
+            map[key] = defaults[code];
+        });
+
         subjectLimitsById.value = map;
         subjectDoubleById.value = doubleMap;
         subjectMorningSingleById.value = morningSingleMap;
@@ -1545,6 +1767,9 @@ const loadSubjectLimits = async () => {
         subjectAfternoonDoubleById.value = {};
     } finally {
         limitsLoading.value = false;
+        window.setTimeout(() => {
+            suppressAutoLimitSave.value = false;
+        }, 0);
     }
 };
 
@@ -1555,6 +1780,7 @@ const loadLimits = async () => {
     }
 
     limitsLoading.value = true;
+    suppressAutoLimitSave.value = true;
     try {
         const res = await fetch(
             `${route('timetables.weekly-limits.index')}?school_class_id=${encodeURIComponent(selectedLimitClassId.value)}`,
@@ -1577,10 +1803,13 @@ const loadLimits = async () => {
         limitsByKey.value = {};
     } finally {
         limitsLoading.value = false;
+        window.setTimeout(() => {
+            suppressAutoLimitSave.value = false;
+        }, 0);
     }
 };
 
-const saveLimits = async () => {
+const saveLimits = async ({ closeModal = true } = {}) => {
     if (!selectedLimitClassId.value) return;
 
     limitsSaving.value = true;
@@ -1610,13 +1839,15 @@ const saveLimits = async () => {
             body: JSON.stringify({ limits }),
         });
 
-        showLimitationsModal.value = false;
+        if (closeModal) {
+            showLimitationsModal.value = false;
+        }
     } finally {
         limitsSaving.value = false;
     }
 };
 
-const saveSubjectLimits = async () => {
+const saveSubjectLimits = async ({ closeModal = true } = {}) => {
     if (!selectedLimitClassId.value) return;
 
     limitsSaving.value = true;
@@ -1661,7 +1892,9 @@ const saveSubjectLimits = async () => {
             body: JSON.stringify({ limits }),
         });
 
-        showLimitationsModal.value = false;
+        if (closeModal) {
+            showLimitationsModal.value = false;
+        }
     } finally {
         limitsSaving.value = false;
     }
@@ -1696,6 +1929,24 @@ watch(limitationsMode, () => {
         loadLimits();
     }
 });
+
+watch(limitsByKey, () => {
+    if (!showLimitationsModal.value) return;
+    if (limitationsMode.value !== 'teacher_subject') return;
+    syncSubjectPeriodsFromTeacherLimits();
+}, { deep: true });
+
+watch([
+    limitsByKey,
+    subjectLimitsById,
+    subjectDoubleById,
+    subjectMorningSingleById,
+    subjectMorningDoubleById,
+    subjectAfternoonSingleById,
+    subjectAfternoonDoubleById,
+], () => {
+    scheduleAutoLimitSave();
+}, { deep: true });
 
 const draggedCell = ref(null);
 
@@ -1783,6 +2034,13 @@ const onDrop = (day, rowIndex, slotIndex) => {
                     <p class="mt-1 text-sm text-gray-500">
                         Preview below shows the school general timetable. Use the popup to enter timetable details when you are ready to save.
                     </p>
+                </div>
+
+                <div v-if="generationWarnings.length" class="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] text-amber-900">
+                    <div class="font-semibold">Limitations check:</div>
+                    <div class="mt-1 max-h-24 overflow-y-auto">
+                        <div v-for="(w, idx) in generationWarnings" :key="idx">{{ w }}</div>
+                    </div>
                 </div>
                 <div class="flex items-center gap-2">
                     <button
