@@ -1108,9 +1108,16 @@ const generateSampleTimetable = () => {
                 return true;
             };
 
-            // Force in order: B/MAT then ENG
-            tryForceDouble('B/MAT', 0);
-            tryForceDouble('ENG', 2);
+            const stream = String(streamLabel || '').toUpperCase().trim();
+            const order = (stream === 'A' || stream === 'C')
+                ? ['ENG', 'B/MAT']
+                : (stream === 'B' || stream === 'D')
+                    ? ['B/MAT', 'ENG']
+                    : ['B/MAT', 'ENG'];
+
+            // Force two doubles every day: slots 0-1 then 2-3
+            tryForceDouble(order[0], 0);
+            tryForceDouble(order[1], 2);
         });
 
         // 0) If session quotas are specified, force-place them first.
