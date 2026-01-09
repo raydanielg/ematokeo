@@ -395,6 +395,9 @@ const headerClassName = computed(() => {
 const schedule = ref({});
 const generationWarnings = ref([]);
 
+const showResolveModal = ref(false);
+const resolveRunning = ref(false);
+
 const sessionRulesStorageKey = computed(() => {
     const schoolId = props.school?.id ?? 'school';
     return `timetable_subject_session_rules_v1_${schoolId}`;
@@ -614,6 +617,7 @@ const generateSampleTimetable = () => {
                 form: formLabel,
                 class_label: classLabel,
                 stream: streamLabel,
+                school_class_id: classId,
                 class_name: c.name || `${classLabel} ${streamLabel}`.trim(),
                 slots: Array.from({ length: 9 }).map(() => null),
             };
@@ -766,8 +770,10 @@ const generateSampleTimetable = () => {
             const counts = subjectCountByDay[String(day)] || {};
             const alreadyToday = Number(counts[subjectCode] || 0) > 0;
 
+            const partOfDouble = isPartOfDouble(day, slotIndex, subjectCode);
+
             // Prevent repeating the same subject multiple times in one day unless it forms a double.
-            if (alreadyToday && !isPartOfDouble(day, slotIndex, subjectCode)) {
+            if (alreadyToday && !partOfDouble) {
                 return false;
             }
 
@@ -779,7 +785,27 @@ const generateSampleTimetable = () => {
             const teacherDaySet = teacherUsedInClassDay[String(day)] || new Set();
             if (picked.busyList && picked.busyList.length) {
                 for (let i = 0; i < picked.busyList.length; i += 1) {
-                    if (teacherDaySet.has(picked.busyList[i])) return false;
+                    if (!teacherDaySet.has(picked.busyList[i])) continue;
+
+                    // Allow the second cell of a double (same subject) to reuse the same teacher(s)
+                    // without violating the per-day-per-class teacher rule.
+                    if (!partOfDouble) return false;
+
+                    const leftAllowed = slotIndex > 0 && ![4, 7].includes(slotIndex);
+                    const rightAllowed = slotIndex < 8 && ![3, 6].includes(slotIndex);
+                    const left = leftAllowed ? rowByDay[day].slots[slotIndex - 1] : null;
+                    const right = rightAllowed ? rowByDay[day].slots[slotIndex + 1] : null;
+
+                    const neighbor = (left?.subject && String(left.subject) === subjectCode) ? left
+                        : ((right?.subject && String(right.subject) === subjectCode) ? right : null);
+
+                    const neighborBusy = Array.isArray(neighbor?._busy) ? neighbor._busy : [];
+                    const sameBusy = Array.isArray(picked.busyList)
+                        && picked.busyList.length
+                        && picked.busyList.length === neighborBusy.length
+                        && picked.busyList.every((t) => neighborBusy.includes(t));
+
+                    if (!neighbor || !sameBusy) return false;
                 }
             }
 
@@ -1059,7 +1085,35 @@ const generateSampleTimetable = () => {
                 }
             }
 
-            setSlot(pos.day, pos.slotIndex, picked || '');
+            // Try hard to fill the slot (setSlot can fail due to per-day repetition / teacher-day limits).
+            let placed = false;
+            const tryCandidates = [];
+            if (picked) tryCandidates.push(String(picked));
+            const quotaCandidates = Object.keys(remainingNeeded || {}).filter((c) => Number(remainingNeeded[c] || 0) > 0);
+            quotaCandidates.forEach((c) => {
+                if (!tryCandidates.includes(String(c))) tryCandidates.push(String(c));
+            });
+            (classSubjectCodes || []).forEach((c) => {
+                if (!tryCandidates.includes(String(c))) tryCandidates.push(String(c));
+            });
+
+            for (let t = 0; t < tryCandidates.length; t += 1) {
+                const cand = tryCandidates[t];
+                if (!cand) continue;
+                if (classId && !isSubjectAllowedInSlot(classId, cand, pos.slotIndex)) continue;
+                if (setSlot(pos.day, pos.slotIndex, cand)) {
+                    placed = true;
+                    if (remainingNeeded[String(cand)] > 0) {
+                        remainingNeeded[String(cand)] -= 1;
+                        if (remainingNeeded[String(cand)] <= 0) delete remainingNeeded[String(cand)];
+                    }
+                    break;
+                }
+            }
+
+            if (!placed) {
+                rowByDay[pos.day].slots[pos.slotIndex] = null;
+            }
         });
 
         // 3b) Post-process: try to ensure every teacher initials appears at least once
@@ -1246,6 +1300,52 @@ const generateSampleTimetable = () => {
             });
         }
 
+        // Final fill pass: ensure no empty teachable slots (especially morning/midday).
+        // If constraints make it impossible, slot remains null (UI will show PS only for afternoon).
+        const computeCounts = () => {
+            const counts = {};
+            days.forEach((day) => {
+                for (let i = 0; i < 9; i += 1) {
+                    if (!isTeachableLessonSlot(day, i)) continue;
+                    const s = rowByDay[day].slots[i];
+                    const code = s?.subject ? String(s.subject) : '';
+                    if (!code) continue;
+                    counts[code] = Number(counts[code] || 0) + 1;
+                }
+            });
+            return counts;
+        };
+
+        const actualCountsFinal = computeCounts();
+        const desiredCountsFinal = { ...desiredPeriodsByCode };
+
+        days.forEach((day) => {
+            for (let i = 0; i < 9; i += 1) {
+                if (!isTeachableLessonSlot(day, i)) continue;
+                if (rowByDay[day].slots[i] !== null) continue;
+
+                const deficitCandidates = Object.keys(desiredCountsFinal)
+                    .filter((code) => Number(desiredCountsFinal[String(code)] || 0) > Number(actualCountsFinal[String(code)] || 0));
+
+                const candidates = [...deficitCandidates, ...(classSubjectCodes || []).map((c) => String(c))];
+                let placed = false;
+                for (let k = 0; k < candidates.length; k += 1) {
+                    const code = candidates[k];
+                    if (!code) continue;
+                    if (classId && !isSubjectAllowedInSlot(classId, code, i)) continue;
+                    if (setSlot(day, i, code)) {
+                        actualCountsFinal[String(code)] = Number(actualCountsFinal[String(code)] || 0) + 1;
+                        placed = true;
+                        break;
+                    }
+                }
+
+                if (!placed) {
+                    rowByDay[day].slots[i] = null;
+                }
+            }
+        });
+
         days.forEach((day) => {
             next[day].push(rowByDay[day]);
         });
@@ -1261,6 +1361,137 @@ const regenerateSampleTimetable = async () => {
         await loadSubjectLimits();
     }
     generateSampleTimetable();
+};
+
+const resolveTargetClassIds = computed(() => {
+    const baseId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
+    if (!Number.isFinite(baseId) || !baseId) return [];
+
+    const all = Array.isArray(props.classes) ? props.classes : [];
+    const streams = all.filter((c) => Number(c?.parent_class_id) === baseId).map((c) => Number(c.id)).filter((v) => Number.isFinite(v));
+    if (streams.length) return streams;
+    return [baseId];
+});
+
+const resolveSubjectCodesForBase = computed(() => {
+    const baseId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
+    if (!Number.isFinite(baseId) || !baseId) return [];
+
+    const all = Array.isArray(props.classes) ? props.classes : [];
+    const base = all.find((c) => Number(c?.id) === baseId) || null;
+    const streams = all.filter((c) => Number(c?.parent_class_id) === baseId);
+    const codes = new Set();
+    if (streams.length) {
+        streams.forEach((s) => (Array.isArray(s?.subject_codes) ? s.subject_codes : []).forEach((code) => codes.add(String(code))));
+    } else {
+        (Array.isArray(base?.subject_codes) ? base.subject_codes : []).forEach((code) => codes.add(String(code)));
+    }
+    return Array.from(codes.values()).filter(Boolean);
+});
+
+const desiredPeriodsForResolve = computed(() => {
+    // Uses subject_only limits currently loaded for selectedLimitClassId.
+    // Falls back to hard-coded defaults (Form I&II vs Form III&IV) when missing.
+    const baseId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
+    if (!Number.isFinite(baseId) || !baseId) return {};
+
+    const base = classById.value?.[String(baseId)] || null;
+    const formNumber = getFormOrder(base);
+    const defaultsByCode = defaultSubjectPeriodsByFormGroup(formNumber);
+
+    const desired = {};
+    (resolveSubjectCodesForBase.value || []).forEach((code) => {
+        const sid = subjectIdByCode.value?.[String(code)] || null;
+        if (!sid) return;
+        const key = subjectLimitKey(sid);
+        const raw = subjectLimitsById.value?.[key];
+        const val = raw === '' || raw === null || raw === undefined ? null : Number(raw);
+        if (Number.isFinite(val) && val >= 0) {
+            desired[String(code)] = Math.floor(val);
+            return;
+        }
+        const def = defaultsByCode?.[String(code)] ?? null;
+        if (Number.isFinite(Number(def))) {
+            desired[String(code)] = Math.floor(Number(def));
+        }
+    });
+    return desired;
+});
+
+const actualPeriodsByClassIdForResolve = computed(() => {
+    const wanted = new Set((resolveTargetClassIds.value || []).map((v) => String(v)));
+    const result = {};
+    (resolveTargetClassIds.value || []).forEach((id) => {
+        result[String(id)] = {};
+    });
+
+    days.forEach((day) => {
+        const rows = schedule.value?.[day] || [];
+        rows.forEach((row) => {
+            const cid = row?.school_class_id ? String(row.school_class_id) : '';
+            if (!wanted.has(cid)) return;
+            for (let i = 0; i < 9; i += 1) {
+                if (!isTeachableLessonSlot(day, i)) continue;
+                const slot = row?.slots?.[i];
+                const code = slot?.subject ? String(slot.subject) : '';
+                if (!code) continue;
+                if (!result[cid]) result[cid] = {};
+                result[cid][code] = Number(result[cid][code] || 0) + 1;
+            }
+        });
+    });
+
+    return result;
+});
+
+const resolveReport = computed(() => {
+    const desired = desiredPeriodsForResolve.value || {};
+    const report = [];
+
+    (resolveTargetClassIds.value || []).forEach((cid) => {
+        const c = classById.value?.[String(cid)] || null;
+        const label = `${getClassLabel(c) || c?.name || ''}${c?.stream ? ` ${String(c.stream).toUpperCase()}` : ''}`.trim();
+        const actualMap = actualPeriodsByClassIdForResolve.value?.[String(cid)] || {};
+
+        Object.keys(desired).forEach((code) => {
+            const want = Number(desired[String(code)] || 0);
+            const got = Number(actualMap[String(code)] || 0);
+            report.push({
+                class_id: Number(cid),
+                class_label: label,
+                subject_code: String(code),
+                desired: want,
+                actual: got,
+                completed: got >= want && want > 0,
+            });
+        });
+    });
+
+    return report.sort((a, b) => {
+        const cc = Number(a.class_id) - Number(b.class_id);
+        if (cc !== 0) return cc;
+        const lc = String(a.class_label || '').localeCompare(String(b.class_label || ''));
+        if (lc !== 0) return lc;
+        return String(a.subject_code || '').localeCompare(String(b.subject_code || ''));
+    });
+});
+
+const resolveSummary = computed(() => {
+    const rows = resolveReport.value || [];
+    if (!rows.length) return { completed: true, missingCount: 0 };
+    const notOk = rows.filter((r) => !r.completed);
+    return { completed: notOk.length === 0, missingCount: notOk.length };
+});
+
+const runResolve = async () => {
+    if (resolveRunning.value) return;
+    resolveRunning.value = true;
+    try {
+        // Reload limitations and regenerate from scratch so the generator can place missing quotas.
+        await regenerateSampleTimetable();
+    } finally {
+        resolveRunning.value = false;
+    }
 };
 
 const getFilteredRows = (day) => {
@@ -1742,6 +1973,7 @@ const loadSubjectLimits = async () => {
         const cls = classById.value?.[String(selectedLimitClassId.value)] || null;
         const formNumber = getFormOrder(cls);
         const defaults = defaultSubjectPeriodsByFormGroup(formNumber);
+        const defaultDoubleCodes = new Set(['ENG', 'B/MAT', 'CS']);
         Object.keys(defaults).forEach((code) => {
             const sid = subjectIdByCode.value?.[String(code)] || null;
             if (!sid) return;
@@ -1750,6 +1982,12 @@ const loadSubjectLimits = async () => {
             const hasExisting = !(existing === undefined || existing === null || existing === '');
             if (hasExisting) return;
             map[key] = defaults[code];
+
+            // If the school hasn't configured doubles yet, default key subjects to allow doubles.
+            // Example: 5 periods/week => 2 doubles + 1 single (per stream), subject to available slots.
+            if (doubleMap[key] === undefined && defaultDoubleCodes.has(String(code).toUpperCase())) {
+                doubleMap[key] = true;
+            }
         });
 
         subjectLimitsById.value = map;
@@ -2200,10 +2438,93 @@ const onDrop = (day, rowIndex, slotIndex) => {
                         <button
                             type="button"
                             class="rounded-md bg-white px-2 py-1 text-[10px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
-                            @click="showDetailsModal = true"
+                            @click="showResolveModal = true"
                         >
-                            Open Timetable Details
+                            Limitations &amp; Resolve
                         </button>
+                    </div>
+                </div>
+
+                <div
+                    v-if="showResolveModal"
+                    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 py-6 sm:px-0"
+                    @click.self="showResolveModal = false"
+                >
+                    <div class="max-h-full w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 text-xs text-gray-700 shadow-2xl ring-1 ring-gray-200">
+                        <div class="mb-3 flex items-center justify-between">
+                            <div>
+                                <h3 class="text-sm font-semibold text-gray-800">Limitations &amp; Resolve</h3>
+                                <p class="mt-0.5 text-[11px] text-gray-500">
+                                    Inaonyesha Periods/Week ulivyo-set na ukaguzi wa ratiba kama imekamilika kwa kila stream.
+                                </p>
+                            </div>
+                            <button type="button" class="text-[11px] text-gray-500 hover:text-gray-700" @click="showResolveModal = false">Close</button>
+                        </div>
+
+                        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                            <div class="text-[11px]">
+                                Status:
+                                <span
+                                    class="ml-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                                    :class="resolveSummary.completed ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'"
+                                >
+                                    {{ resolveSummary.completed ? 'Completed' : `Not completed (${resolveSummary.missingCount})` }}
+                                </span>
+                            </div>
+
+                            <div class="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    class="rounded-md bg-white px-3 py-1.5 text-[11px] font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
+                                    @click="loadSubjectLimits"
+                                >
+                                    Reload Limitations
+                                </button>
+                                <button
+                                    type="button"
+                                    class="rounded-md bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+                                    :disabled="resolveRunning"
+                                    @click="runResolve"
+                                >
+                                    {{ resolveRunning ? 'Resolving...' : 'Resolve' }}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="overflow-hidden rounded-lg border border-gray-200">
+                            <table class="min-w-full border-collapse text-[11px]">
+                                <thead>
+                                    <tr class="bg-gray-50 text-left">
+                                        <th class="border-b border-gray-200 px-3 py-2">Class</th>
+                                        <th class="border-b border-gray-200 px-3 py-2">Subject</th>
+                                        <th class="border-b border-gray-200 px-3 py-2">Desired</th>
+                                        <th class="border-b border-gray-200 px-3 py-2">Actual</th>
+                                        <th class="border-b border-gray-200 px-3 py-2">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-if="!resolveReport.length">
+                                        <td colspan="5" class="px-3 py-4 text-center text-[11px] text-gray-500">
+                                            Select a class in Limitations first.
+                                        </td>
+                                    </tr>
+                                    <tr v-for="(r, idx) in resolveReport" :key="idx" class="border-b border-gray-100 hover:bg-gray-50">
+                                        <td class="px-3 py-2">{{ r.class_label }}</td>
+                                        <td class="px-3 py-2 font-semibold">{{ r.subject_code }}</td>
+                                        <td class="px-3 py-2">{{ r.desired }}</td>
+                                        <td class="px-3 py-2">{{ r.actual }}</td>
+                                        <td class="px-3 py-2">
+                                            <span
+                                                class="inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                                                :class="r.completed ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'"
+                                            >
+                                                {{ r.completed ? 'Completed' : 'Not completed' }}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
 
@@ -2355,11 +2676,19 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             @drop="isDraggableSlot(day, index) && onDrop(day, originalIndex, index)"
                                         >
                                             <template v-if="slot && slot.subject">
-                                                <div>{{ slot.subject }}</div>
+                                                <div>
+                                                    {{ slot.subject }}
+                                                    <span
+                                                        v-if="row.slots[index + 1]?.subject && row.slots[index + 1].subject === slot.subject"
+                                                        class="ml-1 rounded bg-emerald-200 px-1 text-[8px] font-bold text-emerald-900"
+                                                    >
+                                                        D
+                                                    </span>
+                                                </div>
                                                 <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
                                             </template>
                                             <template v-else>
-                                                <div class="font-semibold text-gray-400">PS</div>
+                                                <div>&nbsp;</div>
                                             </template>
                                         </td>
 
@@ -2384,11 +2713,19 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             </template>
                                             <template v-else>
                                                 <template v-if="slot && slot.subject">
-                                                    <div>{{ slot.subject }}</div>
+                                                    <div>
+                                                        {{ slot.subject }}
+                                                        <span
+                                                            v-if="row.slots[4 + index + 1]?.subject && row.slots[4 + index + 1].subject === slot.subject"
+                                                            class="ml-1 rounded bg-indigo-200 px-1 text-[8px] font-bold text-indigo-900"
+                                                        >
+                                                            D
+                                                        </span>
+                                                    </div>
                                                     <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
                                                 </template>
                                                 <template v-else>
-                                                    <div class="font-semibold text-gray-400">PS</div>
+                                                    <div>&nbsp;</div>
                                                 </template>
                                             </template>
                                         </td>
@@ -2428,7 +2765,15 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             </template>
                                             <template v-else>
                                                 <template v-if="slot && slot.subject">
-                                                    <div>{{ slot.subject }}</div>
+                                                    <div>
+                                                        {{ slot.subject }}
+                                                        <span
+                                                            v-if="row.slots[7 + index + 1]?.subject && row.slots[7 + index + 1].subject === slot.subject"
+                                                            class="ml-1 rounded bg-slate-200 px-1 text-[8px] font-bold text-slate-900"
+                                                        >
+                                                            D
+                                                        </span>
+                                                    </div>
                                                     <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
                                                 </template>
                                                 <template v-else>
