@@ -559,42 +559,95 @@ const loadScheduleFromStorage = () => {
     }
 };
 
+const saveScheduleToStorage = () => {
+    try {
+        window.localStorage.setItem(scheduleStorageKey.value, JSON.stringify(schedule.value || {}));
+    } catch {
+        // ignore storage failures
+    }
+};
+
+const clearStoredSchedule = () => {
+    try {
+        window.localStorage.removeItem(scheduleStorageKey.value);
+    } catch {
+        // ignore storage failures
+    }
+};
+
+const generateSampleTimetable = () => {
+    const next = {};
+    days.forEach((day) => {
+        next[day] = [];
+    });
+
+    const fallbackSubjects = subjectPool.value || [];
+
+    (timetableClasses.value || []).forEach((c) => {
+        const classId = c?.id ? Number(c.id) : null;
+        const formLabel = getClassForm(c);
+        const classLabel = getClassLabel(c);
+        const streamLabel = c?.stream ? String(c.stream).toUpperCase().trim() : '';
+
+        const classSubjectCodes = Array.isArray(c?.subject_codes) && c.subject_codes.length
+            ? c.subject_codes
+            : fallbackSubjects;
+
+        let cursor = Math.floor(Math.random() * (classSubjectCodes.length || 1));
+
+        days.forEach((day) => {
+            const row = {
+                form: formLabel,
+                class_label: classLabel,
+                stream: streamLabel,
+                school_class_id: classId,
+                class_name: c?.name || `${classLabel} ${streamLabel}`.trim(),
+                slots: Array.from({ length: 9 }).map(() => null),
+            };
+
+            for (let i = 0; i < 9; i += 1) {
+                if (!isTeachableLessonSlot(day, i)) {
+                    row.slots[i] = { subject: '', teacher: '', teacher_initials: '', teacher_name: '' };
+                    continue;
+                }
+
+                const prev = i > 0 && ![4, 7].includes(i) ? row.slots[i - 1] : null;
+                const prevCode = prev?.subject ? String(prev.subject) : '';
+
+                let picked = '';
+                for (let tries = 0; tries < (classSubjectCodes.length || 0); tries += 1) {
+                    const cand = classSubjectCodes[(cursor + tries) % classSubjectCodes.length];
+                    if (!cand) continue;
+                    if (prevCode && String(cand) === prevCode) continue;
+                    picked = String(cand);
+                    cursor = (cursor + tries + 1) % classSubjectCodes.length;
+                    break;
+                }
+
+                if (!picked) {
+                    row.slots[i] = null;
+                    continue;
+                }
+
+                const teacher = classId ? pickTeacherInitialForSlot(classId, picked, day, i) : '';
+                row.slots[i] = { subject: picked, teacher, teacher_initials: teacher, teacher_name: '' };
+            }
+
+            next[day].push(row);
+        });
+    });
+
+    schedule.value = normalizeSchedule(next);
+    saveScheduleToStorage();
+};
+
+const regenerateSampleTimetable = () => {
+    clearStoredSchedule();
+    generateSampleTimetable();
+};
+
 onMounted(() => {
     sessionRulesByClassId.value = loadSessionRulesFromStorage();
-
-    const limitationsDraft = loadLimitationsDraftFromStorage();
-    if (limitationsDraft) {
-        if (limitationsDraft.mode === 'teacher_subject' || limitationsDraft.mode === 'subject_only') {
-            limitationsMode.value = limitationsDraft.mode;
-        }
-        if (limitationsDraft.selected_class_id) {
-            selectedLimitClassId.value = String(limitationsDraft.selected_class_id);
-        }
-        if (limitationsDraft.apply_to_all_classes !== null && limitationsDraft.apply_to_all_classes !== undefined) {
-            applyLimitsToAllClasses.value = !!limitationsDraft.apply_to_all_classes;
-        }
-        if (limitationsDraft.limits_by_key && typeof limitationsDraft.limits_by_key === 'object') {
-            limitsByKey.value = limitationsDraft.limits_by_key;
-        }
-        if (limitationsDraft.subject_limits_by_id && typeof limitationsDraft.subject_limits_by_id === 'object') {
-            subjectLimitsById.value = limitationsDraft.subject_limits_by_id;
-        }
-        if (limitationsDraft.subject_double_by_id && typeof limitationsDraft.subject_double_by_id === 'object') {
-            subjectDoubleById.value = limitationsDraft.subject_double_by_id;
-        }
-        if (limitationsDraft.subject_morning_single_by_id && typeof limitationsDraft.subject_morning_single_by_id === 'object') {
-            subjectMorningSingleById.value = limitationsDraft.subject_morning_single_by_id;
-        }
-        if (limitationsDraft.subject_morning_double_by_id && typeof limitationsDraft.subject_morning_double_by_id === 'object') {
-            subjectMorningDoubleById.value = limitationsDraft.subject_morning_double_by_id;
-        }
-        if (limitationsDraft.subject_afternoon_single_by_id && typeof limitationsDraft.subject_afternoon_single_by_id === 'object') {
-            subjectAfternoonSingleById.value = limitationsDraft.subject_afternoon_single_by_id;
-        }
-        if (limitationsDraft.subject_afternoon_double_by_id && typeof limitationsDraft.subject_afternoon_double_by_id === 'object') {
-            subjectAfternoonDoubleById.value = limitationsDraft.subject_afternoon_double_by_id;
-        }
-    }
 
     if (props.timetable?.schedule_json) {
         schedule.value = normalizeSchedule(props.timetable.schedule_json);
