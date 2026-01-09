@@ -2306,7 +2306,7 @@ const wouldCauseTeacherClash = (targetDay, targetSlotIndex, targetRowIndex, subj
     if (!code) return false;
 
     const targetRow = schedule.value?.[day]?.[Number(targetRowIndex)];
-    const targetClassId = Number(targetRow?.school_class_id || targetRow?.id || targetRow?.class_id || targetRow?.classId || targetRow?.schoolClassId || 0) || null;
+    const targetClassId = Number(targetRow?.school_class_id || targetRow?.id || targetRow?.class_id || 0) || null;
     const picked = pickTeacherInitialForSlot(targetClassId, code, day, slotIndex);
     const parts = String(picked || '').split('/').map((s) => s.trim()).filter(Boolean);
     if (!parts.length) return false;
@@ -2319,7 +2319,7 @@ const wouldCauseTeacherClash = (targetDay, targetSlotIndex, targetRowIndex, subj
         const otherCode = cell?.subject ? String(cell.subject) : '';
         if (!otherCode) continue;
 
-        const otherClassId = Number(row?.school_class_id || row?.id || row?.class_id || row?.classId || row?.schoolClassId || 0) || null;
+        const otherClassId = Number(row?.school_class_id || row?.id || row?.class_id || 0) || null;
         const otherPicked = pickTeacherInitialForSlot(otherClassId, otherCode, day, slotIndex);
         const otherParts = String(otherPicked || '').split('/').map((s) => s.trim()).filter(Boolean);
         if (!otherParts.length) continue;
@@ -2342,7 +2342,7 @@ const assignSubjectToCell = (day, rowIndex, slotIndex, subjectCode) => {
     const row = schedule.value?.[d]?.[r];
     if (!row) return false;
 
-    const classId = Number(row?.school_class_id || row?.id || row?.class_id || row?.classId || row?.schoolClassId || 0) || null;
+    const classId = Number(row?.school_class_id || row?.id || row?.class_id || 0) || null;
     if (code && !isSubjectAllowedInSlot(classId, code, s)) return false;
     if (code && wouldCauseTeacherClash(d, s, r, code)) return false;
 
@@ -2397,45 +2397,6 @@ const onDrop = (day, rowIndex, slotIndex) => {
     saveScheduleToStorage();
 
     draggedCell.value = null;
-};
-
-const buildRenderableSlots = (day, slots, startIndex, count) => {
-    const out = [];
-    const arr = Array.isArray(slots) ? slots : [];
-    const d = String(day || '');
-    const start = Number(startIndex || 0);
-    const n = Number(count || 0);
-    for (let i = 0; i < n; i += 1) {
-        const slotIdx = start + i;
-        const slot = arr[slotIdx] || null;
-        const next = arr[slotIdx + 1] || null;
-        const isDouble = !!(
-            slot?.subject
-            && next?.subject
-            && String(next.subject) === String(slot.subject)
-            && isTeachableLessonSlot(d, slotIdx)
-            && isTeachableLessonSlot(d, slotIdx + 1)
-        );
-
-        if (i > 0) {
-            const prev = arr[slotIdx - 1] || null;
-            if (prev?.subject && slot?.subject && String(prev.subject) === String(slot.subject)) {
-                continue;
-            }
-        }
-
-        out.push({
-            slotIndex: slotIdx,
-            slot,
-            colspan: isDouble ? 2 : 1,
-            isDouble,
-        });
-
-        if (isDouble) {
-            i += 1;
-        }
-    }
-    return out;
 };
 
 </script>
@@ -2765,29 +2726,25 @@ const buildRenderableSlots = (day, slots, startIndex, count) => {
 
                                         <!-- 4 slots before first break (08:00-08:40, 08:40-09:20, 09:20-10:00, 10:00-10:40) - normal lessons for all days -->
                                         <td
-                                            v-for="cell in buildRenderableSlots(day, row.slots, 0, 4)"
-                                            :key="`am-${cell.slotIndex}`"
-                                            :colspan="cell.colspan"
-                                            :class="[
-                                                'border border-slate-300 px-1 py-1 text-center',
-                                                cell.isDouble ? 'bg-emerald-100' : 'bg-emerald-50',
-                                            ]"
-                                            :draggable="isDraggableSlot(day, cell.slotIndex)"
-                                            @dragstart="isDraggableSlot(day, cell.slotIndex) && onDragStart(day, originalIndex, cell.slotIndex)"
+                                            v-for="(slot, index) in row.slots.slice(0, 4)"
+                                            :key="`am-${index}`"
+                                            class="border border-slate-300 bg-emerald-50 px-1 py-1 text-center"
+                                            :draggable="isDraggableSlot(day, index)"
+                                            @dragstart="isDraggableSlot(day, index) && onDragStart(day, originalIndex, index)"
                                             @dragover.prevent
-                                            @drop="isDraggableSlot(day, cell.slotIndex) && onDrop(day, originalIndex, cell.slotIndex)"
+                                            @drop="isDraggableSlot(day, index) && onDrop(day, originalIndex, index)"
                                         >
-                                            <template v-if="cell.slot && cell.slot.subject">
-                                                <div class="flex items-center justify-center gap-1">
-                                                    <span>{{ cell.slot.subject }}</span>
+                                            <template v-if="slot && slot.subject">
+                                                <div>
+                                                    {{ slot.subject }}
                                                     <span
-                                                        v-if="cell.isDouble"
-                                                        class="rounded bg-emerald-600 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white"
+                                                        v-if="row.slots[index + 1]?.subject && row.slots[index + 1].subject === slot.subject"
+                                                        class="ml-1 rounded bg-emerald-200 px-1 text-[8px] font-bold text-emerald-900"
                                                     >
-                                                        Double
+                                                        D
                                                     </span>
                                                 </div>
-                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ cell.slot.teacher }}</div>
+                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
                                             </template>
                                             <template v-else>
                                                 <div>&nbsp;</div>
@@ -2802,33 +2759,29 @@ const buildRenderableSlots = (day, slots, startIndex, count) => {
                                         <!-- 3 slots between breaks (11:05-11:45, 11:45-12:25, 12:25-01:05)
                                              - normal lessons, except Friday last slot is MEWAKA -->
                                         <td
-                                            v-for="cell in buildRenderableSlots(day, row.slots, 4, 3)"
-                                            :key="`mid-${cell.slotIndex}`"
-                                            :colspan="cell.colspan"
-                                            :class="[
-                                                'border border-slate-300 px-1 py-1 text-center',
-                                                cell.isDouble ? 'bg-indigo-100' : 'bg-indigo-50',
-                                            ]"
-                                            :draggable="isDraggableSlot(day, cell.slotIndex)"
-                                            @dragstart="isDraggableSlot(day, cell.slotIndex) && onDragStart(day, originalIndex, cell.slotIndex)"
+                                            v-for="(slot, index) in row.slots.slice(4, 7)"
+                                            :key="`mid-${index}`"
+                                            class="border border-slate-300 bg-indigo-50 px-1 py-1 text-center"
+                                            :draggable="isDraggableSlot(day, 4 + index)"
+                                            @dragstart="isDraggableSlot(day, 4 + index) && onDragStart(day, originalIndex, 4 + index)"
                                             @dragover.prevent
-                                            @drop="isDraggableSlot(day, cell.slotIndex) && onDrop(day, originalIndex, cell.slotIndex)"
+                                            @drop="isDraggableSlot(day, 4 + index) && onDrop(day, originalIndex, 4 + index)"
                                         >
-                                            <template v-if="day === 'FRIDAY' && cell.slotIndex === 6">
+                                            <template v-if="day === 'FRIDAY' && index === 2">
                                                 <div class="font-semibold text-orange-700">MEWAKA</div>
                                             </template>
                                             <template v-else>
-                                                <template v-if="cell.slot && cell.slot.subject">
-                                                    <div class="flex items-center justify-center gap-1">
-                                                        <span>{{ cell.slot.subject }}</span>
+                                                <template v-if="slot && slot.subject">
+                                                    <div>
+                                                        {{ slot.subject }}
                                                         <span
-                                                            v-if="cell.isDouble"
-                                                            class="rounded bg-indigo-600 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white"
+                                                            v-if="row.slots[4 + index + 1]?.subject && row.slots[4 + index + 1].subject === slot.subject"
+                                                            class="ml-1 rounded bg-indigo-200 px-1 text-[8px] font-bold text-indigo-900"
                                                         >
-                                                            Double
+                                                            D
                                                         </span>
                                                     </div>
-                                                    <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ cell.slot.teacher }}</div>
+                                                    <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
                                                 </template>
                                                 <template v-else>
                                                     <div>&nbsp;</div>
@@ -2842,61 +2795,51 @@ const buildRenderableSlots = (day, slots, startIndex, count) => {
                                         </td>
 
                                         <!-- 2 slots after second break (01:20-02:00, 02:00-02:40) -->
-                                        <template v-if="['WEDNESDAY', 'THURSDAY', 'FRIDAY'].includes(day)">
-                                            <td
-                                                v-for="(slot, index) in row.slots.slice(7, 9)"
-                                                :key="`pm-fixed-${index}`"
-                                                :class="[
-                                                    'border border-slate-300 px-1 py-1 text-center',
-                                                    day === 'WEDNESDAY'
-                                                        ? 'bg-amber-100 text-[9px] font-semibold text-amber-900'
-                                                        : day === 'THURSDAY'
-                                                            ? 'bg-amber-200 text-[9px] font-semibold text-amber-900'
-                                                            : 'bg-lime-300 text-[9px] font-semibold text-lime-900',
-                                                ]"
-                                            >
-                                                <template v-if="day === 'WEDNESDAY'">
-                                                    <div>RELIGION</div>
-                                                </template>
-                                                <template v-else-if="day === 'THURSDAY'">
-                                                    <div>DEBATE OR CLUBS</div>
-                                                </template>
-                                                <template v-else>
-                                                    <div>SPORTS AND GAMES</div>
-                                                </template>
-                                            </td>
-                                        </template>
-                                        <template v-else>
-                                            <td
-                                                v-for="cell in buildRenderableSlots(day, row.slots, 7, 2)"
-                                                :key="`pm-${cell.slotIndex}`"
-                                                :colspan="cell.colspan"
-                                                :class="[
-                                                    'border border-slate-300 px-1 py-1 text-center',
-                                                    cell.isDouble ? 'bg-indigo-100' : 'bg-indigo-50',
-                                                ]"
-                                                :draggable="isDraggableSlot(day, cell.slotIndex)"
-                                                @dragstart="isDraggableSlot(day, cell.slotIndex) && onDragStart(day, originalIndex, cell.slotIndex)"
-                                                @dragover.prevent
-                                                @drop="isDraggableSlot(day, cell.slotIndex) && onDrop(day, originalIndex, cell.slotIndex)"
-                                            >
-                                                <template v-if="cell.slot && cell.slot.subject">
-                                                    <div class="flex items-center justify-center gap-1">
-                                                        <span>{{ cell.slot.subject }}</span>
+                                        <td
+                                            v-for="(slot, index) in row.slots.slice(7, 9)"
+                                            :key="`pm-${index}`"
+                                            :class="[
+                                                'border border-slate-300 px-1 py-1 text-center',
+                                                day === 'WEDNESDAY'
+                                                    ? 'bg-amber-100 text-[9px] font-semibold text-amber-900'
+                                                    : day === 'THURSDAY'
+                                                        ? 'bg-amber-200 text-[9px] font-semibold text-amber-900'
+                                                        : day === 'FRIDAY'
+                                                            ? 'bg-lime-300 text-[9px] font-semibold text-lime-900'
+                                                            : 'bg-indigo-50',
+                                            ]"
+                                            :draggable="isDraggableSlot(day, 7 + index)"
+                                            @dragstart="isDraggableSlot(day, 7 + index) && onDragStart(day, originalIndex, 7 + index)"
+                                            @dragover.prevent
+                                            @drop="isDraggableSlot(day, 7 + index) && onDrop(day, originalIndex, 7 + index)"
+                                        >
+                                            <template v-if="day === 'WEDNESDAY'">
+                                                <div>RELIGION</div>
+                                            </template>
+                                            <template v-else-if="day === 'THURSDAY'">
+                                                <div>DEBATE OR CLUBS</div>
+                                            </template>
+                                            <template v-else-if="day === 'FRIDAY'">
+                                                <div>SPORTS AND GAMES</div>
+                                            </template>
+                                            <template v-else>
+                                                <template v-if="slot && slot.subject">
+                                                    <div>
+                                                        {{ slot.subject }}
                                                         <span
-                                                            v-if="cell.isDouble"
-                                                            class="rounded bg-indigo-600 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white"
+                                                            v-if="row.slots[7 + index + 1]?.subject && row.slots[7 + index + 1].subject === slot.subject"
+                                                            class="ml-1 rounded bg-slate-200 px-1 text-[8px] font-bold text-slate-900"
                                                         >
-                                                            Double
+                                                            D
                                                         </span>
                                                     </div>
-                                                    <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ cell.slot.teacher }}</div>
+                                                    <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
                                                 </template>
                                                 <template v-else>
                                                     <div class="font-semibold text-gray-400">PS</div>
                                                 </template>
-                                            </td>
-                                        </template>
+                                            </template>
+                                        </td>
 
                                         <!-- REMEDIAL column -->
                                         <td class="border border-slate-300 bg-emerald-200 px-1 py-1 text-center font-semibold text-emerald-900">

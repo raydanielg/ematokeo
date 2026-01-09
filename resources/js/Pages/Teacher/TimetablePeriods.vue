@@ -36,9 +36,6 @@ const slotTimeLabel = (idx) => {
     return map[idx] || `Slot ${idx + 1}`;
 };
 
-const days = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'];
-const slotIndices = [0, 1, 2, 3, 4, 5, 6, 7, 8];
-
 const sortedPeriods = computed(() => {
     const list = Array.isArray(props.periods) ? [...props.periods] : [];
     const dayOrder = { MONDAY: 1, TUESDAY: 2, WEDNESDAY: 3, THURSDAY: 4, FRIDAY: 5 };
@@ -48,41 +45,14 @@ const sortedPeriods = computed(() => {
         const db = dayOrder[String(b.day || '').toUpperCase()] || 99;
         if (da !== db) return da - db;
 
-        const sa = Number(a.slot_index || 0);
-        const sb = Number(b.slot_index || 0);
-        if (sa !== sb) return sa - sb;
-
         const ca = String(a.class_label || '').localeCompare(String(b.class_label || ''));
         if (ca !== 0) return ca;
 
-        const streamCmp = String(a.stream || '').localeCompare(String(b.stream || ''));
-        if (streamCmp !== 0) return streamCmp;
+        const sa = String(a.stream || '').localeCompare(String(b.stream || ''));
+        if (sa !== 0) return sa;
 
         return Number(a.slot_index || 0) - Number(b.slot_index || 0);
     });
-});
-
-const periodsByDaySlot = computed(() => {
-    const out = {};
-    days.forEach((d) => {
-        out[d] = {};
-    });
-
-    (Array.isArray(props.periods) ? props.periods : []).forEach((p) => {
-        const day = String(p?.day || '').toUpperCase();
-        const slot = Number(p?.slot_index);
-        if (!days.includes(day)) return;
-        if (!Number.isFinite(slot)) return;
-
-        if (!out[day][slot]) out[day][slot] = [];
-        out[day][slot].push({
-            subject: p?.subject || '',
-            class_label: p?.class_label || '',
-            stream: p?.stream || '',
-        });
-    });
-
-    return out;
 });
 </script>
 
@@ -114,55 +84,6 @@ const periodsByDaySlot = computed(() => {
                 <div class="text-sm font-semibold text-gray-800">Summary</div>
                 <div class="mt-1 text-sm text-gray-600">
                     Total periods found: <span class="font-semibold text-gray-800">{{ count }}</span>
-                </div>
-            </div>
-
-            <div class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-100">
-                <div class="border-b border-gray-100 px-5 py-3">
-                    <div class="text-sm font-semibold text-gray-800">Weekly Preview</div>
-                    <div class="mt-1 text-xs text-gray-500">Showing only your periods (by initials) grouped by day and time.</div>
-                </div>
-
-                <div class="overflow-x-auto">
-                    <table class="min-w-full divide-y divide-gray-100 text-left text-xs">
-                        <thead class="bg-gray-50">
-                            <tr>
-                                <th class="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-600">Day</th>
-                                <th
-                                    v-for="i in slotIndices"
-                                    :key="`hdr-${i}`"
-                                    class="min-w-[140px] px-3 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-600"
-                                >
-                                    {{ slotTimeLabel(i) }}
-                                </th>
-                            </tr>
-                        </thead>
-
-                        <tbody class="divide-y divide-gray-100">
-                            <tr v-for="d in days" :key="d" class="align-top hover:bg-gray-50">
-                                <td class="whitespace-nowrap px-4 py-3 text-[11px] font-semibold text-gray-900">{{ d }}</td>
-                                <td
-                                    v-for="i in slotIndices"
-                                    :key="`${d}-${i}`"
-                                    class="px-3 py-2"
-                                >
-                                    <div v-if="periodsByDaySlot?.[d]?.[i]?.length" class="space-y-1">
-                                        <div
-                                            v-for="(p, idx) in periodsByDaySlot[d][i]"
-                                            :key="`${d}-${i}-${idx}`"
-                                            class="rounded-md bg-emerald-50 px-2 py-1 ring-1 ring-emerald-100"
-                                        >
-                                            <div class="text-[11px] font-semibold text-emerald-900">{{ p.subject }}</div>
-                                            <div class="text-[10px] font-semibold text-gray-700">
-                                                {{ p.class_label }}<span v-if="p.stream"> · {{ p.stream }}</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div v-else class="text-[10px] text-gray-300">—</div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
                 </div>
             </div>
 
