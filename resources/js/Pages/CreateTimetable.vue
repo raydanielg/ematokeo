@@ -778,23 +778,73 @@ const regenerateSampleTimetable = () => {
 
 const getFilteredRows = (day) => {
     const rows = schedule.value?.[String(day)] || [];
-    return (rows || []).map((row, originalIndex) => ({ row, originalIndex }));
+    const classFilter = String(selectedClass.value || 'ALL').toUpperCase().trim();
+    const streamFilter = String(selectedStream.value || 'ALL').toUpperCase().trim();
+    const classFilterId = classFilter !== 'ALL' && /^\d+$/.test(classFilter) ? Number(classFilter) : null;
+
+    const filtered = (rows || []).filter((row) => {
+        if (!row) return false;
+
+        if (classFilter !== 'ALL') {
+            if (classFilterId !== null) {
+                const rid = row?.school_class_id ? Number(row.school_class_id) : null;
+                if (rid !== classFilterId) return false;
+            } else {
+                const label = String(row.class_label || row.form || row.class_name || '').toUpperCase().trim();
+                if (!label) return false;
+                if (label !== classFilter && !label.startsWith(`${classFilter} `)) {
+                    return false;
+                }
+            }
+        }
+
+        if (streamFilter !== 'ALL') {
+            const stream = String(row.stream || '').toUpperCase().trim();
+            if (stream !== streamFilter) return false;
+        }
+
+        return true;
+    });
+
+    return filtered.map((row, originalIndex) => ({ row, originalIndex }));
 };
 
 const getGroupedRows = (day) => {
     const rows = getFilteredRows(day);
     const groups = new Map();
 
+    const classInfoById = new Map();
+    (timetableClasses.value || []).forEach((c) => {
+        const id = c?.id ? Number(c.id) : null;
+        if (!id) return;
+        const label = String(getClassLabel(c) || '').trim();
+        const order = getFormOrder(c);
+        classInfoById.set(id, {
+            id,
+            label,
+            order: Number.isFinite(order) ? order : Number.POSITIVE_INFINITY,
+        });
+    });
+
     (rows || []).forEach((item) => {
         const row = item?.row || {};
+        const classId = row?.school_class_id ? Number(row.school_class_id) : null;
         const label = String(row.class_label || row.form || row.class_name || '').trim() || 'CLASS';
-        if (!groups.has(label)) {
-            groups.set(label, { key: label, label, rows: [] });
+        const key = classId ? String(classId) : label;
+        const info = classId ? classInfoById.get(classId) : null;
+        if (!groups.has(key)) {
+            groups.set(key, {
+                key,
+                label: info?.label || label,
+                order: info?.order ?? Number.POSITIVE_INFINITY,
+                rows: [],
+            });
         }
-        groups.get(label).rows.push(item);
+        groups.get(key).rows.push(item);
     });
 
     const out = Array.from(groups.values());
+
     out.forEach((g) => {
         g.rows.sort((a, b) => {
             const sa = String(a?.row?.stream || '').toUpperCase();
@@ -803,8 +853,13 @@ const getGroupedRows = (day) => {
         });
     });
 
-    // Keep stable order by label
-    out.sort((a, b) => String(a.label || '').localeCompare(String(b.label || '')));
+    // Keep stable order by form (I->IV) then label
+    out.sort((a, b) => {
+        const ao = Number.isFinite(a.order) ? a.order : Number.POSITIVE_INFINITY;
+        const bo = Number.isFinite(b.order) ? b.order : Number.POSITIVE_INFINITY;
+        if (ao !== bo) return ao - bo;
+        return String(a.label || '').localeCompare(String(b.label || ''));
+    });
     return out;
 };
 
