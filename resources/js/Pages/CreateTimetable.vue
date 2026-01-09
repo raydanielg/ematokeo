@@ -2027,8 +2027,8 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             @dragover.prevent
                                             @drop="isDraggableSlot(day, index) && onDrop(day, originalIndex, index)"
                                         >
-                                            <div>{{ slot.subject }}</div>
-                                            <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
+                                            <div>{{ slot?.subject || '' }}</div>
+                                            <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot?.teacher || '' }}</div>
                                         </td>
 
                                         <!-- First BREAK column (10:40-11:05) -->
@@ -2051,8 +2051,8 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                                 <div class="font-semibold text-orange-700">MEWAKA</div>
                                             </template>
                                             <template v-else>
-                                                <div>{{ slot.subject }}</div>
-                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
+                                                <div>{{ slot?.subject || '' }}</div>
+                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot?.teacher || '' }}</div>
                                             </template>
                                         </td>
 
@@ -2090,8 +2090,8 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                                 <div>SPORTS AND GAMES</div>
                                             </template>
                                             <template v-else>
-                                                <div>{{ slot.subject }}</div>
-                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
+                                                <div>{{ slot?.subject || '' }}</div>
+                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot?.teacher || '' }}</div>
                                             </template>
                                         </td>
 
