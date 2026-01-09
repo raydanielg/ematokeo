@@ -782,13 +782,22 @@ const getFilteredRows = (day) => {
     const streamFilter = String(selectedStream.value || 'ALL').toUpperCase().trim();
     const classFilterId = classFilter !== 'ALL' && /^\d+$/.test(classFilter) ? Number(classFilter) : null;
 
+    const baseIdByClassId = new Map();
+    (Array.isArray(props.classes) ? props.classes : []).forEach((c) => {
+        if (!c?.id) return;
+        const id = Number(c.id);
+        const baseId = c?.parent_class_id ? Number(c.parent_class_id) : id;
+        baseIdByClassId.set(id, baseId);
+    });
+
     const filtered = (rows || []).filter((row) => {
         if (!row) return false;
 
         if (classFilter !== 'ALL') {
             if (classFilterId !== null) {
                 const rid = row?.school_class_id ? Number(row.school_class_id) : null;
-                if (rid !== classFilterId) return false;
+                const baseId = rid ? (baseIdByClassId.get(rid) ?? rid) : null;
+                if (baseId !== classFilterId) return false;
             } else {
                 const label = String(row.class_label || row.form || row.class_name || '').toUpperCase().trim();
                 if (!label) return false;
@@ -814,24 +823,36 @@ const getGroupedRows = (day) => {
     const groups = new Map();
 
     const classInfoById = new Map();
+    const baseIdByClassId = new Map();
+    (Array.isArray(props.classes) ? props.classes : []).forEach((c) => {
+        if (!c?.id) return;
+        const id = Number(c.id);
+        const baseId = c?.parent_class_id ? Number(c.parent_class_id) : id;
+        baseIdByClassId.set(id, baseId);
+    });
+
     (timetableClasses.value || []).forEach((c) => {
         const id = c?.id ? Number(c.id) : null;
         if (!id) return;
-        const label = String(getClassLabel(c) || '').trim();
-        const order = getFormOrder(c);
-        classInfoById.set(id, {
-            id,
-            label,
-            order: Number.isFinite(order) ? order : Number.POSITIVE_INFINITY,
-        });
+        const baseId = c?.parent_class_id ? Number(c.parent_class_id) : id;
+        const label = String(getClassLabel({ ...c, id: baseId }) || '').trim();
+        const order = getFormOrder({ ...c, id: baseId });
+        if (!classInfoById.has(baseId)) {
+            classInfoById.set(baseId, {
+                id: baseId,
+                label,
+                order: Number.isFinite(order) ? order : Number.POSITIVE_INFINITY,
+            });
+        }
     });
 
     (rows || []).forEach((item) => {
         const row = item?.row || {};
         const classId = row?.school_class_id ? Number(row.school_class_id) : null;
+        const baseId = classId ? (baseIdByClassId.get(classId) ?? classId) : null;
         const label = String(row.class_label || row.form || row.class_name || '').trim() || 'CLASS';
-        const key = classId ? String(classId) : label;
-        const info = classId ? classInfoById.get(classId) : null;
+        const key = baseId ? String(baseId) : label;
+        const info = baseId ? classInfoById.get(baseId) : null;
         if (!groups.has(key)) {
             groups.set(key, {
                 key,
