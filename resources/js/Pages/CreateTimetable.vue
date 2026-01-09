@@ -185,13 +185,40 @@ const levelToForm = (value) => {
 
     const upper = s.toUpperCase();
 
+    const wordToNum = {
+        ONE: 1,
+        TWO: 2,
+        THREE: 3,
+        FOUR: 4,
+        FIVE: 5,
+        SIX: 6,
+        SEVEN: 7,
+    };
+
+    if (wordToNum[upper] && map[wordToNum[upper]]) {
+        return map[wordToNum[upper]];
+    }
+
+    const wordMatch = upper.match(/\b(ONE|TWO|THREE|FOUR|FIVE|SIX|SEVEN)\b/);
+    if (wordMatch) {
+        const tokenNum = wordToNum[wordMatch[1]];
+        if (tokenNum && map[tokenNum]) {
+            return map[tokenNum];
+        }
+    }
+
     if (/^[IVXLCDM]+$/.test(upper)) {
         return upper;
     }
 
-    const match = upper.match(/\b(?:FORM|CLASS|STD|STANDARD)\s*([IVXLCDM]+|\d+)\b/);
+    const match = upper.match(/\b(?:FORM|CLASS|STD|STANDARD)\s*(ONE|TWO|THREE|FOUR|FIVE|SIX|SEVEN|[IVXLCDM]+|\d+)\b/);
     if (match) {
         const token = match[1];
+        const wordNum = wordToNum[token];
+        if (wordNum && map[wordNum]) {
+            return map[wordNum];
+        }
+
         const tokenNum = Number(token);
         if (!Number.isNaN(tokenNum) && map[tokenNum]) {
             return map[tokenNum];
@@ -783,11 +810,15 @@ const getFilteredRows = (day) => {
     const classFilterId = classFilter !== 'ALL' && /^\d+$/.test(classFilter) ? Number(classFilter) : null;
 
     const baseIdByClassId = new Map();
+    const baseClassById = new Map();
     (Array.isArray(props.classes) ? props.classes : []).forEach((c) => {
         if (!c?.id) return;
         const id = Number(c.id);
         const baseId = c?.parent_class_id ? Number(c.parent_class_id) : id;
         baseIdByClassId.set(id, baseId);
+        if (!c?.parent_class_id) {
+            baseClassById.set(id, c);
+        }
     });
 
     const filtered = (rows || []).filter((row) => {
@@ -799,11 +830,15 @@ const getFilteredRows = (day) => {
                 const baseId = rid ? (baseIdByClassId.get(rid) ?? rid) : null;
                 if (baseId !== classFilterId) return false;
             } else {
-                const label = String(row.class_label || row.form || row.class_name || '').toUpperCase().trim();
+                const rid = row?.school_class_id ? Number(row.school_class_id) : null;
+                const baseId = rid ? (baseIdByClassId.get(rid) ?? rid) : null;
+                const baseClass = baseId ? (baseClassById.get(baseId) || null) : null;
+                const baseLabel = baseClass ? String(getClassLabel(baseClass) || '').toUpperCase().trim() : '';
+                const rowLabel = String(row.class_label || row.form || row.class_name || '').toUpperCase().trim();
+                const label = baseLabel || rowLabel;
+
                 if (!label) return false;
-                if (label !== classFilter && !label.startsWith(`${classFilter} `)) {
-                    return false;
-                }
+                if (label !== classFilter) return false;
             }
         }
 
@@ -824,19 +859,26 @@ const getGroupedRows = (day) => {
 
     const classInfoById = new Map();
     const baseIdByClassId = new Map();
+    const baseClassById = new Map();
     (Array.isArray(props.classes) ? props.classes : []).forEach((c) => {
         if (!c?.id) return;
         const id = Number(c.id);
         const baseId = c?.parent_class_id ? Number(c.parent_class_id) : id;
         baseIdByClassId.set(id, baseId);
+        if (!c?.parent_class_id) {
+            baseClassById.set(id, c);
+        }
     });
 
     (timetableClasses.value || []).forEach((c) => {
         const id = c?.id ? Number(c.id) : null;
         if (!id) return;
         const baseId = c?.parent_class_id ? Number(c.parent_class_id) : id;
-        const label = String(getClassLabel({ ...c, id: baseId }) || '').trim();
-        const order = getFormOrder({ ...c, id: baseId });
+        const baseClass = baseClassById.get(baseId) || c;
+        const label = String(getClassLabel(baseClass) || '').trim();
+        // If your base class IDs are already in the desired order (e.g. 1..4), prefer that.
+        const inferred = Number(baseId);
+        const order = Number.isFinite(inferred) ? inferred : getFormOrder(baseClass);
         if (!classInfoById.has(baseId)) {
             classInfoById.set(baseId, {
                 id: baseId,
