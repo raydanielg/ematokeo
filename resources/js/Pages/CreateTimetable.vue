@@ -888,12 +888,12 @@ const generateSampleTimetable = () => {
             if (!subject) return false;
             const leftAllowed = slotIndex > 0 && ![4, 7].includes(slotIndex);
             const rightAllowed = slotIndex < 8 && ![3, 6].includes(slotIndex);
-
+            
             const left = leftAllowed ? rowByDay[day].slots[slotIndex - 1] : null;
             const right = rightAllowed ? rowByDay[day].slots[slotIndex + 1] : null;
-            const leftSubject = left?.subject ? String(left.subject) : '';
-            const rightSubject = right?.subject ? String(right.subject) : '';
-            const code = String(subject);
+            const leftSubject = left?.subject ? String(left.subject).trim().toUpperCase() : '';
+            const rightSubject = right?.subject ? String(right.subject).trim().toUpperCase() : '';
+            const code = String(subject).trim().toUpperCase();
 
             return (leftSubject && leftSubject === code) || (rightSubject && rightSubject === code);
         };
@@ -902,6 +902,7 @@ const generateSampleTimetable = () => {
             const existing = rowByDay[day]?.slots?.[slotIndex];
             const busy = existing?._busy;
             const busySet = teacherBusy[String(day)]?.[Number(slotIndex)];
+
             if (busySet && Array.isArray(busy)) {
                 busy.forEach((t) => busySet.delete(t));
             }
@@ -914,7 +915,7 @@ const generateSampleTimetable = () => {
                 busy.forEach((t) => teacherDaySet.delete(t));
             }
 
-            const subject = existing?.subject ? String(existing.subject) : '';
+            const subject = existing?.subject ? String(existing.subject).trim().toUpperCase() : '';
             if (subject) {
                 const counts = subjectCountByDay[String(day)] || {};
                 if (counts[subject]) {
@@ -928,7 +929,7 @@ const generateSampleTimetable = () => {
         const setSlot = (day, slotIndex, subject) => {
             if (!subject) return false;
 
-            const subjectCode = String(subject);
+            const subjectCode = String(subject).trim().toUpperCase();
             const counts = subjectCountByDay[String(day)] || {};
             const alreadyToday = Number(counts[subjectCode] || 0) > 0;
 
@@ -939,7 +940,7 @@ const generateSampleTimetable = () => {
                 return false;
             }
 
-            const picked = chooseTeacherForSlot(classId, subject, day, slotIndex);
+            const picked = chooseTeacherForSlot(classId, subjectCode, day, slotIndex);
             if (!picked.ok) return false;
 
             // Prevent the same teacher from appearing multiple times in the same class/day.
@@ -958,8 +959,8 @@ const generateSampleTimetable = () => {
                     const left = leftAllowed ? rowByDay[day].slots[slotIndex - 1] : null;
                     const right = rightAllowed ? rowByDay[day].slots[slotIndex + 1] : null;
 
-                    const neighbor = (left?.subject && String(left.subject) === subjectCode) ? left
-                        : ((right?.subject && String(right.subject) === subjectCode) ? right : null);
+                    const neighbor = (left?.subject && String(left.subject).trim().toUpperCase() === subjectCode) ? left
+                        : ((right?.subject && String(right.subject).trim().toUpperCase() === subjectCode) ? right : null);
 
                     const neighborBusy = Array.isArray(neighbor?._busy) ? neighbor._busy : [];
                     const sameBusy = Array.isArray(picked.busyList)
@@ -971,11 +972,11 @@ const generateSampleTimetable = () => {
                 }
             }
 
-            const teacherInitials = picked.teacher || (classHasTeacherAssignments(classId) ? '' : (teachers[subject] || ''));
+            const teacherInitials = picked.teacher || (classHasTeacherAssignments(classId) ? '' : (teachers[subjectCode] || ''));
             const teacherName = teacherInitials;
 
             rowByDay[day].slots[slotIndex] = {
-                subject,
+                subject: subjectCode,
                 teacher: teacherInitials,
                 teacher_initials: teacherInitials,
                 teacher_name: teacherName,
@@ -1034,9 +1035,12 @@ const generateSampleTimetable = () => {
         const tryPlaceDoubleInSession = (code, session) => {
             const candidates = [];
             const startSlots = session === 'morning' ? [0, 1, 2] : [7];
+            const normCode = String(code || '').trim().toUpperCase();
 
             for (let d = 0; d < days.length; d += 1) {
                 const day = days[d];
+                // Spread doubles across different days for the same subject.
+                if (subjectCountByDay[String(day)]?.[normCode]) continue;
                 for (let s = 0; s < startSlots.length; s += 1) {
                     const i = startSlots[s];
                     if (!canBeDoubleStartInSession(i, session)) continue;
@@ -1164,6 +1168,7 @@ const generateSampleTimetable = () => {
             if (!remainingNeeded[String(code)] || remainingNeeded[String(code)] < 2) return false;
 
             const candidates = [];
+            const normCode = String(code || '').trim().toUpperCase();
             
             // Prioritize morning slots for ENG and B/MAT
             const subjectUpper = String(code).toUpperCase();
@@ -1171,6 +1176,8 @@ const generateSampleTimetable = () => {
             
             for (let d = 0; d < days.length; d += 1) {
                 const day = days[d];
+                // Spread doubles across different days for the same subject.
+                if (subjectCountByDay[String(day)]?.[normCode]) continue;
                 for (let i = 0; i < 8; i += 1) {
                     if (!canBeDoubleStart(i)) continue;
                     if (!isTeachableLessonSlot(day, i) || !isTeachableLessonSlot(day, i + 1)) continue;
