@@ -848,12 +848,8 @@ const generateSampleTimetable = () => {
                 const isBusiness = subjectUpper === 'BUS';
                 const isPhysics = subjectUpper === 'PHY';
 
-                // Base weekly totals (Option: ENG/B-MAT double3+single1, others unchanged)
-                const targetWeeklyPeriods = isEngOrMath
-                    ? 7
-                    : (isCs || isBusiness || isPhysics)
-                        ? 5
-                        : 3;
+                // Base weekly totals: ENG/B-MAT double3+single1 (7/week), all other subjects double1+single1 (3/week)
+                const targetWeeklyPeriods = isEngOrMath ? 7 : 3;
 
                 // Load desired weekly periods (defaults -> DB value)
                 const def = defaultsByCode?.[String(code)] ?? null;
@@ -900,16 +896,6 @@ const generateSampleTimetable = () => {
                     if (eff >= 7) {
                         requiredDoubleCountByCode[String(code)] = 3;
                         maxDoubleCountByCode[String(code)] = 3;
-                    }
-                } else if (isPhysics) {
-                    if (eff >= 5) {
-                        requiredDoubleCountByCode[String(code)] = 2;
-                        maxDoubleCountByCode[String(code)] = 2;
-                    }
-                } else if (isCs || isBusiness) {
-                    if (eff >= 5) {
-                        requiredDoubleCountByCode[String(code)] = 2;
-                        maxDoubleCountByCode[String(code)] = 2;
                     }
                 } else {
                     if (eff >= 3) {
