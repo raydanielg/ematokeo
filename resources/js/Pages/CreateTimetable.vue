@@ -942,6 +942,188 @@ const generateSampleTimetable = () => {
 
         const hasQuotas = !!(appliesSubjectLimits && (Object.keys(desiredPeriodsByCode || {}).length > 0 || Object.keys(sessionQuotaByCode || {}).length > 0));
 
+        const subjectCountByDay = {};
+        days.forEach((d) => {
+            subjectCountByDay[String(d)] = {};
+        });
+
+        const placedDoublesByCode = {};
+
+        const remainingNeeded = {};
+        Object.keys(desiredPeriodsByCode || {}).forEach((code) => {
+            const n = Number(desiredPeriodsByCode[String(code)] || 0);
+            if (Number.isFinite(n) && n > 0) remainingNeeded[String(code)] = Math.floor(n);
+        });
+        (classSubjectCodes || []).forEach((code) => {
+            const k = String(code);
+            if (!Object.prototype.hasOwnProperty.call(remainingNeeded, k)) {
+                remainingNeeded[k] = 0;
+            }
+        });
+
+        const bumpDoubleCount = (code) => {
+            const k = String(code);
+            placedDoublesByCode[k] = Number(placedDoublesByCode[k] || 0) + 1;
+        };
+
+        const canBeDoubleStartInSession = (slotIndex, session) => {
+            const i = Number(slotIndex);
+            if (!Number.isFinite(i) || i < 0 || i > 7) return false;
+            if ([3, 6].includes(i)) return false;
+            if (session === 'morning') return [0, 1, 2].includes(i);
+            if (session === 'afternoon') return i === 7;
+            return [4, 5].includes(i);
+        };
+
+        const isEmptyTeachableSlot = (day, slotIndex) => {
+            if (!isTeachableLessonSlot(day, slotIndex)) return false;
+            return rowByDay[day].slots[slotIndex] === null;
+        };
+
+        const applyTeacherBusy = (day, slotIndex, busyList) => {
+            const set = teacherBusy[String(day)]?.[Number(slotIndex)];
+            if (!set || !Array.isArray(busyList)) return;
+            busyList.forEach((t) => {
+                if (t) set.add(String(t));
+            });
+        };
+
+        const clearTeacherBusy = (day, slotIndex, busyList) => {
+            const set = teacherBusy[String(day)]?.[Number(slotIndex)];
+            if (!set || !Array.isArray(busyList)) return;
+            busyList.forEach((t) => {
+                if (t) set.delete(String(t));
+            });
+        };
+
+        const setSlot = (day, slotIndex, subjectCode) => {
+            if (!isTeachableLessonSlot(day, slotIndex)) return false;
+            if (rowByDay[day].slots[slotIndex] !== null) return false;
+            if (classId && !isSubjectAllowedInSlot(classId, subjectCode, slotIndex)) return false;
+
+            const pick = chooseTeacherForSlot(classId, subjectCode, day, slotIndex);
+            if (!pick?.ok) return false;
+
+            rowByDay[day].slots[slotIndex] = {
+                subject: String(subjectCode || ''),
+                teacher: pick.teacher || '',
+                teacher_initials: pick.teacher || '',
+                teacher_name: '',
+            };
+
+            applyTeacherBusy(day, slotIndex, pick.busyList || []);
+
+            const k = String(subjectCode || '').trim().toUpperCase();
+            if (k) {
+                if (!subjectCountByDay[String(day)]) subjectCountByDay[String(day)] = {};
+                subjectCountByDay[String(day)][k] = Number(subjectCountByDay[String(day)][k] || 0) + 1;
+            }
+
+            if (pick.busyList && pick.busyList.length) {
+                pick.busyList.forEach((t) => {
+                    const init = String(t || '').trim();
+                    if (!init) return;
+                    const daysSet = ensureTeacherDaySet(init);
+                    if (daysSet) daysSet.add(String(day));
+                    teacherLastPlacement[init] = { day: String(day), slotIndex: Number(slotIndex), baseClassId: classId };
+                });
+            }
+
+            return true;
+        };
+
+        const clearSlot = (day, slotIndex) => {
+            const current = rowByDay[day].slots[slotIndex];
+            if (!current || !current.subject) {
+                rowByDay[day].slots[slotIndex] = null;
+                return;
+            }
+
+            const code = String(current.subject || '').trim().toUpperCase();
+            const rawTeachers = String(current.teacher_initials || current.teacher || '').trim();
+            const busyList = rawTeachers ? rawTeachers.split('/').map((s) => s.trim()).filter(Boolean) : [];
+            clearTeacherBusy(day, slotIndex, busyList);
+
+            if (code) {
+                const m = subjectCountByDay[String(day)] || {};
+                m[code] = Math.max(0, Number(m[code] || 0) - 1);
+                subjectCountByDay[String(day)] = m;
+            }
+
+            rowByDay[day].slots[slotIndex] = null;
+        };
+
+        const placeForcedNoTeacher = (day, slotIndex, code) => {
+            if (!isTeachableLessonSlot(day, slotIndex)) return false;
+            if (rowByDay[day].slots[slotIndex] !== null) return false;
+            if (classId && !isSubjectAllowedInSlot(classId, code, slotIndex)) return false;
+
+            rowByDay[day].slots[slotIndex] = { subject: String(code || ''), teacher: '', teacher_initials: '', teacher_name: '' };
+            const k = String(code || '').trim().toUpperCase();
+            if (k) {
+                if (!subjectCountByDay[String(day)]) subjectCountByDay[String(day)] = {};
+                subjectCountByDay[String(day)][k] = Number(subjectCountByDay[String(day)][k] || 0) + 1;
+            }
+            return true;
+        };
+
+        const forcedDays = ['MONDAY', 'WEDNESDAY', 'FRIDAY'];
+        const forcedDaySet = new Set(forcedDays);
+        const nonForcedDays = days.filter((d) => !forcedDaySet.has(String(d)));
+
+        const tryForceDouble = (day, startIndex, code) => {
+            if (!isTeachableLessonSlot(day, startIndex) || !isTeachableLessonSlot(day, startIndex + 1)) return false;
+            if (rowByDay[day].slots[startIndex] !== null || rowByDay[day].slots[startIndex + 1] !== null) return false;
+
+            const ok1 = setSlot(day, startIndex, code) || placeForcedNoTeacher(day, startIndex, code);
+            if (!ok1) return false;
+            const ok2 = setSlot(day, startIndex + 1, code) || placeForcedNoTeacher(day, startIndex + 1, code);
+            if (!ok2) {
+                clearSlot(day, startIndex);
+                return false;
+            }
+
+            if (remainingNeeded[String(code)] > 0) {
+                remainingNeeded[String(code)] -= 2;
+                if (remainingNeeded[String(code)] <= 0) delete remainingNeeded[String(code)];
+            }
+            bumpDoubleCount(code);
+            return true;
+        };
+
+        const stream = String(streamLabel || '').toUpperCase().trim();
+        const baseFirst = (stream === 'A' || stream === 'C') ? 'ENG' : (stream === 'B' || stream === 'D') ? 'B/MAT' : 'B/MAT';
+        const baseSecond = baseFirst === 'ENG' ? 'B/MAT' : 'ENG';
+
+        forcedDays.forEach((day, idx) => {
+            const first = (idx % 2 === 0) ? baseFirst : baseSecond;
+            const second = first === 'ENG' ? 'B/MAT' : 'ENG';
+            tryForceDouble(day, 0, first);
+            tryForceDouble(day, 2, second);
+        });
+
+        const tryForceSingle = (code) => {
+            for (let d = 0; d < nonForcedDays.length; d += 1) {
+                const day = nonForcedDays[d];
+                const candidates = [0, 1, 2, 3, 4, 5, 6];
+                for (let s = 0; s < candidates.length; s += 1) {
+                    const i = candidates[s];
+                    if (!isEmptyTeachableSlot(day, i)) continue;
+                    const ok = setSlot(day, i, code) || placeForcedNoTeacher(day, i, code);
+                    if (!ok) continue;
+                    if (remainingNeeded[String(code)] > 0) {
+                        remainingNeeded[String(code)] -= 1;
+                        if (remainingNeeded[String(code)] <= 0) delete remainingNeeded[String(code)];
+                    }
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        tryForceSingle('ENG');
+        tryForceSingle('B/MAT');
+
         const canBeDoubleStart = (slotIndex) => {
             // prevent spanning breaks: 3->4 is across break, 6->7 is across break
             return slotIndex >= 0 && slotIndex < 8 && ![3, 6].includes(slotIndex);
@@ -1422,6 +1604,8 @@ const regenerateSampleTimetable = async () => {
             await loadAllSubjectLimits();
         } else if (selectedLimitClassId.value) {
             await loadSubjectLimits();
+        } else {
+            await loadAllSubjectLimits();
         }
     }
     generateSampleTimetable();
