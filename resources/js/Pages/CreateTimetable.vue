@@ -922,6 +922,197 @@ const generateSampleTimetable = () => {
             });
         }
 
+        const hasQuotas = !!(appliesSubjectLimits && (Object.keys(desiredPeriodsByCode || {}).length > 0 || Object.keys(sessionQuotaByCode || {}).length > 0));
+
+        // Track subject occurrences per day for this class (used to spread doubles across days).
+        const subjectCountByDay = {};
+        days.forEach((d) => {
+            subjectCountByDay[String(d)] = {};
+        });
+
+        // Track placed doubles per subject for this class.
+        const placedDoublesByCode = {};
+
+        // Remaining weekly quotas (periods) for this class.
+        const remainingNeeded = {};
+        Object.keys(desiredPeriodsByCode || {}).forEach((code) => {
+            const n = Number(desiredPeriodsByCode[String(code)] || 0);
+            if (Number.isFinite(n) && n > 0) remainingNeeded[String(code)] = Math.floor(n);
+        });
+
+        // Ensure safe numeric defaults for any subject we may try to place.
+        (classSubjectCodes || []).forEach((code) => {
+            const k = String(code);
+            if (!Object.prototype.hasOwnProperty.call(remainingNeeded, k)) {
+                remainingNeeded[k] = 0;
+            }
+        });
+
+        const bumpDoubleCount = (code) => {
+            const k = String(code);
+            placedDoublesByCode[k] = Number(placedDoublesByCode[k] || 0) + 1;
+        };
+
+        const canBeDoubleStartInSession = (slotIndex, session) => {
+            const i = Number(slotIndex);
+            if (!Number.isFinite(i) || i < 0 || i > 7) return false;
+            // prevent spanning breaks
+            if ([3, 6].includes(i)) return false;
+            if (session === 'morning') return [0, 1, 2].includes(i);
+            if (session === 'afternoon') return i === 7;
+            return [4, 5].includes(i);
+        };
+
+        const isEmptyTeachableSlot = (day, slotIndex) => {
+            if (!isTeachableLessonSlot(day, slotIndex)) return false;
+            return rowByDay[day].slots[slotIndex] === null;
+        };
+
+        const applyTeacherBusy = (day, slotIndex, busyList) => {
+            const set = teacherBusy[String(day)]?.[Number(slotIndex)];
+            if (!set || !Array.isArray(busyList)) return;
+            busyList.forEach((t) => {
+                if (t) set.add(String(t));
+            });
+        };
+
+        const clearTeacherBusy = (day, slotIndex, busyList) => {
+            const set = teacherBusy[String(day)]?.[Number(slotIndex)];
+            if (!set || !Array.isArray(busyList)) return;
+            busyList.forEach((t) => {
+                if (t) set.delete(String(t));
+            });
+        };
+
+        const setSlot = (day, slotIndex, subjectCode) => {
+            if (!isTeachableLessonSlot(day, slotIndex)) return false;
+            if (rowByDay[day].slots[slotIndex] !== null) return false;
+            if (classId && !isSubjectAllowedInSlot(classId, subjectCode, slotIndex)) return false;
+
+            const pick = chooseTeacherForSlot(classId, subjectCode, day, slotIndex);
+            if (!pick?.ok) return false;
+
+            rowByDay[day].slots[slotIndex] = {
+                subject: String(subjectCode || ''),
+                teacher: pick.teacher || '',
+                teacher_initials: pick.teacher || '',
+                teacher_name: '',
+            };
+
+            applyTeacherBusy(day, slotIndex, pick.busyList || []);
+
+            const k = String(subjectCode || '');
+            if (k) {
+                if (!subjectCountByDay[String(day)]) subjectCountByDay[String(day)] = {};
+                subjectCountByDay[String(day)][k] = Number(subjectCountByDay[String(day)][k] || 0) + 1;
+            }
+
+            if (pick.busyList && pick.busyList.length) {
+                pick.busyList.forEach((t) => {
+                    const init = String(t || '').trim();
+                    if (!init) return;
+                    const daysSet = ensureTeacherDaySet(init);
+                    if (daysSet) daysSet.add(String(day));
+                    teacherLastPlacement[init] = { day: String(day), slotIndex: Number(slotIndex), baseClassId: classId };
+                });
+            }
+
+            return true;
+        };
+
+        const clearSlot = (day, slotIndex) => {
+            const current = rowByDay[day].slots[slotIndex];
+            if (!current || !current.subject) {
+                rowByDay[day].slots[slotIndex] = null;
+                return;
+            }
+
+            const code = String(current.subject || '');
+            const rawTeachers = String(current.teacher_initials || current.teacher || '').trim();
+            const busyList = rawTeachers ? rawTeachers.split('/').map((s) => s.trim()).filter(Boolean) : [];
+            clearTeacherBusy(day, slotIndex, busyList);
+
+            if (code) {
+                const m = subjectCountByDay[String(day)] || {};
+                m[code] = Math.max(0, Number(m[code] || 0) - 1);
+                subjectCountByDay[String(day)] = m;
+            }
+
+            rowByDay[day].slots[slotIndex] = null;
+        };
+
+        const tryPlaceDoubleForCode = (code) => {
+            const startSlots = [0, 1, 2, 4, 5, 7];
+            for (let d = 0; d < days.length; d += 1) {
+                const day = days[d];
+                const normCode = String(code || '').trim();
+                if (subjectCountByDay[String(day)]?.[String(normCode)]) continue;
+                for (let s = 0; s < startSlots.length; s += 1) {
+                    const i = startSlots[s];
+                    if (!canBeDoubleStartInSession(i, getSlotSession(i))) continue;
+                    if (!isEmptyTeachableSlot(day, i) || !isEmptyTeachableSlot(day, i + 1)) continue;
+                    if (classId && (!isSubjectAllowedInSlot(classId, code, i) || !isSubjectAllowedInSlot(classId, code, i + 1))) continue;
+                    if (!setSlot(day, i, code)) continue;
+                    if (!setSlot(day, i + 1, code)) {
+                        clearSlot(day, i);
+                        continue;
+                    }
+                    remainingNeeded[String(code)] = Number(remainingNeeded[String(code)] || 0) - 2;
+                    if (remainingNeeded[String(code)] <= 0) delete remainingNeeded[String(code)];
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        // NEW RULE: every day must start with B/MAT double then ENG double.
+        // Slots: 0-1 => B/MAT, 2-3 => ENG.
+        days.forEach((day) => {
+            const classKey = `${String(classLabel || c?.name || '')}${streamLabel ? ` ${streamLabel}` : ''}`.trim();
+
+            const hasSubjectCode = (target) => {
+                const up = String(target || '').toUpperCase();
+                return (classSubjectCodes || []).some((c2) => String(c2 || '').toUpperCase() === up);
+            };
+
+            const tryForceDouble = (code, startIndex) => {
+                if (!hasSubjectCode(code)) {
+                    generationWarnings.value.push(`${classKey}: ${code} not in class subject list, cannot force morning double`);
+                    return false;
+                }
+                if (!isTeachableLessonSlot(day, startIndex) || !isTeachableLessonSlot(day, startIndex + 1)) {
+                    generationWarnings.value.push(`${classKey}: cannot force ${code} double at ${day} start slots`);
+                    return false;
+                }
+                if (rowByDay[day].slots[startIndex] !== null || rowByDay[day].slots[startIndex + 1] !== null) {
+                    generationWarnings.value.push(`${classKey}: ${day} start slots already occupied, cannot force ${code} double`);
+                    return false;
+                }
+
+                if (!setSlot(day, startIndex, code)) {
+                    generationWarnings.value.push(`${classKey}: failed to place ${code} at ${day} slot ${startIndex + 1}`);
+                    return false;
+                }
+                if (!setSlot(day, startIndex + 1, code)) {
+                    clearSlot(day, startIndex);
+                    generationWarnings.value.push(`${classKey}: failed to complete ${code} double at ${day} start`);
+                    return false;
+                }
+
+                // consume quota if present
+                if (remainingNeeded[String(code)] > 0) {
+                    remainingNeeded[String(code)] -= 2;
+                    if (remainingNeeded[String(code)] <= 0) delete remainingNeeded[String(code)];
+                }
+                bumpDoubleCount(code);
+                return true;
+            };
+
+            // Force in order: B/MAT then ENG
+            tryForceDouble('B/MAT', 0);
+            tryForceDouble('ENG', 2);
+        });
+
         // 0) If session quotas are specified, force-place them first.
         if (hasQuotas && Object.keys(sessionQuotaByCode || {}).length > 0) {
             Object.keys(sessionQuotaByCode).forEach((code) => {
