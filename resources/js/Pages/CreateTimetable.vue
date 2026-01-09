@@ -676,14 +676,25 @@ const generateSampleTimetable = () => {
             );
 
         if (appliesSubjectLimits) {
+            const baseId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
+            const baseClass = baseId ? (classById.value?.[String(baseId)] || null) : null;
+            const formNumber = getFormOrder(baseClass);
+            const defaultsByCode = defaultSubjectPeriodsByFormGroup(formNumber);
+
             classSubjectCodes.forEach((code) => {
                 const sid = subjectIdByCode.value?.[String(code)] || null;
                 if (!sid) return;
                 const key = subjectLimitKey(sid);
-                const val = subjectLimitsById.value?.[key];
-                const n = val === '' || val === null || val === undefined ? 0 : Number(val);
-                if (Number.isFinite(n) && n > 0) {
-                    desiredPeriodsByCode[String(code)] = Math.floor(n);
+                const def = defaultsByCode?.[String(code)] ?? null;
+                if (Number.isFinite(Number(def)) && Number(def) > 0) {
+                    // HARD-CODE: use the default table when it contains this subject
+                    desiredPeriodsByCode[String(code)] = Math.floor(Number(def));
+                } else {
+                    const val = subjectLimitsById.value?.[key];
+                    const n = val === '' || val === null || val === undefined ? null : Number(val);
+                    if (Number.isFinite(n) && n > 0) {
+                        desiredPeriodsByCode[String(code)] = Math.floor(n);
+                    }
                 }
 
                 if (subjectDoubleById.value?.[key]) {
@@ -708,6 +719,13 @@ const generateSampleTimetable = () => {
                     if (!desiredPeriodsByCode[String(code)] || desiredPeriodsByCode[String(code)] < derived) {
                         desiredPeriodsByCode[String(code)] = derived;
                     }
+                }
+
+                // If user hasn't explicitly configured doubles, encourage doubles for heavier subjects.
+                // Example: 5 periods => 2 doubles + 1 single.
+                const eff = Number(desiredPeriodsByCode[String(code)] || 0);
+                if (!desiredDoubleByCode[String(code)] && eff >= 4) {
+                    desiredDoubleByCode[String(code)] = true;
                 }
             });
         }
@@ -1404,15 +1422,17 @@ const desiredPeriodsForResolve = computed(() => {
         const sid = subjectIdByCode.value?.[String(code)] || null;
         if (!sid) return;
         const key = subjectLimitKey(sid);
-        const raw = subjectLimitsById.value?.[key];
-        const val = raw === '' || raw === null || raw === undefined ? null : Number(raw);
-        if (Number.isFinite(val) && val >= 0) {
-            desired[String(code)] = Math.floor(val);
+        const def = defaultsByCode?.[String(code)] ?? null;
+        // HARD-CODE: if the subject exists in the default table, always use that value.
+        if (Number.isFinite(Number(def)) && Number(def) > 0) {
+            desired[String(code)] = Math.floor(Number(def));
             return;
         }
-        const def = defaultsByCode?.[String(code)] ?? null;
-        if (Number.isFinite(Number(def))) {
-            desired[String(code)] = Math.floor(Number(def));
+
+        const raw = subjectLimitsById.value?.[key];
+        const val = raw === '' || raw === null || raw === undefined ? null : Number(raw);
+        if (Number.isFinite(val) && val > 0) {
+            desired[String(code)] = Math.floor(val);
         }
     });
     return desired;
@@ -1462,7 +1482,7 @@ const resolveReport = computed(() => {
                 subject_code: String(code),
                 desired: want,
                 actual: got,
-                completed: got >= want && want > 0,
+                completed: want <= 0 ? true : (got >= want),
             });
         });
     });
@@ -1969,7 +1989,7 @@ const loadSubjectLimits = async () => {
             afternoonDoubleMap[subjectLimitKey(row.subject_id)] = Number(row.afternoon_double || 0);
         });
 
-        // Hard-coded defaults: only fill missing values, do not overwrite existing DB values.
+        // Hard-coded defaults (authoritative): override DB values when defaults exist.
         const cls = classById.value?.[String(selectedLimitClassId.value)] || null;
         const formNumber = getFormOrder(cls);
         const defaults = defaultSubjectPeriodsByFormGroup(formNumber);
@@ -1978,15 +1998,14 @@ const loadSubjectLimits = async () => {
             const sid = subjectIdByCode.value?.[String(code)] || null;
             if (!sid) return;
             const key = subjectLimitKey(sid);
-            const existing = map?.[key];
-            const hasExisting = !(existing === undefined || existing === null || existing === '');
-            if (hasExisting) return;
-            map[key] = defaults[code];
 
-            // If the school hasn't configured doubles yet, default key subjects to allow doubles.
-            // Example: 5 periods/week => 2 doubles + 1 single (per stream), subject to available slots.
-            if (doubleMap[key] === undefined && defaultDoubleCodes.has(String(code).toUpperCase())) {
-                doubleMap[key] = true;
+            // Override periods/week to match the default table
+            map[key] = Number(defaults[code]);
+
+            // Encourage doubles for heavier subjects (>=4) and also force key ones.
+            const eff = Number(defaults[code] || 0);
+            if (doubleMap[key] === undefined) {
+                doubleMap[key] = (eff >= 4) || defaultDoubleCodes.has(String(code).toUpperCase());
             }
         });
 
