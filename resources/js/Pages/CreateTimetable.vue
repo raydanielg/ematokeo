@@ -583,6 +583,19 @@ const generateSampleTimetable = () => {
 
     const fallbackSubjects = subjectPool.value || [];
 
+    const normalizeCode = (code) => String(code || '').trim().toUpperCase();
+    const canStartDouble = (day, i) => {
+        if (i >= 0 && i <= 2) {
+            return isTeachableLessonSlot(day, i) && isTeachableLessonSlot(day, i + 1);
+        }
+        if (i === 7) {
+            return isTeachableLessonSlot(day, 7) && isTeachableLessonSlot(day, 8);
+        }
+        return false;
+    };
+
+    const allDoubleStarts = (day) => [0, 1, 2, 7].filter((i) => canStartDouble(day, i));
+
     (timetableClasses.value || []).forEach((c) => {
         const classId = c?.id ? Number(c.id) : null;
         const formLabel = getClassForm(c);
@@ -593,8 +606,13 @@ const generateSampleTimetable = () => {
             ? c.subject_codes
             : fallbackSubjects;
 
-        let cursor = Math.floor(Math.random() * (classSubjectCodes.length || 1));
+        const codes = (classSubjectCodes || []).map(normalizeCode).filter(Boolean);
+        const uniqueCodes = Array.from(new Set(codes));
+        const hasCode = (code) => uniqueCodes.includes(normalizeCode(code));
+        const psCode = hasCode('PS') ? 'PS' : '';
 
+        // Build empty rows (one per day) first
+        const rowByDay = {};
         days.forEach((day) => {
             const row = {
                 form: formLabel,
@@ -608,32 +626,144 @@ const generateSampleTimetable = () => {
             for (let i = 0; i < 9; i += 1) {
                 if (!isTeachableLessonSlot(day, i)) {
                     row.slots[i] = { subject: '', teacher: '', teacher_initials: '', teacher_name: '' };
-                    continue;
                 }
-
-                const prev = i > 0 && ![4, 7].includes(i) ? row.slots[i - 1] : null;
-                const prevCode = prev?.subject ? String(prev.subject) : '';
-
-                let picked = '';
-                for (let tries = 0; tries < (classSubjectCodes.length || 0); tries += 1) {
-                    const cand = classSubjectCodes[(cursor + tries) % classSubjectCodes.length];
-                    if (!cand) continue;
-                    if (prevCode && String(cand) === prevCode) continue;
-                    picked = String(cand);
-                    cursor = (cursor + tries + 1) % classSubjectCodes.length;
-                    break;
-                }
-
-                if (!picked) {
-                    row.slots[i] = null;
-                    continue;
-                }
-
-                const teacher = classId ? pickTeacherInitialForSlot(classId, picked, day, i) : '';
-                row.slots[i] = { subject: picked, teacher, teacher_initials: teacher, teacher_name: '' };
             }
 
+            rowByDay[day] = row;
             next[day].push(row);
+        });
+
+        // Quotas (Rule #1)
+        const remainingSingles = {};
+        const remainingDoubles = {};
+
+        // ENG & B/MAT: 2 doubles + 3 singles (7 periods)
+        ['ENG', 'B/MAT'].forEach((core) => {
+            if (!hasCode(core)) return;
+            remainingSingles[core] = (remainingSingles[core] || 0) + 3;
+            remainingDoubles[core] = (remainingDoubles[core] || 0) + 2;
+        });
+
+        // Other subjects: 1 double + 1 single
+        uniqueCodes.forEach((code) => {
+            if (code === 'ENG' || code === 'B/MAT') return;
+            remainingSingles[code] = (remainingSingles[code] || 0) + 1;
+            remainingDoubles[code] = (remainingDoubles[code] || 0) + 1;
+        });
+
+        const weeklyCount = {};
+        const incWeekly = (code, delta) => {
+            const k = normalizeCode(code);
+            weeklyCount[k] = (weeklyCount[k] || 0) + delta;
+        };
+
+        const slotSubject = (day, i) => {
+            const s = rowByDay?.[day]?.slots?.[i];
+            return s?.subject ? normalizeCode(s.subject) : '';
+        };
+
+        const canPlaceDoubleHere = (day, i, code) => {
+            if (!canStartDouble(day, i)) return false;
+            const row = rowByDay[day];
+            if (!row) return false;
+            if (row.slots[i] !== null) return false;
+            if (row.slots[i + 1] !== null) return false;
+            if (!isSubjectAllowedInSlot(classId, code, i)) return false;
+            if (!isSubjectAllowedInSlot(classId, code, i + 1)) return false;
+
+            // Avoid immediate repeats against neighbors within the same day
+            const prevCode = i > 0 && ![4, 7].includes(i) ? slotSubject(day, i - 1) : '';
+            if (prevCode && prevCode === normalizeCode(code)) return false;
+            const nextCode = (i + 2) < 9 && ![4, 7].includes(i + 2) ? slotSubject(day, i + 2) : '';
+            if (nextCode && nextCode === normalizeCode(code)) return false;
+            return true;
+        };
+
+        const placeDouble = (day, i, code) => {
+            const row = rowByDay[day];
+            const t1 = classId ? pickTeacherInitialForSlot(classId, code, day, i) : '';
+            const t2 = classId ? pickTeacherInitialForSlot(classId, code, day, i + 1) : '';
+            row.slots[i] = { subject: code, teacher: t1, teacher_initials: t1, teacher_name: '' };
+            row.slots[i + 1] = { subject: code, teacher: t2, teacher_initials: t2, teacher_name: '' };
+            incWeekly(code, 2);
+        };
+
+        const canPlaceSingleHere = (day, i, code) => {
+            const row = rowByDay[day];
+            if (!row) return false;
+            if (!isTeachableLessonSlot(day, i)) return false;
+            if (row.slots[i] !== null) return false;
+            if (!isSubjectAllowedInSlot(classId, code, i)) return false;
+            const prevCode = i > 0 && ![4, 7].includes(i) ? slotSubject(day, i - 1) : '';
+            if (prevCode && prevCode === normalizeCode(code)) return false;
+            return true;
+        };
+
+        const placeSingle = (day, i, code) => {
+            const row = rowByDay[day];
+            const teacher = classId ? pickTeacherInitialForSlot(classId, code, day, i) : '';
+            row.slots[i] = { subject: code, teacher, teacher_initials: teacher, teacher_name: '' };
+            incWeekly(code, 1);
+        };
+
+        // 1) Place required doubles first
+        const pickRandom = (arr) => arr[Math.floor(Math.random() * arr.length)];
+        const allPlacements = [];
+        days.forEach((day) => {
+            allDoubleStarts(day).forEach((i) => allPlacements.push({ day, i }));
+        });
+
+        Object.keys(remainingDoubles).forEach((code) => {
+            const need = remainingDoubles[code] || 0;
+            for (let k = 0; k < need; k += 1) {
+                const feasible = allPlacements.filter(({ day, i }) => canPlaceDoubleHere(day, i, code));
+                if (!feasible.length) break;
+                const { day, i } = pickRandom(feasible);
+                placeDouble(day, i, code);
+                remainingDoubles[code] -= 1;
+            }
+        });
+
+        // 2) Place required singles
+        days.forEach((day) => {
+            for (let i = 0; i < 9; i += 1) {
+                if (!isTeachableLessonSlot(day, i)) continue;
+                if (rowByDay[day].slots[i] !== null) continue;
+
+                const candidates = Object.keys(remainingSingles)
+                    .filter((code) => (remainingSingles[code] || 0) > 0)
+                    .filter((code) => canPlaceSingleHere(day, i, code));
+
+                if (!candidates.length) continue;
+
+                // balance: pick subject with highest remaining singles
+                candidates.sort((a, b) => (remainingSingles[b] || 0) - (remainingSingles[a] || 0));
+                const code = candidates[0];
+                placeSingle(day, i, code);
+                remainingSingles[code] -= 1;
+            }
+        });
+
+        // 3) Fill remaining teachable slots balanced (default to PS if available)
+        const pickBalanced = (day, i) => {
+            const prevCode = i > 0 && ![4, 7].includes(i) ? slotSubject(day, i - 1) : '';
+            const candidates = uniqueCodes
+                .filter((code) => canPlaceSingleHere(day, i, code))
+                .filter((code) => !prevCode || prevCode !== normalizeCode(code));
+            if (!candidates.length) return psCode || '';
+
+            candidates.sort((a, b) => (weeklyCount[a] || 0) - (weeklyCount[b] || 0));
+            return candidates[0] || psCode || '';
+        };
+
+        days.forEach((day) => {
+            for (let i = 0; i < 9; i += 1) {
+                if (!isTeachableLessonSlot(day, i)) continue;
+                if (rowByDay[day].slots[i] !== null) continue;
+                const picked = pickBalanced(day, i);
+                if (!picked) continue;
+                placeSingle(day, i, picked);
+            }
         });
     });
 
