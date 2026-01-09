@@ -724,6 +724,7 @@ const generateSampleTimetable = () => {
         const desiredDoubleByCode = {};
         const sessionQuotaByCode = {};
         const requiredDoubleCountByCode = {};
+        const maxDoubleCountByCode = {};
         const appliesSubjectLimits = limitationsMode.value === 'subject_only'
             && selectedLimitClassId.value
             && (
@@ -800,6 +801,10 @@ const generateSampleTimetable = () => {
                     : (eff >= 3 ? 1 : 0);
 
                 requiredDoubleCountByCode[String(code)] = Math.max(0, Math.min(baseNeed, upper));
+
+                // Also cap how many doubles we are allowed to create so we don't eat all singles.
+                // For non ENG/BMAT we cap to keep at least one single (upperKeepSingle).
+                maxDoubleCountByCode[String(code)] = Math.max(0, upper);
 
                 if (requiredDoubleCountByCode[String(code)] > 0) {
                     desiredDoubleByCode[String(code)] = true;
@@ -1109,8 +1114,12 @@ const generateSampleTimetable = () => {
             Object.keys(desiredDoubleByCode)
                 .filter((code) => desiredDoubleByCode[code])
                 .forEach((code) => {
+                    const cap = Number(maxDoubleCountByCode[String(code)] ?? 999);
                     // keep placing while possible
-                    while (remainingNeeded[String(code)] >= 2) {
+                    while (
+                        remainingNeeded[String(code)] >= 2
+                        && Number(placedDoublesByCode[String(code)] || 0) < cap
+                    ) {
                         const ok = tryPlaceDoubleForCode(code);
                         if (!ok) break;
                         bumpDoubleCount(code);
