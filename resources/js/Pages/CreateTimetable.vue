@@ -444,7 +444,7 @@ const getSubjectSessionRule = (schoolClassId, subjectId) => {
 };
 
 const isSubjectAllowedInSlot = (schoolClassId, subjectCode, slotIndex) => {
-    const forcedMorning = new Set(['ENG', 'B/MAT', 'CS']);
+    const forcedMorning = new Set(['ENG', 'B/MAT']);
     const code = String(subjectCode || '').trim().toUpperCase();
     const slotSession = getSlotSession(slotIndex);
     if (forcedMorning.has(code)) {
@@ -696,7 +696,8 @@ const generateSampleTimetable = () => {
             return { ok: true, teacher: '', busyList: [] };
         }
 
-        const busySet = teacherBusy[String(day)]?.[Number(slotIndex)] || new Set();
+        const busySet = teacherBusy[String(day)]?.[Number(slotIndex)];
+        if (!busySet || !Array.isArray(busySet)) return { ok: false, teacher: '', busyList: [] };
 
         // Exactly two teachers (co-teaching): both must be free.
         if (parts.length === 2) {
@@ -845,11 +846,12 @@ const generateSampleTimetable = () => {
                 const isEngOrMath = subjectUpper === 'ENG' || subjectUpper === 'B/MAT';
                 const isCs = subjectUpper === 'CS' || subjectUpper === 'COMP' || subjectUpper === 'ICT';
                 const isBusiness = subjectUpper === 'BUS';
+                const isPhysics = subjectUpper === 'PHY';
 
                 // Base weekly totals (Option: ENG/B-MAT double3+single1, others unchanged)
                 const targetWeeklyPeriods = isEngOrMath
                     ? 7
-                    : (isCs || isBusiness)
+                    : (isCs || isBusiness || isPhysics)
                         ? 5
                         : 3;
 
@@ -898,6 +900,11 @@ const generateSampleTimetable = () => {
                     if (eff >= 7) {
                         requiredDoubleCountByCode[String(code)] = 3;
                         maxDoubleCountByCode[String(code)] = 3;
+                    }
+                } else if (isPhysics) {
+                    if (eff >= 5) {
+                        requiredDoubleCountByCode[String(code)] = 2;
+                        maxDoubleCountByCode[String(code)] = 2;
                     }
                 } else if (isCs || isBusiness) {
                     if (eff >= 5) {
@@ -1102,28 +1109,6 @@ const generateSampleTimetable = () => {
             tryForceDouble(day, 2, second);
         });
 
-        const tryForceSingle = (code) => {
-            for (let d = 0; d < nonForcedDays.length; d += 1) {
-                const day = nonForcedDays[d];
-                const candidates = [0, 1, 2, 3, 4, 5, 6];
-                for (let s = 0; s < candidates.length; s += 1) {
-                    const i = candidates[s];
-                    if (!isEmptyTeachableSlot(day, i)) continue;
-                    const ok = setSlot(day, i, code) || placeForcedNoTeacher(day, i, code);
-                    if (!ok) continue;
-                    if (remainingNeeded[String(code)] > 0) {
-                        remainingNeeded[String(code)] -= 1;
-                        if (remainingNeeded[String(code)] <= 0) delete remainingNeeded[String(code)];
-                    }
-                    return true;
-                }
-            }
-            return false;
-        };
-
-        tryForceSingle('ENG');
-        tryForceSingle('B/MAT');
-
         const canBeDoubleStart = (slotIndex) => {
             // prevent spanning breaks: 3->4 is across break, 6->7 is across break
             return slotIndex >= 0 && slotIndex < 8 && ![3, 6].includes(slotIndex);
@@ -1131,7 +1116,11 @@ const generateSampleTimetable = () => {
 
         const tryPlaceDoubleInSession = (code, session) => {
             const candidates = [];
-            const startSlots = session === 'morning' ? [0, 1, 2] : [7];
+            const startSlots = session === 'morning'
+                ? [0, 1, 2]
+                : session === 'afternoon'
+                    ? [7]
+                    : [4, 5];
             const normCode = String(code || '').trim().toUpperCase();
 
             // Prioritize morning slots for ENG and B/MAT
@@ -1180,6 +1169,7 @@ const generateSampleTimetable = () => {
 
                 remainingNeeded[String(code)] -= 2;
                 if (remainingNeeded[String(code)] <= 0) delete remainingNeeded[String(code)];
+                bumpDoubleCount(code);
                 return true;
             }
 
@@ -1201,6 +1191,32 @@ const generateSampleTimetable = () => {
             }
             return false;
         };
+
+        const tryEnsureCsHasAtLeast = () => {
+            const csSet = new Set(['CS', 'COMP', 'ICT']);
+            const csCodes = (classSubjectCodes || [])
+                .map((c) => String(c || '').trim())
+                .filter(Boolean)
+                .filter((c) => csSet.has(String(c).toUpperCase()));
+            if (!csCodes.length) return;
+
+            // Prefer placing CS outside morning to avoid conflict with forced ENG/B/MAT doubles.
+            csCodes.forEach((code) => {
+                const k = String(code);
+                if (Number(remainingNeeded[k] || 0) >= 2 && Number(placedDoublesByCode[k] || 0) < 1) {
+                    tryPlaceDoubleInSession(k, 'other')
+                        || tryPlaceDoubleInSession(k, 'morning')
+                        || tryPlaceDoubleInSession(k, 'afternoon');
+                }
+                if (Number(remainingNeeded[k] || 0) >= 1) {
+                    tryPlaceSingleInSession(k, 'other')
+                        || tryPlaceSingleInSession(k, 'morning')
+                        || tryPlaceSingleInSession(k, 'afternoon');
+                }
+            });
+        };
+
+        tryEnsureCsHasAtLeast();
 
         // 1) Coverage-first: try to place every subject at least once (respecting session rules).
         const unconstrainedSubjects = [];
