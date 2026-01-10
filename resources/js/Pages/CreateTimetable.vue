@@ -26,6 +26,14 @@ const props = defineProps({
     },
 });
 
+const selectedLimitClassId = ref('');
+
+const sessionRulesByClassId = ref({});
+
+const showTeacherInitialsModal = ref(false);
+const showSubjectPalette = ref(false);
+const dropFeedback = ref({ type: '', message: '' });
+
 const selectedLimitClassSessionRules = computed(() => {
     const classId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
     if (!Number.isFinite(classId) || !classId) return {};
@@ -448,8 +456,80 @@ const headerClassName = computed(() => {
     return form.class_name || '____';
 });
 
+const getGroupedRows = (day) => {
+    const d = String(day || '').toUpperCase();
+    const allRows = Array.isArray(schedule.value?.[d]) ? schedule.value[d] : [];
+
+    const filtered = allRows
+        .map((row, originalIndex) => ({ row, originalIndex }))
+        .filter(({ row }) => {
+            if (!row) return false;
+
+            if (selectedClass.value !== 'ALL') {
+                const label = String(row.class_label || row.form || '').trim();
+                if (label !== selectedClass.value) return false;
+            }
+
+            if (selectedStream.value !== 'ALL') {
+                const s = String(row.stream || '').toUpperCase().trim();
+                if (s !== String(selectedStream.value || '').toUpperCase().trim()) return false;
+            }
+
+            return true;
+        });
+
+    const groups = new Map();
+    filtered.forEach(({ row, originalIndex }) => {
+        const label = String(row.class_label || row.form || '').trim() || 'CLASS';
+        const key = label;
+        if (!groups.has(key)) {
+            groups.set(key, { key, label, rows: [] });
+        }
+        groups.get(key).rows.push({ row, originalIndex });
+    });
+
+    const out = Array.from(groups.values());
+    out.forEach((g) => {
+        g.rows.sort((a, b) => String(a.row?.stream || '').localeCompare(String(b.row?.stream || '')));
+    });
+    return out;
+};
+
+const getGroupedRowCount = (day) => {
+    return getGroupedRows(day).reduce((sum, g) => sum + (g?.rows?.length || 0), 0);
+};
+
 // schedule[day][formIndex][slotIndex] = { subject, teacher }
 const schedule = ref({});
+
+const initEmptySchedule = () => {
+    const next = {};
+    days.forEach((day) => {
+        next[day] = [];
+        (timetableClasses.value || []).forEach((c) => {
+            next[day].push({
+                form: getClassForm(c),
+                class_label: getClassLabel(c),
+                stream: c?.stream ? String(c.stream).toUpperCase().trim() : '',
+                school_class_id: c?.id ? Number(c.id) : null,
+                slots: Array.from({ length: 9 }).map(() => null),
+            });
+        });
+    });
+    schedule.value = next;
+};
+
+watch(
+    () => timetableClasses.value,
+    (val) => {
+        if (!val || !val.length) return;
+        const current = schedule.value;
+        if (current && typeof current === 'object' && Object.keys(current).length) return;
+        initEmptySchedule();
+    },
+    { immediate: true }
+);
+
 const generationWarnings = ref([]);
 const generationNonce = ref(0);
 
@@ -463,8 +543,6 @@ const sessionRulesStorageKey = computed(() => {
     const schoolId = props.school?.id ?? 'school';
     return `timetable_subject_session_rules_v1_${schoolId}`;
 });
-
-const sessionRulesByClassId = ref({});
 
 const loadSessionRulesFromStorage = () => {
     try {
@@ -527,6 +605,14 @@ const isTeachableLessonSlot = (day, slotIndex) => {
     }
 
     return true;
+};
+
+const isDraggableSlot = (day, slotIndex) => {
+    const d = String(day || '').toUpperCase();
+    const s = Number(slotIndex);
+    if (!Number.isFinite(s)) return false;
+    if (s < 0 || s > 8) return false;
+    return isTeachableLessonSlot(d, s);
 };
 
 const sessionCapacityForClass = () => {
@@ -889,7 +975,7 @@ const generateSampleTimetable = () => {
         const placeSingle = (day, i, code) => {
             const row = rowByDay[day];
             const teacher = classId ? pickFreeTeacherInitial(day, i, code) : '';
-            row.slots[i] = { subject: code, teacher, teacher_initials: teacher, teacher_name: '' };
+            row.slots[i] = code ? { subject: code, teacher, teacher_initials: teacher, teacher_name: '' } : null;
             addBusyTeacher(day, i, teacher);
             incWeekly(code, 1);
         };
@@ -1361,7 +1447,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                     </div>
                     <button
                         type="button"
-                        class="rounded-md bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
+                        class="rounded-md bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-emerald-500 focus:ring-offset-1"
                         @click="downloadTeacherInitials"
                     >
                         Download (CSV)
@@ -1798,7 +1884,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                                     <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
                                                 </template>
                                                 <template v-else>
-                                                    <div class="font-semibold text-gray-400">PS</div>
+                                                    <div class="font-semibold text-gray-400">&nbsp;</div>
                                                 </template>
                                             </template>
                                         </td>
@@ -1977,7 +2063,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
 
             <!-- Limitations modal -->
             <div
-                v-if="showLimitationsModal"
+                v-if="false && showLimitationsModal"
                 class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 py-6 sm:px-0"
                 @click.self="showLimitationsModal = false"
             >
