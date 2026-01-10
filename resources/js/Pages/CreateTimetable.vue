@@ -1259,10 +1259,348 @@ const generateSampleTimetable = () => {
     saveScheduleToStorage();
 };
 
+const regenerateSampleTimetable = () => {
+    generateSampleTimetable();
+    generationNonce.value += 1;
+};
+
+const generateNewTimetable = () => {
+    generationWarnings.value = [];
+    const next = {};
+    days.forEach((day) => {
+        next[day] = [];
+    });
+
+    const teacherBusyByDaySlot = {};
+    days.forEach((day) => {
+        teacherBusyByDaySlot[day] = Array.from({ length: 9 }).map(() => new Set());
+    });
+
+    const subjectBusyByDaySlot = {};
+    days.forEach((day) => {
+        subjectBusyByDaySlot[day] = Array.from({ length: 9 }).map(() => new Set());
+    });
+
+    // TRACK YA KILA SOMO KWA KILA STREAM
+    const subjectTracker = {};
+
+    (timetableClasses.value || []).forEach((c) => {
+        const classId = c?.id;
+        const classLabel = getClassLabel(c);
+        const streamLabel = c?.stream ? String(c.stream).toUpperCase().trim() : '';
+
+        // Subject codes za stream hii
+        const subjectCodesRaw = Array.isArray(c?.subject_codes) ? c.subject_codes : [];
+        const subjectCodes = [...new Set(subjectCodesRaw.map((s) => String(s).trim().toUpperCase()).filter(Boolean))];
+
+        // Initialize tracker
+        const trackerKey = `${classId}_${streamLabel}`;
+        subjectTracker[trackerKey] = {};
+        subjectCodes.forEach((code) => {
+            subjectTracker[trackerKey][code] = {
+                doublesPlaced: 0,
+                singlesPlaced: 0,
+                totalPeriods: 0,
+                lastDay: null,
+                doubleTarget: (code === 'ENG' || code === 'B/MAT') ? 2 : 1,
+                singleTarget: (code === 'ENG' || code === 'B/MAT') ? 3 : 1,
+            };
+        });
+
+        // CREATE ROWS FOR EACH DAY
+        const rowByDay = {};
+        days.forEach((day) => {
+            const row = {
+                form: getClassForm(c),
+                class_label: classLabel,
+                stream: streamLabel,
+                school_class_id: classId,
+                class_name: c?.name || `${classLabel} ${streamLabel}`.trim(),
+                slots: Array.from({ length: 9 }).map(() => null),
+            };
+            rowByDay[day] = row;
+            next[day].push(row);
+        });
+
+        // 1. PLACE CORE SUBJECT DOUBLES FIRST (ENG, B/MAT)
+        const coreSubjects = subjectCodes.filter((code) => code === 'ENG' || code === 'B/MAT');
+
+        coreSubjects.forEach((code) => {
+            const tracker = subjectTracker[trackerKey][code];
+
+            // Place 2 doubles
+            for (let d = 0; d < 2; d += 1) {
+                let placed = false;
+
+                for (let dayIdx = 0; dayIdx < days.length && !placed; dayIdx += 1) {
+                    const day = days[dayIdx];
+                    if (tracker.lastDay === day) continue;
+
+                    for (let slot = 0; slot <= 2; slot += 1) {
+                        if (canPlaceDouble(day, slot, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot)) {
+                            placeDoublePeriod(day, slot, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot);
+                            tracker.doublesPlaced += 1;
+                            tracker.totalPeriods += 2;
+                            tracker.lastDay = day;
+                            placed = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!placed) {
+                    generationWarnings.value.push(`Could not place double for ${code} in ${classLabel}${streamLabel}`);
+                }
+            }
+
+            // Place 1 single in slot 4 (after break)
+            for (let dayIdx = 0; dayIdx < days.length; dayIdx += 1) {
+                const day = days[dayIdx];
+                if (tracker.lastDay === day) continue;
+
+                if (canPlaceSingle(day, 4, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot)) {
+                    placeSinglePeriod(day, 4, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot);
+                    tracker.singlesPlaced += 1;
+                    tracker.totalPeriods += 1;
+                    tracker.lastDay = day;
+                    break;
+                }
+            }
+
+            // Place remaining 2 singles elsewhere
+            for (let s = 0; s < 2; s += 1) {
+                let placed = false;
+                for (let dayIdx = 0; dayIdx < days.length && !placed; dayIdx += 1) {
+                    const day = days[dayIdx];
+                    if (tracker.lastDay === day) continue;
+
+                    for (let slot = 0; slot < 9; slot += 1) {
+                        if (slot === 4) continue;
+                        if (!isTeachableLessonSlot(day, slot)) continue;
+
+                        if (canPlaceSingle(day, slot, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot)) {
+                            placeSinglePeriod(day, slot, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot);
+                            tracker.singlesPlaced += 1;
+                            tracker.totalPeriods += 1;
+                            tracker.lastDay = day;
+                            placed = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!placed) {
+                    generationWarnings.value.push(`Could not place single for ${code} in ${classLabel}${streamLabel}`);
+                }
+            }
+        });
+
+        // 2. PLACE OTHER SUBJECTS
+        const otherSubjects = subjectCodes.filter((code) => code !== 'ENG' && code !== 'B/MAT' && code !== 'PS');
+
+        otherSubjects.forEach((code) => {
+            const tracker = subjectTracker[trackerKey][code];
+
+            // Place 1 double
+            let doublePlaced = false;
+            for (let dayIdx = 0; dayIdx < days.length && !doublePlaced; dayIdx += 1) {
+                const day = days[dayIdx];
+                if (tracker.lastDay === day) continue;
+
+                for (let slot = 0; slot <= 2; slot += 1) {
+                    if (canPlaceDouble(day, slot, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot)) {
+                        placeDoublePeriod(day, slot, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot);
+                        tracker.doublesPlaced += 1;
+                        tracker.totalPeriods += 2;
+                        tracker.lastDay = day;
+                        doublePlaced = true;
+                        break;
+                    }
+                }
+
+                if (!doublePlaced && canPlaceDouble(day, 7, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot)) {
+                    placeDoublePeriod(day, 7, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot);
+                    tracker.doublesPlaced += 1;
+                    tracker.totalPeriods += 2;
+                    tracker.lastDay = day;
+                    doublePlaced = true;
+                }
+            }
+
+            if (!doublePlaced) {
+                generationWarnings.value.push(`Could not place double for ${code} in ${classLabel}${streamLabel}`);
+            }
+
+            // Place 1 single
+            let singlePlaced = false;
+            for (let dayIdx = 0; dayIdx < days.length && !singlePlaced; dayIdx += 1) {
+                const day = days[dayIdx];
+                if (tracker.lastDay === day) continue;
+
+                for (let slot = 0; slot < 9; slot += 1) {
+                    if (!isTeachableLessonSlot(day, slot)) continue;
+
+                    if (canPlaceSingle(day, slot, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot)) {
+                        placeSinglePeriod(day, slot, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot);
+                        tracker.singlesPlaced += 1;
+                        tracker.totalPeriods += 1;
+                        tracker.lastDay = day;
+                        singlePlaced = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!singlePlaced) {
+                generationWarnings.value.push(`Could not place single for ${code} in ${classLabel}${streamLabel}`);
+            }
+        });
+
+        // 3. FILL REMAINING SLOTS WITH PS (PASTROL STUDIES)
+        days.forEach((day) => {
+            const row = rowByDay[day];
+            const dayKey = String(day || '').toUpperCase();
+            for (let slot = 0; slot < 9; slot += 1) {
+                if (!isTeachableLessonSlot(dayKey, slot)) continue;
+                if (row.slots[slot] !== null) continue;
+
+                if (isSubjectAllowedInSlot(classId, 'PS', slot) && !subjectBusyByDaySlot[dayKey][slot].has('PS')) {
+                    row.slots[slot] = {
+                        subject: 'PS',
+                        teacher: '',
+                        teacher_initials: '',
+                        teacher_name: '',
+                    };
+                    subjectBusyByDaySlot[dayKey][slot].add('PS');
+                }
+            }
+        });
+    });
+
+    schedule.value = normalizeSchedule(next);
+    saveScheduleToStorage();
+    generationNonce.value += 1;
+};
+
+// HELPER FUNCTIONS
+const rowHasSubjectForDay = (row, subjectCode) => {
+    const code = String(subjectCode || '').trim().toUpperCase();
+    if (!code) return false;
+    const slots = Array.isArray(row?.slots) ? row.slots : [];
+    return slots.some((s) => s?.subject && String(s.subject).trim().toUpperCase() === code);
+};
+
+const canPlaceDouble = (day, startSlot, subjectCode, classId, row, teacherBusy, subjectBusy) => {
+    const d = String(day || '').toUpperCase();
+    const code = String(subjectCode || '').trim().toUpperCase();
+    if (!code) return false;
+    if (startSlot < 0 || startSlot > 7) return false;
+    if (!isTeachableLessonSlot(d, startSlot) || !isTeachableLessonSlot(d, startSlot + 1)) return false;
+    if (row.slots[startSlot] !== null || row.slots[startSlot + 1] !== null) return false;
+
+    // Rule: no subject repeats same day (except double) -> allow only if subject not already present
+    if (code !== 'PS' && rowHasSubjectForDay(row, code)) return false;
+
+    // Streams not same subject same slot
+    if (subjectBusy?.[d]?.[startSlot]?.has(code) || subjectBusy?.[d]?.[startSlot + 1]?.has(code)) return false;
+
+    if (!isSubjectAllowedInSlot(classId, code, startSlot)) return false;
+    if (!isSubjectAllowedInSlot(classId, code, startSlot + 1)) return false;
+
+    const teacher1 = pickTeacherInitialForSlot(classId, code, d, startSlot);
+    const teacher2 = pickTeacherInitialForSlot(classId, code, d, startSlot + 1);
+    if (!teacher1 || !teacher2) return false;
+
+    const teachers1 = teacher1.split('/').map((t) => t.trim()).filter(Boolean);
+    const teachers2 = teacher2.split('/').map((t) => t.trim()).filter(Boolean);
+    const allTeachers = [...teachers1, ...teachers2];
+
+    for (let i = 0; i < allTeachers.length; i += 1) {
+        const t = allTeachers[i];
+        if (teacherBusy[d][startSlot].has(t) || teacherBusy[d][startSlot + 1].has(t)) return false;
+    }
+
+    return true;
+};
+
+const placeDoublePeriod = (day, startSlot, subjectCode, classId, row, teacherBusy, subjectBusy) => {
+    const d = String(day || '').toUpperCase();
+    const code = String(subjectCode || '').trim().toUpperCase();
+    const teacher1 = pickTeacherInitialForSlot(classId, code, d, startSlot);
+    const teacher2 = pickTeacherInitialForSlot(classId, code, d, startSlot + 1);
+
+    row.slots[startSlot] = {
+        subject: code,
+        teacher: teacher1,
+        teacher_initials: teacher1,
+        teacher_name: '',
+    };
+
+    row.slots[startSlot + 1] = {
+        subject: code,
+        teacher: teacher2,
+        teacher_initials: teacher2,
+        teacher_name: '',
+    };
+
+    const teachers1 = teacher1.split('/').map((t) => t.trim()).filter(Boolean);
+    const teachers2 = teacher2.split('/').map((t) => t.trim()).filter(Boolean);
+    teachers1.forEach((t) => teacherBusy[d][startSlot].add(t));
+    teachers2.forEach((t) => teacherBusy[d][startSlot + 1].add(t));
+
+    subjectBusy[d][startSlot].add(code);
+    subjectBusy[d][startSlot + 1].add(code);
+};
+
+const canPlaceSingle = (day, slot, subjectCode, classId, row, teacherBusy, subjectBusy) => {
+    const d = String(day || '').toUpperCase();
+    const code = String(subjectCode || '').trim().toUpperCase();
+    if (!code) return false;
+    if (!isTeachableLessonSlot(d, slot)) return false;
+    if (row.slots[slot] !== null) return false;
+
+    // Rule: no subject repeats same day (except double)
+    if (code !== 'PS' && rowHasSubjectForDay(row, code)) return false;
+
+    // Streams not same subject same slot
+    if (subjectBusy?.[d]?.[slot]?.has(code)) return false;
+
+    if (!isSubjectAllowedInSlot(classId, code, slot)) return false;
+
+    const teacher = pickTeacherInitialForSlot(classId, code, d, slot);
+    if (!teacher && code !== 'PS') return false;
+
+    const teachers = teacher.split('/').map((t) => t.trim()).filter(Boolean);
+    for (let i = 0; i < teachers.length; i += 1) {
+        const t = teachers[i];
+        if (teacherBusy[d][slot].has(t)) return false;
+    }
+
+    return true;
+};
+
+const placeSinglePeriod = (day, slot, subjectCode, classId, row, teacherBusy, subjectBusy) => {
+    const d = String(day || '').toUpperCase();
+    const code = String(subjectCode || '').trim().toUpperCase();
+    const teacher = pickTeacherInitialForSlot(classId, code, d, slot);
+
+    row.slots[slot] = {
+        subject: code,
+        teacher,
+        teacher_initials: teacher,
+        teacher_name: '',
+    };
+
+    const teachers = teacher.split('/').map((t) => t.trim()).filter(Boolean);
+    teachers.forEach((t) => teacherBusy[d][slot].add(t));
+    subjectBusy[d][slot].add(code);
+};
+
 const assignSubjectToCell = (day, rowIndex, slotIndex, subjectCode) => {
     const d = String(day);
     const r = Number(rowIndex);
     const s = Number(slotIndex);
+
     const code = String(subjectCode || '').trim();
 
     if (code) {
@@ -1726,6 +2064,13 @@ const onDrop = (day, rowIndex, slotIndex) => {
                         </button>
                         <button
                             type="button"
+                            class="rounded-md bg-blue-600 px-2 py-1 text-[10px] font-semibold text-white shadow-sm hover:bg-blue-700"
+                            @click="generateNewTimetable"
+                        >
+                            Generate with New Rules
+                        </button>
+                        <button
+                            type="button"
                             class="rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100"
                             @click="regenerateSampleTimetable"
                         >
@@ -1780,6 +2125,16 @@ const onDrop = (day, rowIndex, slotIndex) => {
                     <div class="font-semibold">Limitations check:</div>
                     <div class="mt-1 max-h-24 overflow-y-auto">
                         <div v-for="(w, idx) in generationWarnings" :key="idx">{{ w }}</div>
+                    </div>
+                </div>
+
+                <div v-if="false" class="mt-3 rounded-md border border-gray-200 bg-gray-50 p-3 text-[11px]">
+                    <div class="font-semibold">Subject Requirements:</div>
+                    <div class="mt-1 grid grid-cols-2 gap-2">
+                        <div>ENG &amp; B/MAT: 2 doubles + 3 singles (5 periods)</div>
+                        <div>Other subjects: 1 double + 1 single (3 periods)</div>
+                        <div>Total periods per week: 40 max</div>
+                        <div>No subject repeats same day (except doubles)</div>
                     </div>
                 </div>
 
