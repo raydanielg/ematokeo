@@ -6620,6 +6620,30 @@ Route::middleware('auth')->group(function () {
         ]);
     })->name('timetables.create');
 
+    Route::get('/timetables/class-timetable', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+        $school = $schoolId ? \App\Models\School::query()->find($schoolId) : null;
+
+        $classes = $schoolId
+            ? \App\Models\SchoolClass::query()
+                ->where('school_id', $schoolId)
+                ->orderByRaw("COALESCE(parent_class_id, id) ASC")
+                ->orderByRaw("COALESCE(stream, '') ASC")
+                ->get(['id', 'name', 'level', 'stream', 'parent_class_id', 'parent_name'])
+            : collect();
+
+        $latestTimetable = $schoolId
+            ? \App\Models\Timetable::query()->where('school_id', $schoolId)->latest('id')->first()
+            : null;
+
+        return Inertia::render('ClassTimetable', [
+            'school' => $school,
+            'classes' => $classes,
+            'timetable' => $latestTimetable,
+        ]);
+    })->name('timetables.class');
+
     Route::get('/timetables/weekly-limits', function (\Illuminate\Http\Request $request) {
         $user = $request->user();
         $schoolId = $user?->school_id;
