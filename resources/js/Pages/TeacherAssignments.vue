@@ -48,6 +48,48 @@ const subjectLabel = (s) => {
     return code || name || '-';
 };
 
+const baseClassIdFor = (c) => {
+    const pid = Number(c?.parent_class_id || 0);
+    const id = Number(c?.id || 0);
+    return pid > 0 ? pid : id;
+};
+
+const baseClassLabelFor = (c) => {
+    const name = String(c?.name || '').trim();
+    if (name) return name;
+    const level = String(c?.level || '').trim();
+    return level || 'Class';
+};
+
+const groupClassesByBase = (classes) => {
+    const map = new Map();
+    (classes || []).forEach((c) => {
+        const baseId = baseClassIdFor(c);
+        if (!baseId) return;
+
+        if (!map.has(baseId)) {
+            map.set(baseId, {
+                base_class_id: baseId,
+                base_label: baseClassLabelFor(c),
+                streams: new Set(),
+            });
+        }
+
+        const stream = String(c?.stream || '').trim();
+        if (stream) {
+            map.get(baseId).streams.add(stream);
+        }
+    });
+
+    return Array.from(map.values())
+        .map((g) => ({
+            base_class_id: g.base_class_id,
+            base_label: g.base_label,
+            streams: Array.from(g.streams.values()).sort((a, b) => a.localeCompare(b)),
+        }))
+        .sort((a, b) => Number(a.base_class_id) - Number(b.base_class_id));
+};
+
 const exportJson = () => {
     const payload = {
         exported_at: new Date().toISOString(),
@@ -158,34 +200,52 @@ const exportJson = () => {
                                 >
                                     <div class="flex items-start justify-between gap-2">
                                         <div>
-                                            <div class="text-xs font-semibold text-gray-900">
-                                                {{ subjectLabel(s) }}
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <span
+                                                    class="inline-flex items-center rounded-md bg-emerald-600 px-2 py-0.5 text-[10px] font-bold text-white"
+                                                >
+                                                    {{ s.subject_code || 'SUB' }}
+                                                </span>
+                                                <div class="text-xs font-semibold text-gray-900">
+                                                    {{ subjectLabel(s) }}
+                                                </div>
                                             </div>
                                             <div class="mt-0.5 text-[11px] text-gray-500">
                                                 Assigned classes/streams ({{ (s.classes || []).length }})
                                             </div>
                                         </div>
-                                        <div class="text-[10px] font-semibold text-gray-500">
-                                            {{ s.subject_code }}
-                                        </div>
+                                        <div class="text-[10px] font-semibold text-gray-500"></div>
                                     </div>
 
-                                    <div class="mt-2 flex flex-wrap gap-1">
-                                        <span
-                                            v-for="c in (s.classes || [])"
-                                            :key="c.id"
-                                            class="inline-flex items-center rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-gray-700 ring-1 ring-gray-200"
-                                            :title="(c.level ? c.level + ' ' : '') + (c.stream || '')"
-                                        >
-                                            {{ c.label || (c.level + ' ' + (c.stream || '')).trim() }}
-                                        </span>
+                                    <div v-if="(s.classes || []).length === 0" class="mt-2 text-[11px] text-gray-500">
+                                        No classes assigned.
+                                    </div>
 
-                                        <span
-                                            v-if="(s.classes || []).length === 0"
-                                            class="text-[11px] text-gray-500"
+                                    <div v-else class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                        <div
+                                            v-for="grp in groupClassesByBase(s.classes)"
+                                            :key="grp.base_class_id"
+                                            class="rounded-lg bg-white p-3 ring-1 ring-gray-200"
                                         >
-                                            No classes assigned.
-                                        </span>
+                                            <div class="text-xs font-semibold text-gray-800">
+                                                {{ grp.base_label }}
+                                            </div>
+                                            <div class="mt-1 flex flex-wrap gap-1">
+                                                <span
+                                                    v-if="(grp.streams || []).length === 0"
+                                                    class="text-[11px] text-gray-500"
+                                                >
+                                                    No streams
+                                                </span>
+                                                <span
+                                                    v-for="st in (grp.streams || [])"
+                                                    :key="st"
+                                                    class="inline-flex items-center rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-800 ring-1 ring-sky-100"
+                                                >
+                                                    {{ st }}
+                                                </span>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>

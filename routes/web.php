@@ -7676,6 +7676,170 @@ Route::middleware('auth')->group(function () {
         ]);
     })->name('teachers.assignments');
 
+    Route::get('/api/teacher-assignments', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+
+        $rows = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
+            ->join('users as u', 'u.id', '=', 'tcs.teacher_id')
+            ->join('subjects as s', 's.id', '=', 'tcs.subject_id')
+            ->join('school_classes as sc', 'sc.id', '=', 'tcs.school_class_id')
+            ->leftJoin('school_classes as base_sc', 'base_sc.id', '=', 'sc.parent_class_id')
+            ->when($schoolId, fn ($q) => $q->where('tcs.school_id', $schoolId))
+            ->where('u.role', 'teacher')
+            ->orderBy('u.name')
+            ->orderBy('s.subject_code')
+            ->orderByRaw('COALESCE(sc.parent_class_id, sc.id) asc')
+            ->orderByRaw("COALESCE(sc.stream, '') asc")
+            ->get([
+                'u.id as teacher_id',
+                'u.name as teacher_name',
+                'u.email as teacher_email',
+                'u.phone as teacher_phone',
+                'u.check_number as teacher_check_number',
+                's.id as subject_id',
+                's.subject_code as subject_code',
+                's.name as subject_name',
+                'sc.id as class_id',
+                'sc.name as class_name',
+                'sc.level as class_level',
+                'sc.stream as class_stream',
+                'sc.parent_class_id as parent_class_id',
+                'base_sc.name as base_class_name',
+                'base_sc.level as base_class_level',
+            ]);
+
+        $teacherCode = function ($teacherName) {
+            $parts = preg_split('/\s+/', trim((string) $teacherName));
+            $initials = collect($parts)
+                ->filter()
+                ->map(fn ($p) => \Illuminate\Support\Str::upper(mb_substr($p, 0, 1)))
+                ->implode('');
+            return (string) $initials;
+        };
+
+        $teachers = collect($rows)
+            ->groupBy(fn ($r) => (int) $r->teacher_id)
+            ->map(function ($grp) use ($teacherCode) {
+                $first = collect($grp)->first();
+
+                $subjects = collect($grp)
+                    ->groupBy(fn ($r) => (int) $r->subject_id)
+                    ->map(function ($sg) {
+                        $sf = collect($sg)->first();
+
+                        $classes = collect($sg)
+                            ->map(function ($r) {
+                                $classId = (int) $r->class_id;
+                                $parentId = (int) ($r->parent_class_id ?? 0);
+                                $baseId = $parentId > 0 ? $parentId : $classId;
+
+                                $baseName = $r->base_class_name ? trim((string) $r->base_class_name) : '';
+                                $baseLevel = $r->base_class_level ? trim((string) $r->base_class_level) : '';
+                                $baseLabel = $baseName !== '' ? $baseName : $baseLevel;
+
+                                $name = $r->class_name ? trim((string) $r->class_name) : '';
+                                $level = $r->class_level ? trim((string) $r->class_level) : '';
+                                $stream = $r->class_stream ? trim((string) $r->class_stream) : '';
+
+                                $label = $name !== '' ? $name : trim($level . ' ' . $stream);
+
+                                return [
+                                    'id' => $classId,
+                                    'name' => $name,
+                                    'level' => $level,
+                                    'stream' => $stream,
+                                    'label' => $label,
+                                    'parent_class_id' => $parentId,
+                                    'base_class_id' => $baseId,
+                                    'base_label' => $baseLabel,
+                                ];
+                            })
+                            ->unique('id')
+                            ->values()
+                            ->all();
+
+                        return [
+                            'id' => (int) $sf->subject_id,
+                            'subject_code' => (string) ($sf->subject_code ?? ''),
+                            'subject_name' => (string) ($sf->subject_name ?? ''),
+                            'classes' => $classes,
+                        ];
+                    })
+                    ->values()
+                    ->all();
+
+                return [
+                    'id' => (int) $first->teacher_id,
+                    'teacher_name' => (string) ($first->teacher_name ?? ''),
+                    'teacher_code' => $teacherCode($first->teacher_name ?? ''),
+                    'email' => (string) ($first->teacher_email ?? ''),
+                    'phone' => (string) ($first->teacher_phone ?? ''),
+                    'check_number' => (string) ($first->teacher_check_number ?? ''),
+                    'subjects' => $subjects,
+                ];
+            })
+            ->values()
+            ->all();
+
+        return response()->json([
+            'exported_at' => now()->toISOString(),
+            'school_id' => $schoolId,
+            'count' => count($teachers),
+            'teachers' => $teachers,
+        ]);
+    })->name('api.teacher-assignments');
+
+    Route::get('/api/classes', function (\Illuminate\Http\Request $request) {
+        $schoolId = $request->user()?->school_id;
+
+        $rows = \App\Models\SchoolClass::query()
+            ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+            ->orderByRaw('COALESCE(parent_class_id, id) asc')
+            ->orderByRaw("COALESCE(stream, '') asc")
+            ->get(['id', 'name', 'level', 'stream', 'parent_class_id']);
+
+        $byBase = $rows->groupBy(function ($c) {
+            $pid = (int) ($c->parent_class_id ?? 0);
+            return $pid > 0 ? $pid : (int) $c->id;
+        });
+
+        $classes = $byBase->map(function ($grp, $baseId) {
+            $first = $grp->first();
+            $baseName = trim((string) ($first->name ?? ''));
+            $baseLevel = trim((string) ($first->level ?? ''));
+            $baseLabel = $baseName !== '' ? $baseName : $baseLevel;
+
+            $streams = collect($grp)
+                ->filter(fn ($c) => (int) ($c->parent_class_id ?? 0) > 0)
+                ->map(fn ($c) => trim((string) ($c->stream ?? '')))
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            return [
+                'base_class_id' => (int) $baseId,
+                'base_label' => $baseLabel,
+                'streams' => $streams,
+                'rows' => $grp->map(fn ($c) => [
+                    'id' => (int) $c->id,
+                    'name' => trim((string) ($c->name ?? '')),
+                    'level' => trim((string) ($c->level ?? '')),
+                    'stream' => trim((string) ($c->stream ?? '')),
+                    'parent_class_id' => (int) ($c->parent_class_id ?? 0),
+                ])->values()->all(),
+            ];
+        })->values()->all();
+
+        return response()->json([
+            'exported_at' => now()->toISOString(),
+            'school_id' => $schoolId,
+            'count' => count($classes),
+            'classes' => $classes,
+        ]);
+    })->name('api.classes');
+
     Route::get('/teachers/class-assignment-check', function (\Illuminate\Http\Request $request) {
         $schoolId = $request->user()?->school_id;
 
