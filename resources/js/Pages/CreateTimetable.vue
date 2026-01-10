@@ -1892,10 +1892,65 @@ const onSubjectDragStart = (code) => {
     draggedCell.value = null;
 };
 
+const subjectMenuDragging = ref(false);
+const subjectMenuDragOffset = ref({ x: 0, y: 0 });
+
+const clampSubjectMenuPos = () => {
+    const x = Number(subjectMenuPos.value?.x || 0);
+    const y = Number(subjectMenuPos.value?.y || 0);
+    const maxX = Math.max(0, window.innerWidth - 280);
+    const maxY = Math.max(0, window.innerHeight - 260);
+    subjectMenuPos.value = {
+        x: Math.min(Math.max(12, x), maxX),
+        y: Math.min(Math.max(12, y), maxY),
+    };
+};
+
 const closeSubjectMenu = () => {
     showSubjectMenu.value = false;
     subjectMenuSearch.value = '';
     subjectMenuTarget.value = { day: '', rowIndex: -1, slotIndex: -1 };
+};
+
+const startSubjectMenuDrag = (evt) => {
+    evt?.preventDefault?.();
+    subjectMenuDragging.value = true;
+    subjectMenuDragOffset.value = {
+        x: Number(evt?.clientX || 0) - Number(subjectMenuPos.value?.x || 0),
+        y: Number(evt?.clientY || 0) - Number(subjectMenuPos.value?.y || 0),
+    };
+
+    const onMove = (e) => {
+        if (!subjectMenuDragging.value) return;
+        subjectMenuPos.value = {
+            x: Number(e?.clientX || 0) - Number(subjectMenuDragOffset.value?.x || 0),
+            y: Number(e?.clientY || 0) - Number(subjectMenuDragOffset.value?.y || 0),
+        };
+        clampSubjectMenuPos();
+    };
+
+    const onUp = () => {
+        subjectMenuDragging.value = false;
+        window.removeEventListener('mousemove', onMove, true);
+        window.removeEventListener('mouseup', onUp, true);
+    };
+
+    window.addEventListener('mousemove', onMove, true);
+    window.addEventListener('mouseup', onUp, true);
+};
+
+const openSubjectPalette = (evt = null) => {
+    evt?.preventDefault?.();
+    const x = Number(evt?.clientX || 0);
+    const y = Number(evt?.clientY || 0);
+    if (x && y) {
+        subjectMenuPos.value = { x, y };
+    } else if (!Number(subjectMenuPos.value?.x) && !Number(subjectMenuPos.value?.y)) {
+        subjectMenuPos.value = { x: 140, y: 140 };
+    }
+    subjectMenuTarget.value = { day: '', rowIndex: -1, slotIndex: -1 };
+    showSubjectMenu.value = true;
+    clampSubjectMenuPos();
 };
 
 const openSubjectMenu = (evt, day, rowIndex, slotIndex) => {
@@ -1913,6 +1968,13 @@ const openSubjectMenu = (evt, day, rowIndex, slotIndex) => {
         };
         document.addEventListener('click', handler, true);
     }, 0);
+};
+
+const clickAssignFromMenu = (code) => {
+    const target = subjectMenuTarget.value;
+    if (!target?.day || target.rowIndex < 0 || target.slotIndex < 0) return;
+    assignSubjectToCell(target.day, target.rowIndex, target.slotIndex, code);
+    closeSubjectMenu();
 };
 
 const wouldCauseTeacherClash = (targetDay, targetSlotIndex, targetRowIndex, subjectCode) => {
@@ -2167,6 +2229,13 @@ const onDrop = (day, rowIndex, slotIndex) => {
                         </button>
                         <button
                             type="button"
+                            class="rounded-md bg-white px-2 py-1 text-[10px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
+                            @click="(e) => openSubjectPalette(e)"
+                        >
+                            Subjects
+                        </button>
+                        <button
+                            type="button"
                             class="rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100"
                             @click="regenerateSampleTimetable"
                         >
@@ -2393,6 +2462,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             class="border border-slate-300 bg-emerald-50 px-1 py-1 text-center"
                                             :draggable="isDraggableSlot(day, index)"
                                             @dragstart="isDraggableSlot(day, index) && onDragStart(day, originalIndex, index)"
+                                            @contextmenu="(e) => openSubjectMenu(e, day, originalIndex, index)"
                                             @dragover.prevent
                                             @drop="isDraggableSlot(day, index) && onDrop(day, originalIndex, index)"
                                         >
@@ -2426,6 +2496,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             class="border border-slate-300 bg-indigo-50 px-1 py-1 text-center"
                                             :draggable="isDraggableSlot(day, 4 + index)"
                                             @dragstart="isDraggableSlot(day, 4 + index) && onDragStart(day, originalIndex, 4 + index)"
+                                            @contextmenu="(e) => openSubjectMenu(e, day, originalIndex, 4 + index)"
                                             @dragover.prevent
                                             @drop="isDraggableSlot(day, 4 + index) && onDrop(day, originalIndex, 4 + index)"
                                         >
@@ -2472,6 +2543,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             ]"
                                             :draggable="isDraggableSlot(day, 7 + index)"
                                             @dragstart="isDraggableSlot(day, 7 + index) && onDragStart(day, originalIndex, 7 + index)"
+                                            @contextmenu="(e) => openSubjectMenu(e, day, originalIndex, 7 + index)"
                                             @dragover.prevent
                                             @drop="isDraggableSlot(day, 7 + index) && onDrop(day, originalIndex, 7 + index)"
                                         >
@@ -2963,6 +3035,71 @@ Form I &amp; II	Form III &amp; IV
                             @click="limitationsMode === 'subject_only' ? saveSubjectLimits() : saveLimits()"
                         >
                             {{ limitsSaving ? 'Saving...' : 'Save Limitations' }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div
+                v-if="showSubjectMenu"
+                class="fixed z-[60]"
+                :style="{ left: `${subjectMenuPos.x}px`, top: `${subjectMenuPos.y}px` }"
+            >
+                <div class="w-72 overflow-hidden rounded-xl bg-white text-xs text-gray-700 shadow-2xl ring-1 ring-gray-200">
+                    <div
+                        class="flex cursor-move items-center justify-between gap-2 bg-gray-50 px-3 py-2"
+                        @mousedown="startSubjectMenuDrag"
+                    >
+                        <div class="text-[11px] font-semibold text-gray-800">Subjects</div>
+                        <button
+                            type="button"
+                            class="text-[11px] text-gray-500 hover:text-gray-700"
+                            @click="closeSubjectMenu"
+                        >
+                            Close
+                        </button>
+                    </div>
+
+                    <div class="border-t border-gray-100 px-3 py-2">
+                        <input
+                            v-model="subjectMenuSearch"
+                            type="text"
+                            class="w-full rounded-md border border-gray-300 px-2 py-1 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                            placeholder="Search subject..."
+                        />
+                        <div v-if="subjectMenuTarget.day" class="mt-1 text-[10px] text-gray-500">
+                            Target: {{ subjectMenuTarget.day }} / Row {{ subjectMenuTarget.rowIndex + 1 }} / Slot {{ subjectMenuTarget.slotIndex + 1 }}
+                        </div>
+                        <div v-else class="mt-1 text-[10px] text-gray-500">
+                            Drag a subject and drop on a cell.
+                        </div>
+                    </div>
+
+                    <div class="max-h-56 overflow-y-auto border-t border-gray-100 p-2">
+                        <div v-if="!filteredPaletteCodes.length" class="px-2 py-3 text-center text-[11px] text-gray-500">
+                            No subjects found.
+                        </div>
+
+                        <button
+                            v-for="code in filteredPaletteCodes"
+                            :key="code"
+                            type="button"
+                            class="mb-1 flex w-full items-center justify-between rounded-md border border-gray-200 bg-white px-2 py-1 text-left text-[11px] font-semibold text-gray-800 hover:bg-gray-50"
+                            draggable="true"
+                            @dragstart="onSubjectDragStart(code)"
+                            @click="() => clickAssignFromMenu(code)"
+                        >
+                            <span>{{ code }}</span>
+                            <span class="text-[10px] font-medium text-gray-400">Drag</span>
+                        </button>
+
+                        <button
+                            v-if="subjectMenuTarget.day"
+                            type="button"
+                            class="mt-2 w-full rounded-md bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700 ring-1 ring-red-100 hover:bg-red-100"
+                            @click="() => { assignSubjectToCell(subjectMenuTarget.day, subjectMenuTarget.rowIndex, subjectMenuTarget.slotIndex, ''); closeSubjectMenu(); }"
+                        >
+                            Clear cell
                         </button>
                     </div>
                 </div>
