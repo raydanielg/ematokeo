@@ -123,21 +123,25 @@ const classHasTeacherAssignments = (schoolClassId) => {
 
 const pickTeacherInitialForSlot = (schoolClassId, subjectCode, day, slotIndex) => {
     const raw = teacherInitialsForClassSubject(schoolClassId, subjectCode);
+    const subjectKey = String(subjectCode || '').trim().toUpperCase();
     const parts = String(raw || '')
         .split('/')
         .map((s) => s.trim())
         .filter(Boolean);
 
-    if (!parts.length) return '';
-    if (parts.length === 1) return parts[0];
+    // If the "teacher" value is accidentally the same as the subject code (e.g. CIV under CIV), hide it.
+    const cleanParts = parts.filter((p) => String(p).trim().toUpperCase() !== subjectKey);
+
+    if (!cleanParts.length) return '';
+    if (cleanParts.length === 1) return cleanParts[0];
 
     // Co-teaching: show both teachers when exactly two are assigned
-    if (parts.length === 2) return `${parts[0]}/${parts[1]}`;
+    if (cleanParts.length === 2) return `${cleanParts[0]}/${cleanParts[1]}`;
 
     const d = String(day || '').toUpperCase();
     const dayIdx = days.indexOf(d);
     const seed = (Math.max(0, dayIdx) * 31) + Number(slotIndex || 0);
-    return parts[seed % parts.length];
+    return cleanParts[seed % cleanParts.length];
 };
 
 const teacherBySubject = computed(() => {
@@ -629,9 +633,16 @@ const generateSampleTimetable = () => {
         const classLabel = getClassLabel(c);
         const streamLabel = c?.stream ? String(c.stream).toUpperCase().trim() : '';
 
-        const classSubjectCodes = Array.isArray(c?.subject_codes) && c.subject_codes.length
+        const baseClass = c?.parent_class_id
+            ? ((Array.isArray(props.classes) ? props.classes : []).find((x) => Number(x?.id) === Number(c.parent_class_id)) || null)
+            : null;
+
+        const subjectCodesRaw = Array.isArray(c?.subject_codes) && c.subject_codes.length
             ? c.subject_codes
-            : fallbackSubjects;
+            : (Array.isArray(baseClass?.subject_codes) && baseClass.subject_codes.length ? baseClass.subject_codes : []);
+
+        // IMPORTANT: do not fall back to all school subjects; only use assigned subject codes for that class.
+        const classSubjectCodes = subjectCodesRaw;
 
         const codes = (classSubjectCodes || []).map(normalizeCode).filter(Boolean);
         const uniqueCodes = Array.from(new Set(codes));
@@ -749,6 +760,75 @@ const generateSampleTimetable = () => {
                 placeDouble(day, i, code);
                 remainingDoubles[code] -= 1;
             }
+        });
+
+        // 1b) Daily shaping: aim for 3-4 doubles per day per class (if feasible)
+        // and ensure ENG/B/MAT appear daily except one day where one of them may be skipped.
+        const countDoublesForDay = (day) => {
+            let count = 0;
+            const starts = allDoubleStarts(day);
+            starts.forEach((i) => {
+                const a = rowByDay?.[day]?.slots?.[i];
+                const b = rowByDay?.[day]?.slots?.[i + 1];
+                if (a?.subject && b?.subject && String(a.subject) === String(b.subject)) count += 1;
+            });
+            return count;
+        };
+
+        const dayHasSubject = (day, code) => {
+            const k = normalizeCode(code);
+            const row = rowByDay?.[day];
+            if (!row) return false;
+            return (row.slots || []).some((s) => s?.subject && normalizeCode(s.subject) === k);
+        };
+
+        const coreCodes = ['ENG', 'B/MAT'].filter((core) => hasCode(core));
+        const skipDay = days[Math.floor(Math.random() * days.length)];
+        const skipCore = coreCodes.length ? coreCodes[Math.floor(Math.random() * coreCodes.length)] : '';
+
+        const tryPlaceCoreSingle = (day, core) => {
+            // Core subjects are forced morning by isSubjectAllowedInSlot
+            for (let i = 0; i < 9; i += 1) {
+                if (!canPlaceSingleHere(day, i, core)) continue;
+                placeSingle(day, i, core);
+                if (remainingSingles[core] > 0) remainingSingles[core] -= 1;
+                return true;
+            }
+            return false;
+        };
+
+        const tryPlaceBalancedDouble = (day) => {
+            const placements = allDoubleStarts(day);
+            const codesByNeed = uniqueCodes
+                .slice()
+                .sort((a, b) => (weeklyCount[a] || 0) - (weeklyCount[b] || 0));
+
+            for (let p = 0; p < placements.length; p += 1) {
+                const i = placements[p];
+                for (let cidx = 0; cidx < codesByNeed.length; cidx += 1) {
+                    const code = codesByNeed[cidx];
+                    if (!canPlaceDoubleHere(day, i, code)) continue;
+                    placeDouble(day, i, code);
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        days.forEach((day) => {
+            const target = Math.random() < 0.6 ? 4 : 3;
+            let doubles = countDoublesForDay(day);
+            while (doubles < target) {
+                const ok = tryPlaceBalancedDouble(day);
+                if (!ok) break;
+                doubles = countDoublesForDay(day);
+            }
+
+            coreCodes.forEach((core) => {
+                if (day === skipDay && core === skipCore) return;
+                if (dayHasSubject(day, core)) return;
+                tryPlaceCoreSingle(day, core);
+            });
         });
 
         // 2) Place required singles
@@ -1790,23 +1870,9 @@ const onDrop = (day, rowIndex, slotIndex) => {
                         <button
                             type="button"
                             class="rounded-md bg-white px-2 py-1 text-[10px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
-                            @click="showLimitationsModal = true"
-                        >
-                            Limitations &amp; More
-                        </button>
-                        <button
-                            type="button"
-                            class="rounded-md bg-white px-2 py-1 text-[10px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
                             @click="printTimetable"
                         >
                             Print
-                        </button>
-                        <button
-                            type="button"
-                            class="rounded-md bg-white px-2 py-1 text-[10px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
-                            @click="showResolveModal = true"
-                        >
-                            Limitations &amp; Resolve
                         </button>
                     </div>
                 </div>
