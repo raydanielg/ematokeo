@@ -431,6 +431,7 @@ const headerClassName = computed(() => {
 // schedule[day][formIndex][slotIndex] = { subject, teacher }
 const schedule = ref({});
 const generationWarnings = ref([]);
+const generationNonce = ref(0);
 
 const showResolveModal = ref(false);
 const resolveRunning = ref(false);
@@ -607,6 +608,7 @@ const clearStoredSchedule = () => {
 };
 
 const generateSampleTimetable = () => {
+    generationWarnings.value = [];
     const next = {};
     days.forEach((day) => {
         next[day] = [];
@@ -961,8 +963,19 @@ const generateSampleTimetable = () => {
 };
 
 const regenerateSampleTimetable = () => {
-    clearStoredSchedule();
-    generateSampleTimetable();
+    try {
+        // Force UI update even if generation fails
+        schedule.value = {};
+        generationNonce.value += 1;
+        clearStoredSchedule();
+        generateSampleTimetable();
+    } catch (e) {
+        // Make failures visible instead of silently doing nothing
+        // eslint-disable-next-line no-console
+        console.error(e);
+        const msg = e && e.message ? String(e.message) : 'Failed to regenerate timetable.';
+        generationWarnings.value = [msg];
+    }
 };
 
 const getFilteredRows = (day) => {
@@ -1961,6 +1974,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
 
                 <div
                     id="class-timetable-preview"
+                    :key="generationNonce"
                     class="overflow-hidden rounded-lg border border-gray-300 bg-white text-[11px] text-gray-800"
                 >
                     <!-- Top header styled like reports (emblem + titles) -->
