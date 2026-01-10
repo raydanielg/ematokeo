@@ -1042,6 +1042,9 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 ->when($schoolId && \Illuminate\Support\Facades\Schema::hasColumn('timetables', 'school_id'), function ($q) use ($schoolId) {
                     $q->where('school_id', $schoolId);
                 })
+                ->when(\Illuminate\Support\Facades\Schema::hasColumn('timetables', 'is_published'), function ($q) {
+                    $q->where('is_published', true);
+                })
                 ->whereNotNull('schedule_json')
                 ->orderByDesc('created_at');
 
@@ -1053,6 +1056,7 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 'term',
                 'file_path',
                 'schedule_json',
+                'is_published',
                 'created_at',
             ]);
 
@@ -1068,6 +1072,10 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
             $teacherId = $user?->id;
 
             if ($schoolId && \Illuminate\Support\Facades\Schema::hasColumn('timetables', 'school_id') && $timetable->school_id && (int) $timetable->school_id !== (int) $schoolId) {
+                abort(403);
+            }
+
+            if (\Illuminate\Support\Facades\Schema::hasColumn('timetables', 'is_published') && ! $timetable->is_published) {
                 abort(403);
             }
 
@@ -6026,6 +6034,7 @@ Route::middleware('auth')->group(function () {
                 'term',
                 'file_path',
                 'schedule_json',
+                'is_published',
                 'created_at',
             ]);
 
@@ -6033,6 +6042,27 @@ Route::middleware('auth')->group(function () {
             'timetables' => $timetables,
         ]);
     })->name('timetables.index');
+
+    Route::post('/timetables/{timetable}/publish', function (Timetable $timetable, Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+        if ($user && $user->role === 'teacher') {
+            abort(403);
+        }
+
+        if ($schoolId && Schema::hasColumn('timetables', 'school_id') && $timetable->school_id && (int) $timetable->school_id !== (int) $schoolId) {
+            abort(403);
+        }
+
+        if (! Schema::hasColumn('timetables', 'is_published')) {
+            abort(400);
+        }
+
+        $timetable->is_published = ! (bool) $timetable->is_published;
+        $timetable->save();
+
+        return redirect()->back();
+    })->name('timetables.publish');
 
     Route::get('/resources', function () {
         return Inertia::render('Resources');
@@ -6633,14 +6663,44 @@ Route::middleware('auth')->group(function () {
                 ->get(['id', 'name', 'level', 'stream', 'parent_class_id'])
             : collect();
 
-        $latestTimetable = $schoolId
-            ? \App\Models\Timetable::query()->where('school_id', $schoolId)->latest('id')->first()
-            : null;
+        $timetablesQuery = $schoolId
+            ? \App\Models\Timetable::query()->where('school_id', $schoolId)
+            : \App\Models\Timetable::query();
+
+        // Only show published saved timetables on this page.
+        $timetablesQuery
+            ->when(\Illuminate\Support\Facades\Schema::hasColumn('timetables', 'is_published'), function ($q) {
+                $q->where('is_published', true);
+            })
+            ->whereNotNull('schedule_json')
+            ->orderByDesc('created_at');
+
+        $timetables = $timetablesQuery->get([
+            'id',
+            'title',
+            'class_name',
+            'academic_year',
+            'term',
+            'file_path',
+            'schedule_json',
+            'created_at',
+            ...(\Illuminate\Support\Facades\Schema::hasColumn('timetables', 'is_published') ? ['is_published'] : []),
+        ]);
+
+        $selectedId = $request->query('timetable_id');
+        $selectedTimetable = null;
+        if ($selectedId) {
+            $selectedTimetable = $timetables->firstWhere('id', (int) $selectedId);
+        }
+        if (! $selectedTimetable) {
+            $selectedTimetable = $timetables->first();
+        }
 
         return Inertia::render('ClassTimetable', [
             'school' => $school,
             'classes' => $classes,
-            'timetable' => $latestTimetable,
+            'timetables' => $timetables,
+            'timetable' => $selectedTimetable,
         ]);
     })->name('timetables.class');
 
@@ -6897,6 +6957,29 @@ Route::middleware('auth')->group(function () {
 
         return Storage::disk('public')->download($timetable->file_path, $downloadName);
     })->name('timetables.download');
+
+    Route::get('/timetables/{timetable}/preview', function (Timetable $timetable) {
+        $user = request()->user();
+        $schoolId = $user?->school_id;
+        if ($schoolId && Schema::hasColumn('timetables', 'school_id') && $timetable->school_id && (int) $timetable->school_id !== (int) $schoolId) {
+            abort(403);
+        }
+
+        if (! $timetable->file_path) {
+            abort(404);
+        }
+
+        if (! Storage::disk('public')->exists($timetable->file_path)) {
+            abort(404);
+        }
+
+        $headers = [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="timetable_'.$timetable->id.'.pdf"',
+        ];
+
+        return Storage::disk('public')->response($timetable->file_path, null, $headers);
+    })->name('timetables.preview');
 
     // Sitting plans (exam sitting arrangements)
     Route::get('/sitting-plans', function () {

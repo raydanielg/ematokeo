@@ -21,7 +21,7 @@ const preview = (id) => {
 };
 
 const myPeriods = (id) => {
-    router.get(route('teacher.timetables.periods', id));
+    router.get(route('timetables.periods', id));
 };
 </script>
 

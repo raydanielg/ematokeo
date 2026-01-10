@@ -55,6 +55,7 @@ const form = useForm({
     start_time: '07:30',
     end_time: '16:00',
     schedule_json: props.timetable?.schedule_json || null,
+    redirect_to_show: false,
 });
 
 const schoolName = computed(() => props.school.name || 'Your School Name');
@@ -1356,6 +1357,22 @@ const getGroupedRowCount = (day) => {
     return (groups || []).reduce((sum, g) => sum + (g?.rows?.length || 0), 0);
 };
 
+const buildExportSchedule = () => {
+    const classFilter = String(selectedClass.value || 'ALL').toUpperCase().trim();
+    const streamFilter = String(selectedStream.value || 'ALL').toUpperCase().trim();
+
+    // If no filter is applied, export the full schedule.
+    if (classFilter === 'ALL' && streamFilter === 'ALL') {
+        return schedule.value || {};
+    }
+
+    const out = {};
+    (days || []).forEach((d) => {
+        out[String(d)] = getFilteredRows(d);
+    });
+    return out;
+};
+
 onMounted(() => {
     sessionRulesByClassId.value = loadSessionRulesFromStorage();
 
@@ -1379,7 +1396,9 @@ const saveTimetable = () => {
         showDetailsModal.value = true;
         return;
     }
-    form.schedule_json = schedule.value || {};
+    form.schedule_json = buildExportSchedule();
+    form.class_name = headerClassName.value || form.class_name || null;
+    form.redirect_to_show = true;
     form.post(route('timetables.store'), {
         preserveScroll: true,
         onSuccess: () => {
@@ -1389,9 +1408,27 @@ const saveTimetable = () => {
     });
 };
 
+const showExportModal = ref(false);
+const exportTitle = ref('');
+
+const openExportModal = () => {
+    exportTitle.value = String(form.title || '').trim();
+    showExportModal.value = true;
+};
+
+const confirmExport = () => {
+    const title = String(exportTitle.value || '').trim();
+    if (!title) return;
+    form.title = title;
+    showExportModal.value = false;
+    saveTimetable();
+};
+
 const printTimetable = () => {
     window.print();
 };
+
+const showDetailsModal = ref(false);
 
 const showTeacherInitialsModal = ref(false);
 
@@ -1879,6 +1916,57 @@ watch([
 const draggedCell = ref(null);
 const draggedSubjectCode = ref('');
 
+const dragHoverCell = ref({ day: '', rowIndex: -1, slotIndex: -1 });
+const showDropHint = ref(false);
+const dropHintMessage = ref('');
+let dropHintTimer = null;
+
+const flashDropHint = (message) => {
+    dropHintMessage.value = String(message || '').trim() || 'Sio sehemu sahihi';
+    showDropHint.value = true;
+    if (dropHintTimer) {
+        clearTimeout(dropHintTimer);
+        dropHintTimer = null;
+    }
+    dropHintTimer = setTimeout(() => {
+        showDropHint.value = false;
+        dropHintTimer = null;
+    }, 1800);
+};
+
+const draggedCode = computed(() => {
+    if (draggedSubjectCode.value) return String(draggedSubjectCode.value || '').trim();
+    if (!draggedCell.value) return '';
+    const from = draggedCell.value;
+    const fromRow = schedule.value?.[String(from.day)]?.[Number(from.rowIndex)] || null;
+    const cell = fromRow?.slots?.[Number(from.slotIndex)] || null;
+    return cell?.subject ? String(cell.subject).trim() : '';
+});
+
+const isDraggingAnything = computed(() => !!(draggedSubjectCode.value || draggedCell.value));
+
+const canDropOnCell = (day, rowIndex, slotIndex) => {
+    const code = String(draggedCode.value || '').trim();
+    if (!code) return false;
+
+    const d = String(day);
+    const r = Number(rowIndex);
+    const s = Number(slotIndex);
+
+    if (!isDraggableSlot(d, s)) return false;
+
+    const row = schedule.value?.[d]?.[r];
+    if (!row) return false;
+    const classId = Number(row?.school_class_id || row?.id || row?.class_id || 0) || null;
+    if (code && !isSubjectAllowedInSlot(classId, code, s)) return false;
+    if (code && wouldCauseTeacherClash(d, s, r, code)) return false;
+    return true;
+};
+
+const onCellDragEnter = (day, rowIndex, slotIndex) => {
+    dragHoverCell.value = { day: String(day), rowIndex: Number(rowIndex), slotIndex: Number(slotIndex) };
+};
+
 const showSubjectMenu = ref(false);
 const subjectMenuSearch = ref('');
 const subjectMenuPos = ref({ x: 0, y: 0 });
@@ -1960,11 +2048,12 @@ const isDraggableSlot = (day, slotIndex) => {
         return !['WEDNESDAY', 'THURSDAY', 'FRIDAY'].includes(day);
     }
 
-    return false;
 };
 
 const onDragStart = (day, rowIndex, slotIndex) => {
     draggedCell.value = { day, rowIndex, slotIndex };
+    draggedSubjectCode.value = '';
+    dragHoverCell.value = { day: '', rowIndex: -1, slotIndex: -1 };
 };
 
 const onSubjectDragStart = (code) => {
@@ -1979,6 +2068,7 @@ const onSubjectDragStart = (code) => {
     }
     draggedSubjectCode.value = c;
     draggedCell.value = null;
+    dragHoverCell.value = { day: '', rowIndex: -1, slotIndex: -1 };
 };
 
 const subjectMenuDragging = ref(false);
@@ -2153,8 +2243,12 @@ const assignSubjectToCell = (day, rowIndex, slotIndex, subjectCode) => {
 const onDrop = (day, rowIndex, slotIndex) => {
     if (draggedSubjectCode.value) {
         const ok = assignSubjectToCell(day, rowIndex, slotIndex, draggedSubjectCode.value);
+        if (!ok) {
+            flashDropHint('Sio sehemu sahihi');
+        }
         draggedSubjectCode.value = '';
         draggedCell.value = null;
+        dragHoverCell.value = { day: '', rowIndex: -1, slotIndex: -1 };
         return;
     }
 
@@ -2185,8 +2279,13 @@ const onDrop = (day, rowIndex, slotIndex) => {
     const canPlaceA = !candidateFrom?.subject || isSubjectAllowedInSlot(fromClassId, candidateFrom.subject, from.slotIndex);
     const canPlaceB = !candidateTo?.subject || isSubjectAllowedInSlot(toClassId, candidateTo.subject, slotIndex);
 
-    if (!canPlaceA || !canPlaceB) {
+    const clashOnTarget = candidateTo?.subject ? wouldCauseTeacherClash(day, slotIndex, rowIndex, candidateTo.subject) : false;
+    const clashOnSource = candidateFrom?.subject ? wouldCauseTeacherClash(from.day, from.slotIndex, from.rowIndex, candidateFrom.subject) : false;
+
+    if (!canPlaceA || !canPlaceB || clashOnTarget || clashOnSource) {
+        flashDropHint('Sio sehemu sahihi');
         draggedCell.value = null;
+        dragHoverCell.value = { day: '', rowIndex: -1, slotIndex: -1 };
         return;
     }
 
@@ -2196,6 +2295,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
     saveScheduleToStorage();
 
     draggedCell.value = null;
+    dragHoverCell.value = { day: '', rowIndex: -1, slotIndex: -1 };
 };
 
 </script>
@@ -2366,7 +2466,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                             type="button"
                             class="rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
                             :disabled="form.processing"
-                            @click="saveTimetable"
+                            @click="openExportModal"
                         >
                             {{ form.processing ? 'Exporting...' : 'Export (Save to DB)' }}
                         </button>
@@ -2580,9 +2680,22 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                         <td
                                             v-for="(slot, index) in row.slots.slice(0, 4)"
                                             :key="`am-${index}`"
-                                            class="border border-slate-300 bg-emerald-50 px-1 py-1 text-center"
+                                            :class="[
+                                                'border border-slate-300 px-1 py-1 text-center transition-colors',
+                                                isDraggingAnything
+                                                    ? (canDropOnCell(day, originalIndex, index)
+                                                        ? 'bg-emerald-100 ring-2 ring-emerald-300'
+                                                        : 'bg-gray-100 opacity-80')
+                                                    : 'bg-emerald-50',
+                                                (dragHoverCell.day === day && dragHoverCell.rowIndex === originalIndex && dragHoverCell.slotIndex === index && isDraggingAnything)
+                                                    ? (canDropOnCell(day, originalIndex, index)
+                                                        ? 'ring-4 ring-emerald-400'
+                                                        : 'ring-4 ring-red-300')
+                                                    : '',
+                                            ]"
                                             :draggable="isDraggableSlot(day, index)"
                                             @dragstart="isDraggableSlot(day, index) && onDragStart(day, originalIndex, index)"
+                                            @dragenter.prevent="onCellDragEnter(day, originalIndex, index)"
                                             @contextmenu="(e) => openSubjectMenu(e, day, originalIndex, index)"
                                             @dragover.prevent
                                             @drop="isDraggableSlot(day, index) && onDrop(day, originalIndex, index)"
@@ -2614,9 +2727,22 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                         <td
                                             v-for="(slot, index) in row.slots.slice(4, 7)"
                                             :key="`mid-${index}`"
-                                            class="border border-slate-300 bg-indigo-50 px-1 py-1 text-center"
+                                            :class="[
+                                                'border border-slate-300 px-1 py-1 text-center transition-colors',
+                                                isDraggingAnything
+                                                    ? (canDropOnCell(day, originalIndex, 4 + index)
+                                                        ? 'bg-emerald-100 ring-2 ring-emerald-300'
+                                                        : 'bg-gray-100 opacity-80')
+                                                    : 'bg-indigo-50',
+                                                (dragHoverCell.day === day && dragHoverCell.rowIndex === originalIndex && dragHoverCell.slotIndex === (4 + index) && isDraggingAnything)
+                                                    ? (canDropOnCell(day, originalIndex, 4 + index)
+                                                        ? 'ring-4 ring-emerald-400'
+                                                        : 'ring-4 ring-red-300')
+                                                    : '',
+                                            ]"
                                             :draggable="isDraggableSlot(day, 4 + index)"
                                             @dragstart="isDraggableSlot(day, 4 + index) && onDragStart(day, originalIndex, 4 + index)"
+                                            @dragenter.prevent="onCellDragEnter(day, originalIndex, 4 + index)"
                                             @contextmenu="(e) => openSubjectMenu(e, day, originalIndex, 4 + index)"
                                             @dragover.prevent
                                             @drop="isDraggableSlot(day, 4 + index) && onDrop(day, originalIndex, 4 + index)"
@@ -2653,7 +2779,17 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             v-for="(slot, index) in row.slots.slice(7, 9)"
                                             :key="`pm-${index}`"
                                             :class="[
-                                                'border border-slate-300 px-1 py-1 text-center',
+                                                'border border-slate-300 px-1 py-1 text-center transition-colors',
+                                                isDraggingAnything
+                                                    ? (canDropOnCell(day, originalIndex, 7 + index)
+                                                        ? 'bg-emerald-100 ring-2 ring-emerald-300'
+                                                        : 'bg-gray-100 opacity-80')
+                                                    : '',
+                                                (dragHoverCell.day === day && dragHoverCell.rowIndex === originalIndex && dragHoverCell.slotIndex === (7 + index) && isDraggingAnything)
+                                                    ? (canDropOnCell(day, originalIndex, 7 + index)
+                                                        ? 'ring-4 ring-emerald-400'
+                                                        : 'ring-4 ring-red-300')
+                                                    : '',
                                                 day === 'WEDNESDAY'
                                                     ? 'bg-amber-100 text-[9px] font-semibold text-amber-900'
                                                     : day === 'THURSDAY'
@@ -2664,6 +2800,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                             ]"
                                             :draggable="isDraggableSlot(day, 7 + index)"
                                             @dragstart="isDraggableSlot(day, 7 + index) && onDragStart(day, originalIndex, 7 + index)"
+                                            @dragenter.prevent="onCellDragEnter(day, originalIndex, 7 + index)"
                                             @contextmenu="(e) => openSubjectMenu(e, day, originalIndex, 7 + index)"
                                             @dragover.prevent
                                             @drop="isDraggableSlot(day, 7 + index) && onDrop(day, originalIndex, 7 + index)"
@@ -2710,6 +2847,12 @@ const onDrop = (day, rowIndex, slotIndex) => {
                             </tbody>
                         </table>
                     </div>
+                </div>
+            </div>
+
+            <div v-if="showDropHint" class="fixed bottom-4 left-1/2 z-[60] -translate-x-1/2">
+                <div class="rounded-full bg-red-600 px-4 py-2 text-[12px] font-semibold text-white shadow-lg">
+                    {{ dropHintMessage }}
                 </div>
             </div>
 
@@ -2859,9 +3002,58 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                 type="button"
                                 class="inline-flex items-center rounded-md bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
                                 :disabled="form.processing"
-                                @click="saveTimetable"
+                                @click="openExportModal"
                             >
                                 {{ form.processing ? 'Exporting...' : 'Export (Save to DB)' }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div
+                v-if="showExportModal"
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6 sm:px-0"
+                @click.self="showExportModal = false"
+            >
+                <div class="w-full max-w-md rounded-lg bg-white shadow-xl">
+                    <div class="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+                        <div class="text-sm font-semibold text-gray-800">Export Timetable</div>
+                        <button type="button" class="text-[11px] text-gray-500 hover:text-gray-700" @click="showExportModal = false">
+                            Close
+                        </button>
+                    </div>
+                    <div class="space-y-3 p-4">
+                        <div>
+                            <label class="block text-[11px] font-semibold text-gray-700">Jina la Timetable</label>
+                            <input
+                                v-model="exportTitle"
+                                type="text"
+                                class="mt-1 w-full rounded-md border border-gray-200 px-3 py-2 text-[12px] focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                                placeholder="Mfano: Timetable Term 1 2026"
+                                :disabled="form.processing"
+                                @keydown.enter.prevent="confirmExport"
+                            />
+                            <div v-if="!String(exportTitle || '').trim()" class="mt-1 text-[11px] text-red-600">
+                                Tafadhali andika jina.
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-end gap-2 pt-2">
+                            <button
+                                type="button"
+                                class="rounded-md bg-gray-100 px-3 py-1.5 text-[11px] font-medium text-gray-700 hover:bg-gray-200"
+                                :disabled="form.processing"
+                                @click="showExportModal = false"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-md bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
+                                :disabled="form.processing || !String(exportTitle || '').trim()"
+                                @click="confirmExport"
+                            >
+                                {{ form.processing ? 'Exporting...' : 'Export' }}
                             </button>
                         </div>
                     </div>

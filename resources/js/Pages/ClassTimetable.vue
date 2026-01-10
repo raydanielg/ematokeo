@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head } from '@inertiajs/vue3';
+import { Head, router } from '@inertiajs/vue3';
 
 const props = defineProps({
     school: {
@@ -9,6 +9,10 @@ const props = defineProps({
         default: null,
     },
     classes: {
+        type: Array,
+        default: () => [],
+    },
+    timetables: {
         type: Array,
         default: () => [],
     },
@@ -73,7 +77,27 @@ const normalizeSchedule = (rawSchedule) => {
     }
 };
 
-const schedule = computed(() => normalizeSchedule(props.timetable?.schedule_json));
+const selectedTimetableId = ref(props.timetable?.id || null);
+
+watch(() => props.timetable?.id, (id) => {
+    if (!selectedTimetableId.value && id) {
+        selectedTimetableId.value = id;
+    }
+});
+
+watch(selectedTimetableId, (id) => {
+    const tid = Number(id || 0) || null;
+    if (!tid) return;
+    router.get(route('timetables.class', { timetable_id: tid }), {}, { preserveScroll: true });
+});
+
+const activeTimetable = computed(() => {
+    const id = Number(selectedTimetableId.value || 0) || null;
+    if (!id) return props.timetable;
+    return (props.timetables || []).find((t) => Number(t?.id || 0) === id) || props.timetable;
+});
+
+const schedule = computed(() => normalizeSchedule(activeTimetable.value?.schedule_json));
 
 const normalizeStr = (v) => String(v || '').trim().toUpperCase();
 
@@ -193,6 +217,10 @@ const hasAnySchedule = computed(() => {
     const s = schedule.value || {};
     return Object.keys(s).length > 0;
 });
+
+const printTimetable = () => {
+    window.print();
+};
 </script>
 
 <template>
@@ -211,6 +239,17 @@ const hasAnySchedule = computed(() => {
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2">
+                    <div class="text-xs font-semibold text-gray-700">Saved Timetable:</div>
+                    <select
+                        v-model="selectedTimetableId"
+                        class="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                    >
+                        <option v-if="!timetables || timetables.length === 0" :value="null">No Published timetables</option>
+                        <option v-for="t in timetables" :key="t.id" :value="t.id">
+                            {{ t.title }}
+                        </option>
+                    </select>
+
                     <div class="text-xs font-semibold text-gray-700">Class:</div>
                     <select
                         v-model="selectedBaseClassId"
@@ -227,6 +266,14 @@ const hasAnySchedule = computed(() => {
                         <option value="ALL">All</option>
                         <option v-for="s in streamsForBase" :key="s" :value="s">{{ s }}</option>
                     </select>
+
+                    <button
+                        type="button"
+                        class="ml-2 rounded-md bg-white px-3 py-1 text-xs font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
+                        @click="printTimetable"
+                    >
+                        Print
+                    </button>
                 </div>
             </div>
         </template>
@@ -238,9 +285,9 @@ const hasAnySchedule = computed(() => {
                         <div>
                             <div class="text-sm font-semibold text-gray-800">Preview</div>
                             <div class="mt-0.5 text-xs text-gray-500">
-                                {{ timetable?.title || 'Latest timetable' }}
-                                <span v-if="timetable?.academic_year"> · {{ timetable.academic_year }}</span>
-                                <span v-if="timetable?.term"> · {{ timetable.term }}</span>
+                                {{ activeTimetable?.title || 'Published timetable' }}
+                                <span v-if="activeTimetable?.academic_year"> · {{ activeTimetable.academic_year }}</span>
+                                <span v-if="activeTimetable?.term"> · {{ activeTimetable.term }}</span>
                             </div>
                         </div>
                         <div v-if="!hasAnySchedule" class="rounded-md bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 ring-1 ring-amber-200">
@@ -249,48 +296,133 @@ const hasAnySchedule = computed(() => {
                     </div>
 
                     <div class="mt-4 overflow-x-auto">
-                        <table class="min-w-full border-collapse text-[11px] text-gray-800">
+                        <table class="min-w-full border-collapse text-[10px] leading-tight">
                             <thead>
                                 <tr>
-                                    <th class="border border-gray-200 bg-gray-50 px-2 py-2 text-left">Day</th>
-                                    <th class="border border-gray-200 bg-gray-50 px-2 py-2 text-center">08:00</th>
-                                    <th class="border border-gray-200 bg-gray-50 px-2 py-2 text-center">08:40</th>
-                                    <th class="border border-gray-200 bg-gray-50 px-2 py-2 text-center">09:20</th>
-                                    <th class="border border-gray-200 bg-gray-50 px-2 py-2 text-center">10:00</th>
-                                    <th class="border border-gray-200 bg-sky-50 px-2 py-2 text-center">BREAK</th>
-                                    <th class="border border-gray-200 bg-gray-50 px-2 py-2 text-center">11:05</th>
-                                    <th class="border border-gray-200 bg-gray-50 px-2 py-2 text-center">11:45</th>
-                                    <th class="border border-gray-200 bg-gray-50 px-2 py-2 text-center">12:25</th>
-                                    <th class="border border-gray-200 bg-sky-50 px-2 py-2 text-center">BREAK</th>
-                                    <th class="border border-gray-200 bg-gray-50 px-2 py-2 text-center">13:20</th>
-                                    <th class="border border-gray-200 bg-gray-50 px-2 py-2 text-center">14:00</th>
+                                    <th class="w-20 border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
+                                        DAY
+                                    </th>
+                                    <th class="w-20 border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
+                                        CLASS
+                                    </th>
+                                    <th class="w-16 border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
+                                        STREAM
+                                    </th>
+                                    <th class="w-24 border border-slate-300 bg-sky-50 px-1 py-1 text-center align-middle">
+                                        07:00 - 07:30 AM
+                                    </th>
+                                    <th class="w-16 border border-slate-300 bg-fuchsia-100 px-1 py-1 text-center align-middle">
+                                        07:30 - 07:50 AM
+                                    </th>
+                                    <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
+                                        08:00
+                                    </th>
+                                    <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
+                                        08:40
+                                    </th>
+                                    <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
+                                        09:20
+                                    </th>
+                                    <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
+                                        10:00
+                                    </th>
+                                    <th class="w-16 border border-slate-300 bg-sky-200 px-1 py-1 text-center align-middle">
+                                        BREAK
+                                    </th>
+                                    <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
+                                        11:05
+                                    </th>
+                                    <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
+                                        11:45
+                                    </th>
+                                    <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
+                                        12:25
+                                    </th>
+                                    <th class="w-16 border border-slate-300 bg-sky-200 px-1 py-1 text-center align-middle">
+                                        BREAK
+                                    </th>
+                                    <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
+                                        13:20
+                                    </th>
+                                    <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
+                                        14:00
+                                    </th>
+                                    <th class="w-20 border border-slate-300 bg-emerald-100 px-1 py-1 text-center align-middle">
+                                        03:30 - 05:30 PM
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="day in days" :key="day" class="hover:bg-gray-50">
-                                    <td class="border border-gray-200 px-2 py-2 text-left font-semibold">{{ day }}</td>
+                                <tr v-for="day in days" :key="day">
+                                    <td class="border border-slate-300 bg-sky-100 px-1 py-3 text-center text-[10px] font-semibold uppercase text-sky-900">
+                                        {{ day }}
+                                    </td>
 
                                     <template v-if="primaryRowByDay[day]">
-                                        <td v-for="i in 4" :key="`am-${day}-${i}`" class="border border-gray-200 px-2 py-2 text-center">
-                                            <div class="font-semibold">{{ primaryRowByDay[day].slots[i - 1]?.subject || '' }}</div>
-                                            <div class="text-[10px] text-gray-600">{{ primaryRowByDay[day].slots[i - 1]?.teacher_initials || primaryRowByDay[day].slots[i - 1]?.teacher || '' }}</div>
+                                        <td class="border border-slate-300 bg-slate-50 px-1 py-1 text-center font-semibold">
+                                            {{ primaryRowByDay[day].class_label || primaryRowByDay[day].form || primaryRowByDay[day].class_name || '-' }}
                                         </td>
-                                        <td class="border border-gray-200 bg-sky-50 px-2 py-2 text-center font-semibold text-sky-900">BREAK</td>
-
-                                        <td v-for="j in 3" :key="`mid-${day}-${j}`" class="border border-gray-200 px-2 py-2 text-center">
-                                            <div class="font-semibold">{{ primaryRowByDay[day].slots[3 + j]?.subject || '' }}</div>
-                                            <div class="text-[10px] text-gray-600">{{ primaryRowByDay[day].slots[3 + j]?.teacher_initials || primaryRowByDay[day].slots[3 + j]?.teacher || '' }}</div>
+                                        <td class="border border-slate-300 bg-slate-50 px-1 py-1 text-center">
+                                            {{ primaryRowByDay[day].stream || '-' }}
                                         </td>
-                                        <td class="border border-gray-200 bg-sky-50 px-2 py-2 text-center font-semibold text-sky-900">BREAK</td>
+                                        <td class="border border-slate-300 bg-sky-50 px-1 py-1 text-center">
+                                            <div class="font-semibold">ARRIVAL &amp; CLEANING</div>
+                                        </td>
+                                        <td class="border border-slate-300 bg-fuchsia-100 px-1 py-1 text-center font-semibold text-fuchsia-900">
+                                            PREP
+                                        </td>
 
-                                        <td v-for="k in 2" :key="`pm-${day}-${k}`" class="border border-gray-200 px-2 py-2 text-center">
-                                            <div class="font-semibold">{{ primaryRowByDay[day].slots[6 + k]?.subject || '' }}</div>
-                                            <div class="text-[10px] text-gray-600">{{ primaryRowByDay[day].slots[6 + k]?.teacher_initials || primaryRowByDay[day].slots[6 + k]?.teacher || '' }}</div>
+                                        <td v-for="i in 4" :key="`am-${day}-${i}`" class="border border-slate-300 bg-emerald-50 px-1 py-1 text-center">
+                                            <template v-if="primaryRowByDay[day].slots[i - 1]?.subject">
+                                                <div class="font-semibold">{{ primaryRowByDay[day].slots[i - 1].subject }}</div>
+                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">
+                                                    {{ primaryRowByDay[day].slots[i - 1].teacher_initials || primaryRowByDay[day].slots[i - 1].teacher || '' }}
+                                                </div>
+                                            </template>
+                                            <template v-else>
+                                                <div>&nbsp;</div>
+                                            </template>
+                                        </td>
+
+                                        <td class="border border-slate-300 bg-sky-200 px-1 py-1 text-center font-semibold text-sky-900">
+                                            BREAK
+                                        </td>
+
+                                        <td v-for="j in 3" :key="`mid-${day}-${j}`" class="border border-slate-300 bg-indigo-50 px-1 py-1 text-center">
+                                            <template v-if="primaryRowByDay[day].slots[3 + j]?.subject">
+                                                <div class="font-semibold">{{ primaryRowByDay[day].slots[3 + j].subject }}</div>
+                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">
+                                                    {{ primaryRowByDay[day].slots[3 + j].teacher_initials || primaryRowByDay[day].slots[3 + j].teacher || '' }}
+                                                </div>
+                                            </template>
+                                            <template v-else>
+                                                <div>&nbsp;</div>
+                                            </template>
+                                        </td>
+
+                                        <td class="border border-slate-300 bg-sky-200 px-1 py-1 text-center font-semibold text-sky-900">
+                                            BREAK
+                                        </td>
+
+                                        <td v-for="k in 2" :key="`pm-${day}-${k}`" class="border border-slate-300 bg-indigo-50 px-1 py-1 text-center">
+                                            <template v-if="primaryRowByDay[day].slots[6 + k]?.subject">
+                                                <div class="font-semibold">{{ primaryRowByDay[day].slots[6 + k].subject }}</div>
+                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">
+                                                    {{ primaryRowByDay[day].slots[6 + k].teacher_initials || primaryRowByDay[day].slots[6 + k].teacher || '' }}
+                                                </div>
+                                            </template>
+                                            <template v-else>
+                                                <div class="font-semibold text-gray-400">PS</div>
+                                            </template>
+                                        </td>
+
+                                        <td class="border border-slate-300 bg-emerald-200 px-1 py-1 text-center font-semibold text-emerald-900">
+                                            REMEDIAL
                                         </td>
                                     </template>
 
                                     <template v-else>
-                                        <td class="border border-gray-200 px-2 py-2" colspan="11">
+                                        <td class="border border-slate-300 bg-white px-2 py-2" colspan="15">
                                             <span class="text-xs text-gray-500">No row found for selected class/stream on this day.</span>
                                         </td>
                                     </template>

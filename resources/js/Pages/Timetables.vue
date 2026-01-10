@@ -1,6 +1,7 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head, router } from '@inertiajs/vue3';
+import { ref } from 'vue';
 
 const props = defineProps({
     timetables: {
@@ -13,10 +14,22 @@ const previewTimetable = (id) => {
     router.get(route('timetables.show', id));
 };
 
+const showPreviewModal = ref(false);
+const previewItem = ref(null);
+
+const openPreviewModal = (timetable) => {
+    previewItem.value = timetable || null;
+    showPreviewModal.value = true;
+};
+
 const deleteTimetable = (id) => {
     if (!confirm('Delete this timetable?')) return;
 
     router.delete(route('timetables.destroy', id));
+};
+
+const togglePublish = (id) => {
+    router.post(route('timetables.publish', id));
 };
 
 const formatDateTime = (value) => {
@@ -120,6 +133,14 @@ const hasSchedule = (t) => {
                                     </span>
                                     <span
                                         class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1"
+                                        :class="timetable.is_published
+                                            ? 'bg-violet-50 text-violet-700 ring-violet-100'
+                                            : 'bg-gray-50 text-gray-600 ring-gray-100'"
+                                    >
+                                        {{ timetable.is_published ? 'Published' : 'Draft' }}
+                                    </span>
+                                    <span
+                                        class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1"
                                         :class="timetable.file_path
                                             ? 'bg-blue-50 text-blue-700 ring-blue-100'
                                             : 'bg-gray-50 text-gray-500 ring-gray-100'"
@@ -136,9 +157,16 @@ const hasSchedule = (t) => {
                                     <button
                                         type="button"
                                         class="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700 ring-1 ring-blue-100 hover:bg-blue-100"
-                                        @click="router.get(route('timetables.show', timetable.id))"
+                                        @click="openPreviewModal(timetable)"
                                     >
                                         Preview
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="rounded-md bg-violet-50 px-2 py-1 text-[11px] font-medium text-violet-700 ring-1 ring-violet-100 hover:bg-violet-100"
+                                        @click="togglePublish(timetable.id)"
+                                    >
+                                        {{ timetable.is_published ? 'Unpublish' : 'Publish' }}
                                     </button>
                                     <button
                                         type="button"
@@ -165,6 +193,55 @@ const hasSchedule = (t) => {
                         </tr>
                     </tbody>
                 </table>
+            </div>
+
+            <div
+                v-if="showPreviewModal"
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6"
+                @click.self="showPreviewModal = false"
+            >
+                <div class="flex h-[85vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-xl">
+                    <div class="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+                        <div class="min-w-0">
+                            <div class="truncate text-sm font-semibold text-gray-800">
+                                {{ previewItem?.title || 'Timetable Preview' }}
+                            </div>
+                            <div class="mt-0.5 text-[11px] text-gray-500">
+                                {{ previewItem?.class_name || '-' }}
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button
+                                type="button"
+                                class="rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100"
+                                @click="previewItem?.id && router.get(route('timetables.show', previewItem.id))"
+                            >
+                                Edit
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-md bg-gray-50 px-2 py-1 text-[11px] font-medium text-gray-700 ring-1 ring-gray-100 hover:bg-gray-100"
+                                @click="showPreviewModal = false"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="flex-1 bg-gray-50">
+                        <div v-if="!previewItem" class="p-6 text-center text-xs text-gray-500">
+                            No timetable selected.
+                        </div>
+                        <div v-else-if="!previewItem.file_path" class="p-6 text-center text-xs text-gray-600">
+                            This timetable has no PDF yet. Use Export to generate a PDF.
+                        </div>
+                        <iframe
+                            v-else
+                            :src="route('timetables.preview', previewItem.id)"
+                            class="h-full w-full"
+                        />
+                    </div>
+                </div>
             </div>
         </div>
     </AuthenticatedLayout>

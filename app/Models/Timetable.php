@@ -19,5 +19,11 @@ class Timetable extends Model
         'term',
         'file_path',
         'schedule_json',
+        'is_published',
+    ];
+
+    protected $casts = [
+        'schedule_json' => 'array',
+        'is_published' => 'boolean',
     ];
 }
