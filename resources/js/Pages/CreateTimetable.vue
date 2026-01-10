@@ -89,6 +89,37 @@ const subjectIdByCode = computed(() => {
     return map;
 });
 
+const subjectCodesForClassId = (schoolClassId) => {
+    const cid = Number(schoolClassId);
+    if (!Number.isFinite(cid) || !cid) return [];
+
+    const cls = classById.value?.[String(cid)] || null;
+    const base = cls?.parent_class_id ? (classById.value?.[String(cls.parent_class_id)] || null) : null;
+
+    const raw = Array.isArray(cls?.subject_codes) && cls.subject_codes.length
+        ? cls.subject_codes
+        : (Array.isArray(base?.subject_codes) && base.subject_codes.length ? base.subject_codes : []);
+
+    return (raw || [])
+        .map((v) => String(v || '').trim().toUpperCase())
+        .filter(Boolean);
+};
+
+const isSubjectAssignedToClass = (schoolClassId, subjectCode) => {
+    const cid = Number(schoolClassId);
+    if (!Number.isFinite(cid) || !cid) return true;
+
+    const code = String(subjectCode || '').trim().toUpperCase();
+    if (!code) return true;
+
+    const assigned = subjectCodesForClassId(cid);
+
+    // If the backend did not provide subject_codes, do not hard-block editing.
+    if (!assigned.length) return true;
+
+    return assigned.includes(code);
+};
+
 const teacherInitialsForClassSubject = (schoolClassId, subjectCode) => {
     const classId = schoolClassId ? String(schoolClassId) : '';
     const code = String(subjectCode || '').trim();
@@ -482,6 +513,7 @@ const isSubjectAllowedInSlot = (schoolClassId, subjectCode, slotIndex) => {
     const forcedMorning = new Set(['ENG', 'B/MAT']);
     const code = String(subjectCode || '').trim().toUpperCase();
     const slotSession = getSlotSession(slotIndex);
+    if (!isSubjectAssignedToClass(schoolClassId, code)) return false;
     if (forcedMorning.has(code)) {
         // Prefer morning for core subjects, but allow the first period after break (slot 4)
         // to support the pattern shown in the school's timetable.
@@ -1852,10 +1884,49 @@ const paletteSubjectCodes = computed(() => {
     return Array.from(new Set(codes)).sort((a, b) => a.localeCompare(b));
 });
 
+const activePaletteClassIds = computed(() => {
+    const target = subjectMenuTarget.value;
+    if (target?.day && target.rowIndex >= 0) {
+        const row = schedule.value?.[String(target.day)]?.[Number(target.rowIndex)] || null;
+        const classId = Number(row?.school_class_id || row?.id || row?.class_id || 0) || null;
+        return classId ? [classId] : [];
+    }
+
+    const classFilter = String(selectedClass.value || 'ALL').toUpperCase().trim();
+    const streamFilter = String(selectedStream.value || 'ALL').toUpperCase().trim();
+
+    if (classFilter === 'ALL') return [];
+
+    const matches = (timetableClasses.value || []).filter((c) => {
+        if (!c?.id) return false;
+        const label = String(getClassLabel(c) || '').toUpperCase().trim();
+        if (!label || label !== classFilter) return false;
+        if (streamFilter === 'ALL') return true;
+        const s = c?.stream ? String(c.stream).toUpperCase().trim() : '';
+        return s === streamFilter;
+    });
+
+    return matches.map((c) => Number(c.id)).filter((v) => Number.isFinite(v) && v > 0);
+});
+
+const paletteCodesForContext = computed(() => {
+    const classIds = activePaletteClassIds.value || [];
+    if (!classIds.length) return paletteSubjectCodes.value;
+
+    const set = new Set();
+    classIds.forEach((cid) => {
+        subjectCodesForClassId(cid).forEach((code) => set.add(code));
+    });
+
+    const codes = Array.from(set.values());
+    if (!codes.length) return paletteSubjectCodes.value;
+    return codes.sort((a, b) => a.localeCompare(b));
+});
+
 const filteredPaletteCodes = computed(() => {
     const q = String(subjectMenuSearch.value || '').trim().toUpperCase();
-    if (!q) return paletteSubjectCodes.value;
-    return paletteSubjectCodes.value.filter((c) => String(c).toUpperCase().includes(q));
+    if (!q) return paletteCodesForContext.value;
+    return paletteCodesForContext.value.filter((c) => String(c).toUpperCase().includes(q));
 });
 
 const isDraggableSlot = (day, slotIndex) => {
@@ -1888,7 +1959,16 @@ const onDragStart = (day, rowIndex, slotIndex) => {
 };
 
 const onSubjectDragStart = (code) => {
-    draggedSubjectCode.value = String(code || '').trim();
+    const c = String(code || '').trim();
+    if (!c) {
+        draggedSubjectCode.value = '';
+        return;
+    }
+    if (!canUsePaletteCodeForTarget(c)) {
+        draggedSubjectCode.value = '';
+        return;
+    }
+    draggedSubjectCode.value = c;
     draggedCell.value = null;
 };
 
@@ -1973,8 +2053,20 @@ const openSubjectMenu = (evt, day, rowIndex, slotIndex) => {
 const clickAssignFromMenu = (code) => {
     const target = subjectMenuTarget.value;
     if (!target?.day || target.rowIndex < 0 || target.slotIndex < 0) return;
+    const row = schedule.value?.[String(target.day)]?.[Number(target.rowIndex)] || null;
+    const classId = Number(row?.school_class_id || row?.id || row?.class_id || 0) || null;
+    if (classId && !isSubjectAllowedInSlot(classId, code, target.slotIndex)) return;
     assignSubjectToCell(target.day, target.rowIndex, target.slotIndex, code);
     closeSubjectMenu();
+};
+
+const canUsePaletteCodeForTarget = (code) => {
+    const target = subjectMenuTarget.value;
+    if (!target?.day || target.rowIndex < 0 || target.slotIndex < 0) return true;
+    const row = schedule.value?.[String(target.day)]?.[Number(target.rowIndex)] || null;
+    const classId = Number(row?.school_class_id || row?.id || row?.class_id || 0) || null;
+    if (!classId) return true;
+    return isSubjectAllowedInSlot(classId, code, target.slotIndex);
 };
 
 const wouldCauseTeacherClash = (targetDay, targetSlotIndex, targetRowIndex, subjectCode) => {
@@ -3084,8 +3176,14 @@ Form I &amp; II	Form III &amp; IV
                             v-for="code in filteredPaletteCodes"
                             :key="code"
                             type="button"
-                            class="mb-1 flex w-full items-center justify-between rounded-md border border-gray-200 bg-white px-2 py-1 text-left text-[11px] font-semibold text-gray-800 hover:bg-gray-50"
-                            draggable="true"
+                            :disabled="!canUsePaletteCodeForTarget(code)"
+                            :draggable="canUsePaletteCodeForTarget(code)"
+                            :class="[
+                                'mb-1 flex w-full items-center justify-between rounded-md border px-2 py-1 text-left text-[11px] font-semibold',
+                                canUsePaletteCodeForTarget(code)
+                                    ? 'border-gray-200 bg-white text-gray-800 hover:bg-gray-50'
+                                    : 'cursor-not-allowed border-gray-100 bg-gray-50 text-gray-400',
+                            ]"
                             @dragstart="onSubjectDragStart(code)"
                             @click="() => clickAssignFromMenu(code)"
                         >
