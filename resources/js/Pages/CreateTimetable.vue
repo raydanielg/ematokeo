@@ -435,6 +435,8 @@ const generationNonce = ref(0);
 
 const showResolveModal = ref(false);
 const resolveRunning = ref(false);
+const resolveStatusByWarning = ref({});
+const resolveMaxAttempts = 12;
 
 const sessionRulesStorageKey = computed(() => {
     const schoolId = props.school?.id ?? 'school';
@@ -822,6 +824,8 @@ const generateSampleTimetable = () => {
             }
             const prevCode = i > 0 && ![4, 7].includes(i) ? slotSubject(day, i - 1) : '';
             if (prevCode && prevCode === normalizeCode(code)) return false;
+            const nextCode = (i + 1) < 9 && ![3, 6].includes(i) ? slotSubject(day, i + 1) : '';
+            if (nextCode && nextCode === normalizeCode(code)) return false;
             return true;
         };
 
@@ -1059,6 +1063,62 @@ const regenerateSampleTimetable = () => {
         const msg = e && e.message ? String(e.message) : 'Failed to regenerate timetable.';
         generationWarnings.value = [msg];
     }
+};
+
+const resolveOneLimitation = async (warningText) => {
+    const key = String(warningText || '').trim();
+    if (!key) return false;
+    if (resolveRunning.value) return false;
+
+    resolveRunning.value = true;
+    resolveStatusByWarning.value = {
+        ...(resolveStatusByWarning.value || {}),
+        [key]: {
+            status: 'running',
+            attempts: 0,
+            message: 'Resolving...',
+        },
+    };
+
+    const wasPresent = () => (generationWarnings.value || []).some((w) => String(w) === key);
+    const startPresent = wasPresent();
+
+    let ok = false;
+    for (let attempt = 1; attempt <= resolveMaxAttempts; attempt += 1) {
+        resolveStatusByWarning.value = {
+            ...(resolveStatusByWarning.value || {}),
+            [key]: {
+                status: 'running',
+                attempts: attempt,
+                message: `Attempt ${attempt}/${resolveMaxAttempts}...`,
+            },
+        };
+
+        await new Promise((r) => setTimeout(r, 0));
+        regenerateSampleTimetable();
+        await new Promise((r) => setTimeout(r, 0));
+
+        if (startPresent && !wasPresent()) {
+            ok = true;
+            break;
+        }
+        if (!startPresent) {
+            ok = true;
+            break;
+        }
+    }
+
+    resolveStatusByWarning.value = {
+        ...(resolveStatusByWarning.value || {}),
+        [key]: {
+            status: ok ? 'success' : 'failed',
+            attempts: (resolveStatusByWarning.value?.[key]?.attempts || 0),
+            message: ok ? 'Resolved.' : `Failed after ${resolveMaxAttempts} attempts.`,
+        },
+    };
+
+    resolveRunning.value = false;
+    return ok;
 };
 
 const getFilteredRows = (day) => {
@@ -2025,6 +2085,14 @@ const onDrop = (day, rowIndex, slotIndex) => {
                     <div class="flex flex-wrap items-center gap-2">
                         <button
                             type="button"
+                            class="rounded-md bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-100 hover:bg-amber-100"
+                            :disabled="!generationWarnings.length"
+                            @click="showResolveModal = true"
+                        >
+                            Resolve ({{ generationWarnings.length }})
+                        </button>
+                        <button
+                            type="button"
                             class="rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100"
                             @click="regenerateSampleTimetable"
                         >
@@ -2052,6 +2120,44 @@ const onDrop = (day, rowIndex, slotIndex) => {
                         >
                             Print
                         </button>
+                    </div>
+                </div>
+
+                <div v-if="showResolveModal" class="mb-3 overflow-hidden rounded-lg border border-amber-200 bg-amber-50">
+                    <div class="flex items-center justify-between gap-2 border-b border-amber-200 px-3 py-2">
+                        <div class="text-[11px] font-semibold text-amber-900">
+                            Limitations ({{ generationWarnings.length }})
+                        </div>
+                        <button
+                            type="button"
+                            class="text-[11px] font-medium text-amber-900 hover:text-amber-950"
+                            @click="showResolveModal = false"
+                        >
+                            Close
+                        </button>
+                    </div>
+                    <div class="max-h-56 overflow-y-auto px-3 py-2">
+                        <div v-if="!generationWarnings.length" class="text-[11px] text-amber-900">
+                            No limitations.
+                        </div>
+                        <div v-for="(w, idx) in generationWarnings" :key="`${idx}-${w}`" class="mb-2 rounded-md bg-white/70 px-2 py-2 text-[11px] text-amber-950 ring-1 ring-amber-200">
+                            <div class="flex items-start justify-between gap-2">
+                                <div class="flex-1 break-words">
+                                    {{ w }}
+                                </div>
+                                <button
+                                    type="button"
+                                    class="shrink-0 rounded-md bg-amber-600 px-2 py-1 text-[10px] font-semibold text-white shadow-sm hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1"
+                                    :disabled="resolveRunning || resolveStatusByWarning[String(w)]?.status === 'running'"
+                                    @click="resolveOneLimitation(w)"
+                                >
+                                    {{ resolveStatusByWarning[String(w)]?.status === 'running' ? 'Resolving...' : 'Resolve' }}
+                                </button>
+                            </div>
+                            <div v-if="resolveStatusByWarning[String(w)]" class="mt-1 text-[10px] text-amber-900">
+                                {{ resolveStatusByWarning[String(w)]?.message }}
+                            </div>
+                        </div>
                     </div>
                 </div>
 
