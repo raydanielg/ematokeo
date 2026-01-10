@@ -203,6 +203,14 @@ const toggleSection = (key) => {
     }
 };
 
+const safeRoute = (name, params = undefined) => {
+    try {
+        return params === undefined ? route(name) : route(name, params);
+    } catch (e) {
+        return '#';
+    }
+};
+
 const getRouteForMenuItem = (sectionKey, itemName) => {
     // Admin routes
     if (sectionKey === 'admin-dashboard' && itemName === 'Overview') return route('admin.dashboard');
@@ -264,7 +272,7 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
     if (sectionKey === 'dashboard' && itemName === 'Overview') return route('dashboard');
     if (sectionKey === 'dashboard' && itemName === 'Statistics') return route('statistics');
     if (sectionKey === 'dashboard' && itemName === 'Recent Activities') return route('recent-activities');
-    if (sectionKey === 'teachers' && itemName === 'Teacher Assignments') return route('teachers.assignments');
+    if (sectionKey === 'teachers' && itemName === 'Teacher Assignments') return safeRoute('teachers.assignments');
     if (sectionKey === 'teachers' && itemName === 'View Teachers') return route('teachers.index');
     if (sectionKey === 'teachers' && itemName === 'Add Teacher') return route('teachers.create');
     if (sectionKey === 'teachers' && itemName === 'Credentials') return route('teachers.credentials');
