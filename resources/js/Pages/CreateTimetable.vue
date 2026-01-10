@@ -1893,6 +1893,10 @@ watch([
 const draggedCell = ref(null);
 const draggedSubjectCode = ref('');
 
+const showSubjectPalette = ref(false);
+const subjectPaletteSearch = ref('');
+const dropFeedback = ref({ type: '', message: '' });
+
 const showSubjectMenu = ref(false);
 const subjectMenuSearch = ref('');
 const subjectMenuPos = ref({ x: 0, y: 0 });
@@ -1905,11 +1909,62 @@ const paletteSubjectCodes = computed(() => {
     return Array.from(new Set(codes)).sort((a, b) => a.localeCompare(b));
 });
 
+const subjectCodesForSelectedFilter = computed(() => {
+    const classFilter = String(selectedClass.value || 'ALL').toUpperCase().trim();
+    const streamFilter = String(selectedStream.value || 'ALL').toUpperCase().trim();
+
+    const all = Array.isArray(props.classes) ? props.classes : [];
+    const byId = new Map(all.filter((c) => c?.id).map((c) => [Number(c.id), c]));
+
+    const matches = (timetableClasses.value || []).filter((c) => {
+        if (!c?.id) return false;
+        const label = String(getClassLabel(c) || '').toUpperCase().trim();
+        if (classFilter !== 'ALL' && label !== classFilter) return false;
+        const s = String(c?.stream || '').toUpperCase().trim();
+        if (streamFilter !== 'ALL' && s !== streamFilter) return false;
+        return true;
+    });
+
+    const codes = [];
+    matches.forEach((c) => {
+        const base = c?.parent_class_id ? (byId.get(Number(c.parent_class_id)) || null) : null;
+        const raw = Array.isArray(c?.subject_codes) && c.subject_codes.length
+            ? c.subject_codes
+            : (Array.isArray(base?.subject_codes) && base.subject_codes.length ? base.subject_codes : []);
+        raw.forEach((code) => {
+            const s = String(code || '').trim();
+            if (s) codes.push(s);
+        });
+    });
+
+    const unique = Array.from(new Set(codes));
+    return unique.sort((a, b) => String(a).localeCompare(String(b)));
+});
+
+const filteredSubjectPaletteCodes = computed(() => {
+    const q = String(subjectPaletteSearch.value || '').trim().toUpperCase();
+    const base = subjectCodesForSelectedFilter.value.length
+        ? subjectCodesForSelectedFilter.value
+        : (selectedClass.value === 'ALL' ? paletteSubjectCodes.value : []);
+    if (!q) return base;
+    return base.filter((c) => String(c).toUpperCase().includes(q));
+});
+
 const filteredPaletteCodes = computed(() => {
     const q = String(subjectMenuSearch.value || '').trim().toUpperCase();
     if (!q) return paletteSubjectCodes.value;
     return paletteSubjectCodes.value.filter((c) => String(c).toUpperCase().includes(q));
 });
+
+const openSubjectsPopup = () => {
+    showSubjectPalette.value = true;
+    subjectPaletteSearch.value = '';
+};
+
+const closeSubjectsPopup = () => {
+    showSubjectPalette.value = false;
+    subjectPaletteSearch.value = '';
+};
 
 const isDraggableSlot = (day, slotIndex) => {
     // Morning lessons (08:00-10:00) always draggable
@@ -1934,6 +1989,34 @@ const isDraggableSlot = (day, slotIndex) => {
     }
 
     return false;
+};
+
+const assignSubjectToCell = (day, rowIndex, slotIndex, subjectCode) => {
+    const d = String(day);
+    const r = Number(rowIndex);
+    const s = Number(slotIndex);
+    const code = String(subjectCode || '').trim();
+
+    if (!isDraggableSlot(d, s)) return false;
+    const row = schedule.value?.[d]?.[r];
+    if (!row) return false;
+
+    const classId = Number(row?.school_class_id || row?.id || row?.class_id || 0) || null;
+    if (code && !isSubjectAllowedInSlot(classId, code, s)) {
+        dropFeedback.value = { type: 'error', message: 'This subject is not allowed in this period.' };
+        return false;
+    }
+    if (code && wouldCauseTeacherClash(d, s, r, code)) {
+        dropFeedback.value = { type: 'error', message: 'Teacher clash detected for this period.' };
+        return false;
+    }
+
+    dropFeedback.value = { type: '', message: '' };
+
+    const t = code ? pickTeacherInitialForSlot(classId, code, d, s) : '';
+    row.slots[s] = code ? { subject: code, teacher: t, teacher_initials: t, teacher_name: '' } : null;
+    saveScheduleToStorage();
+    return true;
 };
 
 const onDragStart = (day, rowIndex, slotIndex) => {
@@ -1975,7 +2058,7 @@ const wouldCauseTeacherClash = (targetDay, targetSlotIndex, targetRowIndex, subj
     if (!code) return false;
 
     const targetRow = schedule.value?.[day]?.[Number(targetRowIndex)];
-    const targetClassId = Number(targetRow?.school_class_id || targetRow?.id || targetRow?.class_id || 0) || null;
+    const targetClassId = Number(targetRow?.school_class_id || targetRow?.id || targetRow?.class_id || targetRow?.classId || targetRow?.schoolClassId || 0) || null;
     const picked = pickTeacherInitialForSlot(targetClassId, code, day, slotIndex);
     const parts = String(picked || '').split('/').map((s) => s.trim()).filter(Boolean);
     if (!parts.length) return false;
@@ -1988,7 +2071,7 @@ const wouldCauseTeacherClash = (targetDay, targetSlotIndex, targetRowIndex, subj
         const otherCode = cell?.subject ? String(cell.subject) : '';
         if (!otherCode) continue;
 
-        const otherClassId = Number(row?.school_class_id || row?.id || row?.class_id || 0) || null;
+        const otherClassId = Number(row?.school_class_id || row?.id || row?.class_id || row?.classId || row?.schoolClassId || 0) || null;
         const otherPicked = pickTeacherInitialForSlot(otherClassId, otherCode, day, slotIndex);
         const otherParts = String(otherPicked || '').split('/').map((s) => s.trim()).filter(Boolean);
         if (!otherParts.length) continue;
@@ -1999,25 +2082,6 @@ const wouldCauseTeacherClash = (targetDay, targetSlotIndex, targetRowIndex, subj
     }
 
     return false;
-};
-
-const assignSubjectToCell = (day, rowIndex, slotIndex, subjectCode) => {
-    const d = String(day);
-    const r = Number(rowIndex);
-    const s = Number(slotIndex);
-    const code = String(subjectCode || '').trim();
-
-    if (!isDraggableSlot(d, s)) return false;
-    const row = schedule.value?.[d]?.[r];
-    if (!row) return false;
-
-    const classId = Number(row?.school_class_id || row?.id || row?.class_id || 0) || null;
-    if (code && !isSubjectAllowedInSlot(classId, code, s)) return false;
-    if (code && wouldCauseTeacherClash(d, s, r, code)) return false;
-
-    row.slots[s] = code ? { subject: code, teacher: pickTeacherInitialForSlot(classId, code, d, s) } : null;
-    saveScheduleToStorage();
-    return true;
 };
 
 const onDrop = (day, rowIndex, slotIndex) => {
@@ -2181,6 +2245,60 @@ const onDrop = (day, rowIndex, slotIndex) => {
             </div>
         </div>
 
+        <div
+            v-if="showSubjectPalette"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 py-6 sm:px-0"
+            @click.self="closeSubjectsPopup"
+        >
+            <div class="w-full max-w-xl overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-gray-200">
+                <div class="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+                    <div>
+                        <div class="text-sm font-semibold text-gray-800">Subjects</div>
+                        <div class="text-[11px] text-gray-500">Drag a subject and drop it into the timetable.</div>
+                    </div>
+                    <button
+                        type="button"
+                        class="text-[11px] text-gray-500 hover:text-gray-700"
+                        @click="closeSubjectsPopup"
+                    >
+                        Close
+                    </button>
+                </div>
+
+                <div class="p-4">
+                    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <input
+                            v-model="subjectPaletteSearch"
+                            type="text"
+                            placeholder="Search subject..."
+                            class="w-full rounded-md border border-gray-300 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                        />
+                        <div class="text-[11px] text-gray-500">
+                            Filter: <span class="font-semibold">{{ selectedClass }}</span>
+                            <span v-if="selectedStream !== 'ALL'"> · Stream <span class="font-semibold">{{ selectedStream }}</span></span>
+                        </div>
+                    </div>
+
+                    <div class="max-h-72 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-2">
+                        <div v-if="!filteredSubjectPaletteCodes.length" class="px-2 py-6 text-center text-xs text-gray-500">
+                            No subjects found for this class/stream.
+                        </div>
+                        <div v-else class="flex flex-wrap gap-2">
+                            <div
+                                v-for="code in filteredSubjectPaletteCodes"
+                                :key="code"
+                                draggable="true"
+                                class="cursor-grab select-none rounded-md bg-white px-3 py-2 text-xs font-semibold text-gray-800 shadow-sm ring-1 ring-gray-200 hover:bg-gray-50 active:cursor-grabbing"
+                                @dragstart="onSubjectDragStart(code)"
+                            >
+                                {{ code }}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="space-y-4">
             <!-- Preview: full-width card -->
             <div class="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
@@ -2212,7 +2330,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                     <div class="flex flex-wrap items-center gap-2">
                         <button
                             type="button"
-                            class="rounded-md bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-100 hover:bg-amber-100"
+                            class="rounded-md bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-800 ring-1 ring-amber-100 hover:bg-amber-100"
                             :disabled="!generationWarnings.length"
                             @click="showResolveModal = true"
                         >
@@ -2224,6 +2342,13 @@ const onDrop = (day, rowIndex, slotIndex) => {
                             @click="regenerateSampleTimetable"
                         >
                             Regenerate Sample Timetable
+                        </button>
+                        <button
+                            type="button"
+                            class="rounded-md bg-white px-2 py-1 text-[10px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
+                            @click="openSubjectsPopup"
+                        >
+                            Subjects
                         </button>
                         <button
                             type="button"
@@ -2250,54 +2375,16 @@ const onDrop = (day, rowIndex, slotIndex) => {
                     </div>
                 </div>
 
-                <div v-if="showResolveModal" class="mb-3 overflow-hidden rounded-lg border border-amber-200 bg-amber-50">
-                    <div class="flex items-center justify-between gap-2 border-b border-amber-200 px-3 py-2">
-                        <div class="text-[11px] font-semibold text-amber-900">
-                            Limitations ({{ generationWarnings.length }})
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <button
-                                type="button"
-                                class="rounded-md bg-amber-600 px-2 py-1 text-[10px] font-semibold text-white shadow-sm hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1"
-                                :disabled="resolveRunning || !generationWarnings.length"
-                                @click="resolveAllLimitations"
-                            >
-                                {{ resolveAllStatus.status === 'running' ? 'Resolving...' : 'Resolve All' }}
-                            </button>
-                            <button
-                                type="button"
-                                class="text-[11px] font-medium text-amber-900 hover:text-amber-950"
-                                @click="showResolveModal = false"
-                            >
-                                Close
-                            </button>
-                        </div>
-                    </div>
-                    <div class="max-h-56 overflow-y-auto px-3 py-2">
-                        <div v-if="!generationWarnings.length" class="text-[11px] text-amber-900">
-                            No limitations.
-                        </div>
-                        <div v-if="generationWarnings.length && resolveAllStatus.message" class="mb-2 text-[10px] font-semibold text-amber-900">
-                            {{ resolveAllStatus.message }}
-                        </div>
-                        <div v-for="(w, idx) in generationWarnings" :key="`${idx}-${w}`" class="mb-2 rounded-md bg-white/70 px-2 py-2 text-[11px] text-amber-950 ring-1 ring-amber-200">
-                            <div class="flex items-start justify-between gap-2">
-                                <div class="flex-1 break-words">
-                                    {{ w }}
-                                </div>
-                                <button
-                                    type="button"
-                                    class="shrink-0 rounded-md bg-amber-600 px-2 py-1 text-[10px] font-semibold text-white shadow-sm hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1"
-                                    :disabled="resolveRunning || resolveStatusByWarning[String(w)]?.status === 'running'"
-                                    @click="resolveOneLimitation(w)"
-                                >
-                                    {{ resolveStatusByWarning[String(w)]?.status === 'running' ? 'Resolving...' : 'Resolve' }}
-                                </button>
-                            </div>
-                            <div v-if="resolveStatusByWarning[String(w)]" class="mt-1 text-[10px] text-amber-900">
-                                {{ resolveStatusByWarning[String(w)]?.message }}
-                            </div>
-                        </div>
+                <div v-if="dropFeedback.message" class="mb-3 rounded-md border px-3 py-2 text-[11px]"
+                    :class="dropFeedback.type === 'error' ? 'border-red-200 bg-red-50 text-red-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'"
+                >
+                    {{ dropFeedback.message }}
+                </div>
+
+                <div v-if="generationWarnings.length" class="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] text-amber-900">
+                    <div class="font-semibold">Limitations check:</div>
+                    <div class="mt-1 max-h-24 overflow-y-auto">
+                        <div v-for="(w, idx) in generationWarnings" :key="idx">{{ w }}</div>
                     </div>
                 </div>
 
