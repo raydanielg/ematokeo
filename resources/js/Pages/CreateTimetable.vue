@@ -655,6 +655,8 @@ const generateSampleTimetable = () => {
         return false;
     };
 
+    const allDoubleStarts = (day) => [0, 1, 2, 7].filter((i) => canStartDouble(day, i));
+
     (timetableClasses.value || []).forEach((c) => {
         const classId = c?.id ? Number(c.id) : null;
         const formLabel = getClassForm(c);
