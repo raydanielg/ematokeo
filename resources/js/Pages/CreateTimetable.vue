@@ -614,6 +614,34 @@ const generateSampleTimetable = () => {
 
     const fallbackSubjects = subjectPool.value || [];
 
+    const teacherBusyByDaySlot = {};
+    days.forEach((day) => {
+        teacherBusyByDaySlot[day] = Array.from({ length: 9 }).map(() => new Set());
+    });
+
+    const addBusyTeacher = (day, slotIndex, teacherVal) => {
+        const d = String(day || '').toUpperCase();
+        const s = Number(slotIndex);
+        if (!teacherBusyByDaySlot[d] || !teacherBusyByDaySlot[d][s]) return;
+        const parts = String(teacherVal || '')
+            .split('/')
+            .map((x) => x.trim())
+            .filter(Boolean);
+        parts.forEach((p) => teacherBusyByDaySlot[d][s].add(p));
+    };
+
+    const isTeacherFree = (day, slotIndex, teacherVal) => {
+        const d = String(day || '').toUpperCase();
+        const s = Number(slotIndex);
+        if (!teacherBusyByDaySlot[d] || !teacherBusyByDaySlot[d][s]) return true;
+        const parts = String(teacherVal || '')
+            .split('/')
+            .map((x) => x.trim())
+            .filter(Boolean);
+        if (!parts.length) return true;
+        return parts.every((p) => !teacherBusyByDaySlot[d][s].has(p));
+    };
+
     const normalizeCode = (code) => String(code || '').trim().toUpperCase();
     const canStartDouble = (day, i) => {
         if (i >= 0 && i <= 2) {
@@ -624,8 +652,6 @@ const generateSampleTimetable = () => {
         }
         return false;
     };
-
-    const allDoubleStarts = (day) => [0, 1, 2, 7].filter((i) => canStartDouble(day, i));
 
     (timetableClasses.value || []).forEach((c) => {
         const classId = c?.id ? Number(c.id) : null;
@@ -644,7 +670,43 @@ const generateSampleTimetable = () => {
         // IMPORTANT: do not fall back to all school subjects; only use assigned subject codes for that class.
         const classSubjectCodes = subjectCodesRaw;
 
-        const codes = (classSubjectCodes || []).map(normalizeCode).filter(Boolean);
+        const hasTeacherForSubject = (code) => {
+            const k = normalizeCode(code);
+            if (!k) return false;
+            if (k === 'PS') return true;
+            return !!String(teacherInitialsForClassSubject(classId, k) || '').trim();
+        };
+
+        const pickFreeTeacherInitial = (day, slotIndex, subjectCode) => {
+            const subjectKey = normalizeCode(subjectCode);
+            if (!subjectKey) return '';
+            if (subjectKey === 'PS') return '';
+
+            const raw = teacherInitialsForClassSubject(classId, subjectKey);
+            const parts = String(raw || '')
+                .split('/')
+                .map((s) => s.trim())
+                .filter(Boolean)
+                .filter((p) => String(p).trim().toUpperCase() !== subjectKey);
+
+            if (!parts.length) return '';
+
+            const d = String(day || '').toUpperCase();
+            const dayIdx = days.indexOf(d);
+            const seed = (Math.max(0, dayIdx) * 31) + Number(slotIndex || 0);
+            const ordered = parts.slice(seed % parts.length).concat(parts.slice(0, seed % parts.length));
+
+            for (let i = 0; i < ordered.length; i += 1) {
+                const candidate = ordered[i];
+                if (isTeacherFree(day, slotIndex, candidate)) return candidate;
+            }
+            return '';
+        };
+
+        const codes = (classSubjectCodes || [])
+            .map(normalizeCode)
+            .filter(Boolean)
+            .filter((code) => hasTeacherForSubject(code));
         const uniqueCodes = Array.from(new Set(codes));
         const hasCode = (code) => uniqueCodes.includes(normalizeCode(code));
         const psCode = hasCode('PS') ? 'PS' : '';
@@ -709,6 +771,16 @@ const generateSampleTimetable = () => {
             if (!isSubjectAllowedInSlot(classId, code, i)) return false;
             if (!isSubjectAllowedInSlot(classId, code, i + 1)) return false;
 
+            // Teacher conflict: ensure a teacher is available for both slots (except PS)
+            const subjectKey = normalizeCode(code);
+            if (subjectKey !== 'PS') {
+                const t1 = pickFreeTeacherInitial(day, i, subjectKey);
+                if (!t1) return false;
+                // Reserve t1 virtually for the second slot too if needed
+                const t2 = pickFreeTeacherInitial(day, i + 1, subjectKey);
+                if (!t2) return false;
+            }
+
             // Avoid immediate repeats against neighbors within the same day
             const prevCode = i > 0 && ![4, 7].includes(i) ? slotSubject(day, i - 1) : '';
             if (prevCode && prevCode === normalizeCode(code)) return false;
@@ -719,10 +791,12 @@ const generateSampleTimetable = () => {
 
         const placeDouble = (day, i, code) => {
             const row = rowByDay[day];
-            const t1 = classId ? pickTeacherInitialForSlot(classId, code, day, i) : '';
-            const t2 = classId ? pickTeacherInitialForSlot(classId, code, day, i + 1) : '';
+            const t1 = classId ? pickFreeTeacherInitial(day, i, code) : '';
+            const t2 = classId ? pickFreeTeacherInitial(day, i + 1, code) : '';
             row.slots[i] = { subject: code, teacher: t1, teacher_initials: t1, teacher_name: '' };
             row.slots[i + 1] = { subject: code, teacher: t2, teacher_initials: t2, teacher_name: '' };
+            addBusyTeacher(day, i, t1);
+            addBusyTeacher(day, i + 1, t2);
             incWeekly(code, 2);
         };
 
@@ -732,6 +806,13 @@ const generateSampleTimetable = () => {
             if (!isTeachableLessonSlot(day, i)) return false;
             if (row.slots[i] !== null) return false;
             if (!isSubjectAllowedInSlot(classId, code, i)) return false;
+
+            // Teacher conflict: must have a free teacher (except PS)
+            const subjectKey = normalizeCode(code);
+            if (subjectKey !== 'PS') {
+                const t = pickFreeTeacherInitial(day, i, subjectKey);
+                if (!t) return false;
+            }
             const prevCode = i > 0 && ![4, 7].includes(i) ? slotSubject(day, i - 1) : '';
             if (prevCode && prevCode === normalizeCode(code)) return false;
             return true;
@@ -739,8 +820,9 @@ const generateSampleTimetable = () => {
 
         const placeSingle = (day, i, code) => {
             const row = rowByDay[day];
-            const teacher = classId ? pickTeacherInitialForSlot(classId, code, day, i) : '';
+            const teacher = classId ? pickFreeTeacherInitial(day, i, code) : '';
             row.slots[i] = { subject: code, teacher, teacher_initials: teacher, teacher_name: '' };
+            addBusyTeacher(day, i, teacher);
             incWeekly(code, 1);
         };
 
