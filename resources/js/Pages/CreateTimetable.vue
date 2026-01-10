@@ -1374,6 +1374,11 @@ onMounted(() => {
 });
 
 const saveTimetable = () => {
+    const title = String(form.title || '').trim();
+    if (!title) {
+        showDetailsModal.value = true;
+        return;
+    }
     form.schedule_json = schedule.value || {};
     form.post(route('timetables.store'), {
         preserveScroll: true,
