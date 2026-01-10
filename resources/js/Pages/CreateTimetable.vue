@@ -480,6 +480,9 @@ const isSubjectAllowedInSlot = (schoolClassId, subjectCode, slotIndex) => {
     const code = String(subjectCode || '').trim().toUpperCase();
     const slotSession = getSlotSession(slotIndex);
     if (forcedMorning.has(code)) {
+        // Prefer morning for core subjects, but allow the first period after break (slot 4)
+        // to support the pattern shown in the school's timetable.
+        if (slotIndex === 4) return true;
         return slotSession === 'morning';
     }
 
@@ -741,10 +744,10 @@ const generateSampleTimetable = () => {
         const remainingSingles = {};
         const remainingDoubles = {};
 
-        // ENG & B/MAT: 2 doubles + 1 single
+        // ENG & B/MAT: 2 doubles + 3 singles (5 periods/week) so they can appear daily
         ['ENG', 'B/MAT'].forEach((core) => {
             if (!hasCode(core)) return;
-            remainingSingles[core] = (remainingSingles[core] || 0) + 1;
+            remainingSingles[core] = (remainingSingles[core] || 0) + 3;
             remainingDoubles[core] = (remainingDoubles[core] || 0) + 2;
         });
 
@@ -848,8 +851,7 @@ const generateSampleTimetable = () => {
             }
         });
 
-        // 1b) Daily shaping: aim for 3-4 doubles per day per class (if feasible)
-        // and ensure ENG/B/MAT appear daily except one day where one of them may be skipped.
+        // Daily shaping + core enforcement
         const countDoublesForDay = (day) => {
             let count = 0;
             const starts = allDoubleStarts(day);
@@ -869,15 +871,27 @@ const generateSampleTimetable = () => {
         };
 
         const coreCodes = ['ENG', 'B/MAT'].filter((core) => hasCode(core));
-        const skipDay = days[Math.floor(Math.random() * days.length)];
-        const skipCore = coreCodes.length ? coreCodes[Math.floor(Math.random() * coreCodes.length)] : '';
 
         const tryPlaceCoreSingle = (day, core) => {
-            // Core subjects are forced morning by isSubjectAllowedInSlot
-            for (let i = 0; i < 9; i += 1) {
+            // Prefer first period after break (slot 4), then other allowed slots.
+            const preferred = [4, 0, 1, 2, 3, 5, 6, 7, 8];
+            for (let p = 0; p < preferred.length; p += 1) {
+                const i = preferred[p];
                 if (!canPlaceSingleHere(day, i, core)) continue;
                 placeSingle(day, i, core);
-                if (remainingSingles[core] > 0) remainingSingles[core] -= 1;
+                remainingSingles[core] = (remainingSingles[core] || 0) - 1;
+                return true;
+            }
+            return false;
+        };
+
+        const tryPlaceCoreDouble = (day, core) => {
+            const starts = allDoubleStarts(day);
+            for (let s = 0; s < starts.length; s += 1) {
+                const i = starts[s];
+                if (!canPlaceDoubleHere(day, i, core)) continue;
+                placeDouble(day, i, core);
+                remainingDoubles[core] = (remainingDoubles[core] || 0) - 1;
                 return true;
             }
             return false;
@@ -906,11 +920,9 @@ const generateSampleTimetable = () => {
 
         const maxDoublesPerDay = 2;
         while (totalRemainingDoubles() > 0) {
-            const byFewest = days
-                .slice()
-                .sort((a, b) => countDoublesForDay(a) - countDoublesForDay(b));
-
+            const byFewest = days.slice().sort((a, b) => countDoublesForDay(a) - countDoublesForDay(b));
             let placed = false;
+
             for (let d = 0; d < byFewest.length; d += 1) {
                 const day = byFewest[d];
                 if (countDoublesForDay(day) >= maxDoublesPerDay) continue;
@@ -923,16 +935,24 @@ const generateSampleTimetable = () => {
             if (!placed) break;
         }
 
+        // Strict: ENG and B/MAT must appear every day (when feasible).
         days.forEach((day) => {
             coreCodes.forEach((core) => {
-                if (day === skipDay && core === skipCore) return;
                 if (dayHasSubject(day, core)) return;
-                if ((remainingSingles[core] || 0) <= 0) return;
-                tryPlaceCoreSingle(day, core);
+
+                if ((remainingDoubles[core] || 0) > 0 && countDoublesForDay(day) < maxDoublesPerDay) {
+                    if (tryPlaceCoreDouble(day, core)) return;
+                }
+
+                if ((remainingSingles[core] || 0) > 0) {
+                    if (tryPlaceCoreSingle(day, core)) return;
+                }
+
+                generationWarnings.value.push(`Could not place ${core} for ${classLabel}${streamLabel ? ` ${streamLabel}` : ''} on ${day}.`);
             });
         });
 
-        // Fallback: ensure required doubles/singles are placed when feasible.
+        // Fallback: ensure remaining required doubles/singles are placed when feasible.
         Object.keys(remainingDoubles).forEach((code) => {
             while ((remainingDoubles[code] || 0) > 0) {
                 let placed = false;
@@ -960,7 +980,10 @@ const generateSampleTimetable = () => {
                 let placed = false;
                 for (let d = 0; d < days.length && !placed; d += 1) {
                     const day = days[d];
-                    for (let i = 0; i < 9; i += 1) {
+                    // For core subjects, prefer slot 4 first.
+                    const preferred = (code === 'ENG' || code === 'B/MAT') ? [4, 0, 1, 2, 3, 5, 6, 7, 8] : [0, 1, 2, 3, 4, 5, 6, 7, 8];
+                    for (let p = 0; p < preferred.length; p += 1) {
+                        const i = preferred[p];
                         if (!canPlaceSingleHere(day, i, code)) continue;
                         placeSingle(day, i, code);
                         remainingSingles[code] -= 1;
