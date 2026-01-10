@@ -26,67 +26,10 @@ const props = defineProps({
     },
 });
 
-const selectedLimitClassId = ref('');
-
-const sessionRulesByClassId = ref({});
-
-const showTeacherInitialsModal = ref(false);
-const showSubjectPalette = ref(false);
-const showAssignSubjectsModal = ref(false);
-const dropFeedback = ref({ type: '', message: '' });
-
-const subjectPaletteSearch = ref('');
-const assignSubjectsSearch = ref('');
-
 const selectedLimitClassSessionRules = computed(() => {
     const classId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
     if (!Number.isFinite(classId) || !classId) return {};
     return sessionRulesByClassId.value?.[String(classId)] || {};
-});
-
-const allSubjectCodes = computed(() => {
-    const unique = new Set();
-    (props.subjects || []).forEach((s) => {
-        const code = String(s?.subject_code || '').trim();
-        if (!code) return;
-        unique.add(code);
-    });
-    return Array.from(unique.values()).sort((a, b) => String(a).localeCompare(String(b)));
-});
-
-const assignedSubjectCodes = ref([]);
-
-watch(
-    allSubjectCodes,
-    (codes) => {
-        if (!Array.isArray(assignedSubjectCodes.value) || assignedSubjectCodes.value.length === 0) {
-            assignedSubjectCodes.value = Array.isArray(codes) ? codes.slice() : [];
-        }
-    },
-    { immediate: true }
-);
-
-const filteredAssignSubjectCodes = computed(() => {
-    const q = String(assignSubjectsSearch.value || '').trim().toUpperCase();
-    if (!q) return allSubjectCodes.value;
-    return (allSubjectCodes.value || []).filter((c) => String(c).toUpperCase().includes(q));
-});
-
-const openSubjectsPopup = () => {
-    showSubjectPalette.value = true;
-};
-
-const closeSubjectsPopup = () => {
-    showSubjectPalette.value = false;
-    subjectPaletteSearch.value = '';
-};
-
-const filteredSubjectPaletteCodes = computed(() => {
-    const allowed = new Set((assignedSubjectCodes.value || []).map((c) => String(c).trim()));
-    const q = String(subjectPaletteSearch.value || '').trim().toUpperCase();
-    return (allSubjectCodes.value || [])
-        .filter((code) => allowed.has(String(code).trim()))
-        .filter((code) => (!q ? true : String(code).toUpperCase().includes(q)));
 });
 
 const setSelectedLimitSubjectSessionRule = (subjectId, rule) => {
@@ -142,22 +85,6 @@ const subjectIdByCode = computed(() => {
     (props.subjects || []).forEach((s) => {
         if (!s?.subject_code || !s?.id) return;
         map[String(s.subject_code)] = Number(s.id);
-    });
-    return map;
-});
-
-const teacherIdByInitials = computed(() => {
-    const map = {};
-    (props.subjects || []).forEach((s) => {
-        const teachers = Array.isArray(s?.teachers) ? s.teachers : [];
-        teachers.forEach((t) => {
-            if (!t?.id) return;
-            const initials = String(t?.initials || '').trim();
-            if (!initials) return;
-            if (!map[initials]) {
-                map[initials] = Number(t.id);
-            }
-        });
     });
     return map;
 });
@@ -412,12 +339,8 @@ const timetableClasses = computed(() => {
     });
 
     return unique.sort((a, b) => {
-        const baseClassA = a?.parent_class_id
-            ? (all.find((c) => Number(c?.id) === Number(a.parent_class_id)) || a)
-            : a;
-        const baseClassB = b?.parent_class_id
-            ? (all.find((c) => Number(c?.id) === Number(b.parent_class_id)) || b)
-            : b;
+        const baseClassA = a?.parent_class_id ? (all.find((c) => Number(c?.id) === Number(a.parent_class_id)) || a) : a;
+        const baseClassB = b?.parent_class_id ? (all.find((c) => Number(c?.id) === Number(b.parent_class_id)) || b) : b;
         const formA = getFormOrder(baseClassA);
         const formB = getFormOrder(baseClassB);
         if (formA !== formB) return Number(formA || 0) - Number(formB || 0);
@@ -505,81 +428,8 @@ const headerClassName = computed(() => {
     return form.class_name || '____';
 });
 
-const getGroupedRows = (day) => {
-    const d = String(day || '').toUpperCase();
-    const allRows = Array.isArray(schedule.value?.[d]) ? schedule.value[d] : [];
-
-    const filtered = allRows
-        .map((row, originalIndex) => ({ row, originalIndex }))
-        .filter(({ row }) => {
-            if (!row) return false;
-
-            if (selectedClass.value !== 'ALL') {
-                const label = String(row.class_label || row.form || '').trim();
-                if (label !== selectedClass.value) return false;
-            }
-
-            if (selectedStream.value !== 'ALL') {
-                const s = String(row.stream || '').toUpperCase().trim();
-                if (s !== String(selectedStream.value || '').toUpperCase().trim()) return false;
-            }
-
-            return true;
-        });
-
-    const groups = new Map();
-    filtered.forEach(({ row, originalIndex }) => {
-        const label = String(row.class_label || row.form || '').trim() || 'CLASS';
-        const key = label;
-        if (!groups.has(key)) {
-            groups.set(key, { key, label, rows: [] });
-        }
-        groups.get(key).rows.push({ row, originalIndex });
-    });
-
-    const out = Array.from(groups.values());
-    out.forEach((g) => {
-        g.rows.sort((a, b) => String(a.row?.stream || '').localeCompare(String(b.row?.stream || '')));
-    });
-    return out;
-};
-
-const getGroupedRowCount = (day) => {
-    return getGroupedRows(day).reduce((sum, g) => sum + (g?.rows?.length || 0), 0);
-};
-
 // schedule[day][formIndex][slotIndex] = { subject, teacher }
 const schedule = ref({});
-
-const initEmptySchedule = () => {
-    const next = {};
-    days.forEach((day) => {
-        next[day] = [];
-        (timetableClasses.value || []).forEach((c) => {
-            next[day].push({
-                form: getClassForm(c),
-                class_label: getClassLabel(c),
-                stream: c?.stream ? String(c.stream).toUpperCase().trim() : '',
-                school_class_id: c?.id ? Number(c.id) : null,
-                class_name: c?.name || `${getClassLabel(c)} ${c?.stream ? String(c.stream).toUpperCase().trim() : ''}`.trim(),
-                slots: Array.from({ length: 9 }).map(() => null),
-            });
-        });
-    });
-    schedule.value = next;
-};
-
-watch(
-    () => timetableClasses.value,
-    (val) => {
-        if (!val || !val.length) return;
-        const current = schedule.value;
-        if (current && typeof current === 'object' && Object.keys(current).length) return;
-        initEmptySchedule();
-    },
-    { immediate: true }
-);
-
 const generationWarnings = ref([]);
 const generationNonce = ref(0);
 
@@ -593,6 +443,8 @@ const sessionRulesStorageKey = computed(() => {
     const schoolId = props.school?.id ?? 'school';
     return `timetable_subject_session_rules_v1_${schoolId}`;
 });
+
+const sessionRulesByClassId = ref({});
 
 const loadSessionRulesFromStorage = () => {
     try {
@@ -655,14 +507,6 @@ const isTeachableLessonSlot = (day, slotIndex) => {
     }
 
     return true;
-};
-
-const isDraggableSlot = (day, slotIndex) => {
-    const d = String(day || '').toUpperCase();
-    const s = Number(slotIndex);
-    if (!Number.isFinite(s)) return false;
-    if (s < 0 || s > 8) return false;
-    return isTeachableLessonSlot(d, s);
 };
 
 const sessionCapacityForClass = () => {
@@ -819,18 +663,11 @@ const generateSampleTimetable = () => {
 
     const allDoubleStarts = (day) => [0, 1, 2, 7].filter((i) => canStartDouble(day, i));
 
-    // Sync doubles across streams of the same base class (parent_class_id). Keyed by base class id.
-    // Structure: syncDoubleRequests[baseId][day][startIndex] = subjectCode
-    const syncDoubleRequests = {};
-
     (timetableClasses.value || []).forEach((c) => {
         const classId = c?.id ? Number(c.id) : null;
         const formLabel = getClassForm(c);
         const classLabel = getClassLabel(c);
         const streamLabel = c?.stream ? String(c.stream).toUpperCase().trim() : '';
-
-        const baseClassId = c?.parent_class_id ? Number(c.parent_class_id) : (classId || null);
-        const syncKey = baseClassId ? String(baseClassId) : '';
 
         const baseClass = c?.parent_class_id
             ? ((Array.isArray(props.classes) ? props.classes : []).find((x) => Number(x?.id) === Number(c.parent_class_id)) || null)
@@ -882,7 +719,7 @@ const generateSampleTimetable = () => {
             .filter((code) => hasTeacherForSubject(code));
         const uniqueCodes = Array.from(new Set(codes));
         const hasCode = (code) => uniqueCodes.includes(normalizeCode(code));
-        const psCode = 'PS';
+        const psCode = hasCode('PS') ? 'PS' : '';
 
         // Build empty rows (one per day) first
         const rowByDay = {};
@@ -935,27 +772,12 @@ const generateSampleTimetable = () => {
             return s?.subject ? normalizeCode(s.subject) : '';
         };
 
-        const subjectIndicesForDay = (day, code) => {
-            const key = normalizeCode(code);
-            const row = rowByDay?.[day];
-            const slots = Array.isArray(row?.slots) ? row.slots : [];
-            const out = [];
-            for (let ii = 0; ii < slots.length; ii += 1) {
-                if (slotSubject(day, ii) === key) out.push(ii);
-            }
-            return out;
-        };
-
         const canPlaceDoubleHere = (day, i, code) => {
             if (!canStartDouble(day, i)) return false;
             const row = rowByDay[day];
             if (!row) return false;
             if (row.slots[i] !== null) return false;
             if (row.slots[i + 1] !== null) return false;
-
-            // Daily max: a subject can appear at most twice per day (as a double)
-            if (normalizeCode(code) !== 'PS' && subjectIndicesForDay(day, code).length > 0) return false;
-
             if (!isSubjectAllowedInSlot(classId, code, i)) return false;
             if (!isSubjectAllowedInSlot(classId, code, i + 1)) return false;
 
@@ -969,37 +791,11 @@ const generateSampleTimetable = () => {
                 if (!t2) return false;
             }
 
-            return true;
-        };
-
-        const canPlaceSingleHere = (day, i, code) => {
-            const row = rowByDay[day];
-            if (!row) return false;
-            if (!isTeachableLessonSlot(day, i)) return false;
-            if (row.slots[i] !== null) return false;
-
-            // Daily max: allow a subject twice only when the 2nd one is adjacent (double period)
-            const indices = subjectIndicesForDay(day, code);
-            const subjectKey = normalizeCode(code);
-            const existing = indices.length === 1 ? indices[0] : null;
-            const isMakingDouble = existing !== null && Math.abs(existing - i) === 1;
-            if (subjectKey !== 'PS') {
-                if (indices.length >= 2) return false;
-                if (indices.length === 1 && !isMakingDouble) return false;
-            }
-
-            if (!isSubjectAllowedInSlot(classId, code, i)) return false;
-
-            // Teacher conflict: must have a free teacher (except PS)
-            if (subjectKey !== 'PS') {
-                const t = pickFreeTeacherInitial(day, i, subjectKey);
-                if (!t) return false;
-            }
-
+            // Avoid immediate repeats against neighbors within the same day
             const prevCode = i > 0 && ![4, 7].includes(i) ? slotSubject(day, i - 1) : '';
-            if (prevCode && prevCode === normalizeCode(code) && !isMakingDouble) return false;
-            const nextCode = (i + 1) < 9 && ![3, 6].includes(i) ? slotSubject(day, i + 1) : '';
-            if (nextCode && nextCode === normalizeCode(code) && !isMakingDouble) return false;
+            if (prevCode && prevCode === normalizeCode(code)) return false;
+            const nextCode = (i + 2) < 9 && ![4, 7].includes(i + 2) ? slotSubject(day, i + 2) : '';
+            if (nextCode && nextCode === normalizeCode(code)) return false;
             return true;
         };
 
@@ -1012,20 +808,32 @@ const generateSampleTimetable = () => {
             addBusyTeacher(day, i, t1);
             addBusyTeacher(day, i + 1, t2);
             incWeekly(code, 2);
+        };
 
-            // Record this double so sibling streams can try to follow the same timing.
-            if (syncKey) {
-                if (!syncDoubleRequests[syncKey]) syncDoubleRequests[syncKey] = {};
-                const d = String(day || '').toUpperCase();
-                if (!syncDoubleRequests[syncKey][d]) syncDoubleRequests[syncKey][d] = {};
-                syncDoubleRequests[syncKey][d][String(i)] = normalizeCode(code);
+        const canPlaceSingleHere = (day, i, code) => {
+            const row = rowByDay[day];
+            if (!row) return false;
+            if (!isTeachableLessonSlot(day, i)) return false;
+            if (row.slots[i] !== null) return false;
+            if (!isSubjectAllowedInSlot(classId, code, i)) return false;
+
+            // Teacher conflict: must have a free teacher (except PS)
+            const subjectKey = normalizeCode(code);
+            if (subjectKey !== 'PS') {
+                const t = pickFreeTeacherInitial(day, i, subjectKey);
+                if (!t) return false;
             }
+            const prevCode = i > 0 && ![4, 7].includes(i) ? slotSubject(day, i - 1) : '';
+            if (prevCode && prevCode === normalizeCode(code)) return false;
+            const nextCode = (i + 1) < 9 && ![3, 6].includes(i) ? slotSubject(day, i + 1) : '';
+            if (nextCode && nextCode === normalizeCode(code)) return false;
+            return true;
         };
 
         const placeSingle = (day, i, code) => {
             const row = rowByDay[day];
             const teacher = classId ? pickFreeTeacherInitial(day, i, code) : '';
-            row.slots[i] = code ? { subject: code, teacher, teacher_initials: teacher, teacher_name: '' } : null;
+            row.slots[i] = { subject: code, teacher, teacher_initials: teacher, teacher_name: '' };
             addBusyTeacher(day, i, teacher);
             incWeekly(code, 1);
         };
@@ -1036,23 +844,6 @@ const generateSampleTimetable = () => {
         days.forEach((day) => {
             allDoubleStarts(day).forEach((i) => allPlacements.push({ day, i }));
         });
-
-        // 1a) Apply already chosen synced doubles (from earlier streams of the same base class)
-        if (syncKey && syncDoubleRequests[syncKey]) {
-            days.forEach((day) => {
-                const d = String(day || '').toUpperCase();
-                const starts = syncDoubleRequests[syncKey]?.[d] || {};
-                Object.keys(starts).forEach((startIdx) => {
-                    const i = Number(startIdx);
-                    const code = starts[startIdx];
-                    if (!code) return;
-                    if ((remainingDoubles[code] || 0) <= 0) return;
-                    if (!canPlaceDoubleHere(day, i, code)) return;
-                    placeDouble(day, i, code);
-                    remainingDoubles[code] -= 1;
-                });
-            });
-        }
 
         Object.keys(remainingDoubles).forEach((code) => {
             const need = remainingDoubles[code] || 0;
@@ -1093,7 +884,7 @@ const generateSampleTimetable = () => {
                 const i = preferred[p];
                 if (!canPlaceSingleHere(day, i, core)) continue;
                 placeSingle(day, i, core);
-                remainingSingles[core] -= 1;
+                remainingSingles[core] = (remainingSingles[core] || 0) - 1;
                 return true;
             }
             return false;
@@ -1105,7 +896,7 @@ const generateSampleTimetable = () => {
                 const i = starts[s];
                 if (!canPlaceDoubleHere(day, i, core)) continue;
                 placeDouble(day, i, core);
-                remainingDoubles[core] -= 1;
+                remainingDoubles[core] = (remainingDoubles[core] || 0) - 1;
                 return true;
             }
             return false;
@@ -1123,7 +914,7 @@ const generateSampleTimetable = () => {
                     const code = codesByNeed[cidx];
                     if (!canPlaceDoubleHere(day, i, code)) continue;
                     placeDouble(day, i, code);
-                    remainingDoubles[code] -= 1;
+                    remainingDoubles[code] = (remainingDoubles[code] || 0) - 1;
                     return true;
                 }
             }
@@ -1260,405 +1051,836 @@ const generateSampleTimetable = () => {
 };
 
 const regenerateSampleTimetable = () => {
-    generateSampleTimetable();
-    generationNonce.value += 1;
+    try {
+        // Force UI update even if generation fails
+        schedule.value = {};
+        generationNonce.value += 1;
+        clearStoredSchedule();
+        generateSampleTimetable();
+    } catch (e) {
+        // Make failures visible instead of silently doing nothing
+        // eslint-disable-next-line no-console
+        console.error(e);
+        const msg = e && e.message ? String(e.message) : 'Failed to regenerate timetable.';
+        generationWarnings.value = [msg];
+    }
 };
 
-const generateNewTimetable = () => {
-    generationWarnings.value = [];
-    const next = {};
-    days.forEach((day) => {
-        next[day] = [];
+const resolveOneLimitation = async (warningText) => {
+    const key = String(warningText || '').trim();
+    if (!key) return false;
+    if (resolveRunning.value) return false;
+
+    resolveRunning.value = true;
+    resolveStatusByWarning.value = {
+        ...(resolveStatusByWarning.value || {}),
+        [key]: {
+            status: 'running',
+            attempts: 0,
+            message: 'Resolving...',
+        },
+    };
+
+    const wasPresent = () => (generationWarnings.value || []).some((w) => String(w) === key);
+    const startPresent = wasPresent();
+
+    let ok = false;
+    for (let attempt = 1; attempt <= resolveMaxAttempts; attempt += 1) {
+        resolveStatusByWarning.value = {
+            ...(resolveStatusByWarning.value || {}),
+            [key]: {
+                status: 'running',
+                attempts: attempt,
+                message: `Attempt ${attempt}/${resolveMaxAttempts}...`,
+            },
+        };
+
+        await new Promise((r) => setTimeout(r, 0));
+        regenerateSampleTimetable();
+        await new Promise((r) => setTimeout(r, 0));
+
+        if (startPresent && !wasPresent()) {
+            ok = true;
+            break;
+        }
+        if (!startPresent) {
+            ok = true;
+            break;
+        }
+    }
+
+    resolveStatusByWarning.value = {
+        ...(resolveStatusByWarning.value || {}),
+        [key]: {
+            status: ok ? 'success' : 'failed',
+            attempts: (resolveStatusByWarning.value?.[key]?.attempts || 0),
+            message: ok ? 'Resolved.' : `Failed after ${resolveMaxAttempts} attempts.`,
+        },
+    };
+
+    resolveRunning.value = false;
+    return ok;
+};
+
+const resolveAllLimitations = async () => {
+    if (resolveRunning.value) return false;
+
+    const initial = (generationWarnings.value || []).map((w) => String(w));
+    if (!initial.length) {
+        resolveAllStatus.value = { status: 'success', attempts: 0, message: 'No limitations.' };
+        return true;
+    }
+
+    resolveRunning.value = true;
+    resolveAllStatus.value = { status: 'running', attempts: 0, message: 'Resolving all...' };
+
+    // Mark all initial warnings as running
+    const statusMap = { ...(resolveStatusByWarning.value || {}) };
+    initial.forEach((w) => {
+        statusMap[w] = { status: 'running', attempts: 0, message: 'Queued...' };
+    });
+    resolveStatusByWarning.value = statusMap;
+
+    const stillHas = (w) => (generationWarnings.value || []).some((x) => String(x) === String(w));
+
+    let ok = false;
+    for (let attempt = 1; attempt <= resolveMaxAttempts; attempt += 1) {
+        resolveAllStatus.value = { status: 'running', attempts: attempt, message: `Attempt ${attempt}/${resolveMaxAttempts}...` };
+        initial.forEach((w) => {
+            const cur = resolveStatusByWarning.value?.[w];
+            if (cur?.status === 'success') return;
+            resolveStatusByWarning.value = {
+                ...(resolveStatusByWarning.value || {}),
+                [w]: { status: 'running', attempts: attempt, message: `Attempt ${attempt}/${resolveMaxAttempts}...` },
+            };
+        });
+
+        await new Promise((r) => setTimeout(r, 0));
+        regenerateSampleTimetable();
+        await new Promise((r) => setTimeout(r, 0));
+
+        // Update per-warning statuses
+        initial.forEach((w) => {
+            if (!stillHas(w)) {
+                resolveStatusByWarning.value = {
+                    ...(resolveStatusByWarning.value || {}),
+                    [w]: { status: 'success', attempts: attempt, message: 'Resolved.' },
+                };
+            }
+        });
+
+        if (!(generationWarnings.value || []).length) {
+            ok = true;
+            break;
+        }
+    }
+
+    if (!ok) {
+        // Mark any remaining initial warnings as failed
+        initial.forEach((w) => {
+            if (!stillHas(w)) return;
+            resolveStatusByWarning.value = {
+                ...(resolveStatusByWarning.value || {}),
+                [w]: { status: 'failed', attempts: resolveMaxAttempts, message: `Failed after ${resolveMaxAttempts} attempts.` },
+            };
+        });
+    }
+
+    resolveAllStatus.value = ok
+        ? { status: 'success', attempts: resolveAllStatus.value?.attempts || resolveMaxAttempts, message: 'All limitations resolved.' }
+        : { status: 'failed', attempts: resolveMaxAttempts, message: 'Could not resolve all limitations.' };
+
+    resolveRunning.value = false;
+    return ok;
+};
+
+const getFilteredRows = (day) => {
+    const rows = schedule.value?.[String(day)] || [];
+    const classFilter = String(selectedClass.value || 'ALL').toUpperCase().trim();
+    const streamFilter = String(selectedStream.value || 'ALL').toUpperCase().trim();
+    const classFilterId = classFilter !== 'ALL' && /^\d+$/.test(classFilter) ? Number(classFilter) : null;
+
+    const baseIdByClassId = new Map();
+    const baseClassById = new Map();
+    (Array.isArray(props.classes) ? props.classes : []).forEach((c) => {
+        if (!c?.id) return;
+        const id = Number(c.id);
+        const baseId = c?.parent_class_id ? Number(c.parent_class_id) : id;
+        baseIdByClassId.set(id, baseId);
+        if (!c?.parent_class_id) {
+            baseClassById.set(id, c);
+        }
     });
 
-    const teacherBusyByDaySlot = {};
-    days.forEach((day) => {
-        teacherBusyByDaySlot[day] = Array.from({ length: 9 }).map(() => new Set());
+    const filtered = (rows || []).filter((row) => {
+        if (!row) return false;
+
+        if (classFilter !== 'ALL') {
+            if (classFilterId !== null) {
+                const rid = row?.school_class_id ? Number(row.school_class_id) : null;
+                const baseId = rid ? (baseIdByClassId.get(rid) ?? rid) : null;
+                if (baseId !== classFilterId) return false;
+            } else {
+                const rid = row?.school_class_id ? Number(row.school_class_id) : null;
+                const baseId = rid ? (baseIdByClassId.get(rid) ?? rid) : null;
+                const baseClass = baseId ? (baseClassById.get(baseId) || null) : null;
+                const baseLabel = baseClass ? String(getClassLabel(baseClass) || '').toUpperCase().trim() : '';
+                const rowLabel = String(row.class_label || row.form || row.class_name || '').toUpperCase().trim();
+                const label = baseLabel || rowLabel;
+
+                if (!label) return false;
+                if (label !== classFilter) return false;
+            }
+        }
+
+        if (streamFilter !== 'ALL') {
+            const stream = String(row.stream || '').toUpperCase().trim();
+            if (stream !== streamFilter) return false;
+        }
+
+        return true;
     });
 
-    const subjectBusyByDaySlot = {};
-    days.forEach((day) => {
-        subjectBusyByDaySlot[day] = Array.from({ length: 9 }).map(() => new Set());
-    });
+    return filtered.map((row, originalIndex) => ({ row, originalIndex }));
+};
 
-    // TRACK YA KILA SOMO KWA KILA STREAM
-    const subjectTracker = {};
+const getGroupedRows = (day) => {
+    const rows = getFilteredRows(day);
+    const groups = new Map();
+
+    const classInfoById = new Map();
+    const baseIdByClassId = new Map();
+    const baseClassById = new Map();
+    (Array.isArray(props.classes) ? props.classes : []).forEach((c) => {
+        if (!c?.id) return;
+        const id = Number(c.id);
+        const baseId = c?.parent_class_id ? Number(c.parent_class_id) : id;
+        baseIdByClassId.set(id, baseId);
+        if (!c?.parent_class_id) {
+            baseClassById.set(id, c);
+        }
+    });
 
     (timetableClasses.value || []).forEach((c) => {
-        const classId = c?.id;
-        const classLabel = getClassLabel(c);
-        const streamLabel = c?.stream ? String(c.stream).toUpperCase().trim() : '';
+        const id = c?.id ? Number(c.id) : null;
+        if (!id) return;
+        const baseId = c?.parent_class_id ? Number(c.parent_class_id) : id;
+        const baseClass = baseClassById.get(baseId) || c;
+        const label = String(getClassLabel(baseClass) || '').trim();
+        // If your base class IDs are already in the desired order (e.g. 1..4), prefer that.
+        const inferred = Number(baseId);
+        const order = Number.isFinite(inferred) ? inferred : getFormOrder(baseClass);
+        if (!classInfoById.has(baseId)) {
+            classInfoById.set(baseId, {
+                id: baseId,
+                label,
+                order: Number.isFinite(order) ? order : Number.POSITIVE_INFINITY,
+            });
+        }
+    });
 
-        // Subject codes za stream hii
-        const subjectCodesRaw = Array.isArray(c?.subject_codes) ? c.subject_codes : [];
-        const subjectCodes = [...new Set(subjectCodesRaw.map((s) => String(s).trim().toUpperCase()).filter(Boolean))];
+    (rows || []).forEach((item) => {
+        const row = item?.row || {};
+        const classId = row?.school_class_id ? Number(row.school_class_id) : null;
+        const baseId = classId ? (baseIdByClassId.get(classId) ?? classId) : null;
+        const label = String(row.class_label || row.form || row.class_name || '').trim() || 'CLASS';
+        const key = baseId ? String(baseId) : label;
+        const info = baseId ? classInfoById.get(baseId) : null;
+        if (!groups.has(key)) {
+            groups.set(key, {
+                key,
+                label: info?.label || label,
+                order: info?.order ?? Number.POSITIVE_INFINITY,
+                rows: [],
+            });
+        }
+        groups.get(key).rows.push(item);
+    });
 
-        // Initialize tracker
-        const trackerKey = `${classId}_${streamLabel}`;
-        subjectTracker[trackerKey] = {};
-        subjectCodes.forEach((code) => {
-            subjectTracker[trackerKey][code] = {
-                doublesPlaced: 0,
-                singlesPlaced: 0,
-                totalPeriods: 0,
-                lastDay: null,
-                doubleTarget: (code === 'ENG' || code === 'B/MAT') ? 2 : 1,
-                singleTarget: (code === 'ENG' || code === 'B/MAT') ? 3 : 1,
-            };
+    const out = Array.from(groups.values());
+
+    out.forEach((g) => {
+        g.rows.sort((a, b) => {
+            const sa = String(a?.row?.stream || '').toUpperCase();
+            const sb = String(b?.row?.stream || '').toUpperCase();
+            return sa.localeCompare(sb);
         });
+    });
 
-        // CREATE ROWS FOR EACH DAY
-        const rowByDay = {};
-        days.forEach((day) => {
-            const row = {
-                form: getClassForm(c),
-                class_label: classLabel,
-                stream: streamLabel,
-                school_class_id: classId,
-                class_name: c?.name || `${classLabel} ${streamLabel}`.trim(),
-                slots: Array.from({ length: 9 }).map(() => null),
-            };
-            rowByDay[day] = row;
-            next[day].push(row);
+    // Keep stable order by form (I->IV) then label
+    out.sort((a, b) => {
+        const ao = Number.isFinite(a.order) ? a.order : Number.POSITIVE_INFINITY;
+        const bo = Number.isFinite(b.order) ? b.order : Number.POSITIVE_INFINITY;
+        if (ao !== bo) return ao - bo;
+        return String(a.label || '').localeCompare(String(b.label || ''));
+    });
+    return out;
+};
+
+const getGroupedRowCount = (day) => {
+    const groups = getGroupedRows(day);
+    return (groups || []).reduce((sum, g) => sum + (g?.rows?.length || 0), 0);
+};
+
+onMounted(() => {
+    sessionRulesByClassId.value = loadSessionRulesFromStorage();
+
+    if (props.timetable?.schedule_json) {
+        schedule.value = normalizeSchedule(props.timetable.schedule_json);
+        saveScheduleToStorage();
+        return;
+    }
+
+    const stored = loadScheduleFromStorage();
+    if (stored) {
+        schedule.value = stored;
+    } else {
+        generateSampleTimetable();
+    }
+});
+
+const saveTimetable = () => {
+    form.schedule_json = schedule.value || {};
+    form.post(route('timetables.store'), {
+        preserveScroll: true,
+        onSuccess: () => {
+            showDetailsModal.value = false;
+            clearStoredSchedule();
+        },
+    });
+};
+
+const printTimetable = () => {
+    window.print();
+};
+
+const showTeacherInitialsModal = ref(false);
+
+const simpleTeacherName = (name) => {
+    const s = String(name || '').trim();
+    if (!s) return '';
+    const parts = s.split(/\s+/).filter(Boolean);
+    if (parts.length === 1) return parts[0];
+    return `${parts[0]} ${parts[parts.length - 1]}`;
+};
+
+const usedTeacherInitials = computed(() => {
+    const set = new Set();
+    const data = schedule.value || {};
+    Object.values(data).forEach((rows) => {
+        (rows || []).forEach((row) => {
+            (row?.slots || []).forEach((slot) => {
+                const raw = (slot?.teacher_initials || slot?.teacher || '').toString().trim();
+                if (!raw) return;
+                raw
+                    .split('/')
+                    .map((s) => s.trim())
+                    .filter(Boolean)
+                    .forEach((i) => set.add(i));
+            });
         });
+    });
+    return set;
+});
 
-        // 1. PLACE CORE SUBJECT DOUBLES FIRST (ENG, B/MAT)
-        const coreSubjects = subjectCodes.filter((code) => code === 'ENG' || code === 'B/MAT');
+const teacherInitialsList = computed(() => {
+    const allSubjects = Array.isArray(props.subjects) ? props.subjects : [];
+    const map = new Map();
 
-        coreSubjects.forEach((code) => {
-            const tracker = subjectTracker[trackerKey][code];
-
-            // Place 2 doubles
-            for (let d = 0; d < 2; d += 1) {
-                let placed = false;
-
-                for (let dayIdx = 0; dayIdx < days.length && !placed; dayIdx += 1) {
-                    const day = days[dayIdx];
-                    if (tracker.lastDay === day) continue;
-
-                    for (let slot = 0; slot <= 2; slot += 1) {
-                        if (canPlaceDouble(day, slot, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot)) {
-                            placeDoublePeriod(day, slot, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot);
-                            tracker.doublesPlaced += 1;
-                            tracker.totalPeriods += 2;
-                            tracker.lastDay = day;
-                            placed = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (!placed) {
-                    generationWarnings.value.push(`Could not place double for ${code} in ${classLabel}${streamLabel}`);
-                }
-            }
-
-            // Place 1 single in slot 4 (after break)
-            for (let dayIdx = 0; dayIdx < days.length; dayIdx += 1) {
-                const day = days[dayIdx];
-                if (tracker.lastDay === day) continue;
-
-                if (canPlaceSingle(day, 4, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot)) {
-                    placeSinglePeriod(day, 4, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot);
-                    tracker.singlesPlaced += 1;
-                    tracker.totalPeriods += 1;
-                    tracker.lastDay = day;
-                    break;
-                }
-            }
-
-            // Place remaining 2 singles elsewhere
-            for (let s = 0; s < 2; s += 1) {
-                let placed = false;
-                for (let dayIdx = 0; dayIdx < days.length && !placed; dayIdx += 1) {
-                    const day = days[dayIdx];
-                    if (tracker.lastDay === day) continue;
-
-                    for (let slot = 0; slot < 9; slot += 1) {
-                        if (slot === 4) continue;
-                        if (!isTeachableLessonSlot(day, slot)) continue;
-
-                        if (canPlaceSingle(day, slot, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot)) {
-                            placeSinglePeriod(day, slot, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot);
-                            tracker.singlesPlaced += 1;
-                            tracker.totalPeriods += 1;
-                            tracker.lastDay = day;
-                            placed = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (!placed) {
-                    generationWarnings.value.push(`Could not place single for ${code} in ${classLabel}${streamLabel}`);
-                }
-            }
-        });
-
-        // 2. PLACE OTHER SUBJECTS
-        const otherSubjects = subjectCodes.filter((code) => code !== 'ENG' && code !== 'B/MAT' && code !== 'PS');
-
-        otherSubjects.forEach((code) => {
-            const tracker = subjectTracker[trackerKey][code];
-
-            // Place 1 double
-            let doublePlaced = false;
-            for (let dayIdx = 0; dayIdx < days.length && !doublePlaced; dayIdx += 1) {
-                const day = days[dayIdx];
-                if (tracker.lastDay === day) continue;
-
-                for (let slot = 0; slot <= 2; slot += 1) {
-                    if (canPlaceDouble(day, slot, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot)) {
-                        placeDoublePeriod(day, slot, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot);
-                        tracker.doublesPlaced += 1;
-                        tracker.totalPeriods += 2;
-                        tracker.lastDay = day;
-                        doublePlaced = true;
-                        break;
-                    }
-                }
-
-                if (!doublePlaced && canPlaceDouble(day, 7, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot)) {
-                    placeDoublePeriod(day, 7, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot);
-                    tracker.doublesPlaced += 1;
-                    tracker.totalPeriods += 2;
-                    tracker.lastDay = day;
-                    doublePlaced = true;
-                }
-            }
-
-            if (!doublePlaced) {
-                generationWarnings.value.push(`Could not place double for ${code} in ${classLabel}${streamLabel}`);
-            }
-
-            // Place 1 single
-            let singlePlaced = false;
-            for (let dayIdx = 0; dayIdx < days.length && !singlePlaced; dayIdx += 1) {
-                const day = days[dayIdx];
-                if (tracker.lastDay === day) continue;
-
-                for (let slot = 0; slot < 9; slot += 1) {
-                    if (!isTeachableLessonSlot(day, slot)) continue;
-
-                    if (canPlaceSingle(day, slot, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot)) {
-                        placeSinglePeriod(day, slot, code, classId, rowByDay[day], teacherBusyByDaySlot, subjectBusyByDaySlot);
-                        tracker.singlesPlaced += 1;
-                        tracker.totalPeriods += 1;
-                        tracker.lastDay = day;
-                        singlePlaced = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!singlePlaced) {
-                generationWarnings.value.push(`Could not place single for ${code} in ${classLabel}${streamLabel}`);
-            }
-        });
-
-        // 3. FILL REMAINING SLOTS WITH PS (PASTROL STUDIES)
-        days.forEach((day) => {
-            const row = rowByDay[day];
-            const dayKey = String(day || '').toUpperCase();
-            for (let slot = 0; slot < 9; slot += 1) {
-                if (!isTeachableLessonSlot(dayKey, slot)) continue;
-                if (row.slots[slot] !== null) continue;
-
-                if (isSubjectAllowedInSlot(classId, 'PS', slot) && !subjectBusyByDaySlot[dayKey][slot].has('PS')) {
-                    row.slots[slot] = {
-                        subject: 'PS',
-                        teacher: '',
-                        teacher_initials: '',
-                        teacher_name: '',
-                    };
-                    subjectBusyByDaySlot[dayKey][slot].add('PS');
-                }
+    allSubjects.forEach((s) => {
+        const teachers = Array.isArray(s.teachers) ? s.teachers : [];
+        teachers.forEach((t) => {
+            if (!t?.id) return;
+            const initials = String(t.initials || '').trim() || String(t.name || '').trim();
+            const name = String(t.name || '').trim();
+            if (!initials && !name) return;
+            if (!map.has(t.id)) {
+                map.set(t.id, {
+                    id: t.id,
+                    initials,
+                    name,
+                    simple_name: simpleTeacherName(name) || name,
+                    used: false,
+                });
             }
         });
     });
 
-    schedule.value = normalizeSchedule(next);
-    saveScheduleToStorage();
-    generationNonce.value += 1;
+    const usedSet = usedTeacherInitials.value;
+    const list = Array.from(map.values()).map((row) => ({
+        ...row,
+        used: usedSet.has(row.initials),
+    }));
+
+    return list.sort((a, b) => {
+        const u = Number(b.used) - Number(a.used);
+        if (u !== 0) return u;
+        const ic = String(a.initials || '').localeCompare(String(b.initials || ''));
+        if (ic !== 0) return ic;
+        return String(a.simple_name || '').localeCompare(String(b.simple_name || ''));
+    });
+});
+
+const downloadTeacherInitials = () => {
+    const rows = teacherInitialsList.value;
+    const lines = ['Initials,Name,UsedInTimetable'];
+    rows.forEach((r) => {
+        const initials = String(r.initials || '').replaceAll('"', '""');
+        const name = String(r.simple_name || r.name || '').replaceAll('"', '""');
+        const used = r.used ? 'YES' : 'NO';
+        lines.push(`"${initials}","${name}","${used}"`);
+    });
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `teacher-initials-${form.academic_year || 'timetable'}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
 };
 
-// HELPER FUNCTIONS
-const rowHasSubjectForDay = (row, subjectCode) => {
-    const code = String(subjectCode || '').trim().toUpperCase();
-    if (!code) return false;
-    const slots = Array.isArray(row?.slots) ? row.slots : [];
-    return slots.some((s) => s?.subject && String(s.subject).trim().toUpperCase() === code);
-};
+const showLimitationsModal = ref(false);
+const selectedLimitClassId = ref('');
+const limitsLoading = ref(false);
+const limitsSaving = ref(false);
+const limitsByKey = ref({});
 
-const canPlaceDouble = (day, startSlot, subjectCode, classId, row, teacherBusy, subjectBusy) => {
-    const d = String(day || '').toUpperCase();
-    const code = String(subjectCode || '').trim().toUpperCase();
-    if (!code) return false;
-    if (startSlot < 0 || startSlot > 7) return false;
-    if (!isTeachableLessonSlot(d, startSlot) || !isTeachableLessonSlot(d, startSlot + 1)) return false;
-    if (row.slots[startSlot] !== null || row.slots[startSlot + 1] !== null) return false;
+const applyLimitsToAllClasses = ref(false);
 
-    // Rule: no subject repeats same day (except double) -> allow only if subject not already present
-    if (code !== 'PS' && rowHasSubjectForDay(row, code)) return false;
+const subjectLimitsByClassId = ref({});
 
-    // Streams not same subject same slot
-    if (subjectBusy?.[d]?.[startSlot]?.has(code) || subjectBusy?.[d]?.[startSlot + 1]?.has(code)) return false;
+const limitationsMode = ref('subject_only');
+const subjectLimitsById = ref({});
+const subjectDoubleById = ref({});
+const subjectMorningSingleById = ref({});
+const subjectMorningDoubleById = ref({});
+const subjectAfternoonSingleById = ref({});
+const subjectAfternoonDoubleById = ref({});
 
-    if (!isSubjectAllowedInSlot(classId, code, startSlot)) return false;
-    if (!isSubjectAllowedInSlot(classId, code, startSlot + 1)) return false;
+const suppressAutoLimitSave = ref(false);
+const autoLimitSaveTimer = ref(null);
 
-    const teacher1 = pickTeacherInitialForSlot(classId, code, d, startSlot);
-    const teacher2 = pickTeacherInitialForSlot(classId, code, d, startSlot + 1);
-    if (!teacher1 || !teacher2) return false;
-
-    const teachers1 = teacher1.split('/').map((t) => t.trim()).filter(Boolean);
-    const teachers2 = teacher2.split('/').map((t) => t.trim()).filter(Boolean);
-    const allTeachers = [...teachers1, ...teachers2];
-
-    for (let i = 0; i < allTeachers.length; i += 1) {
-        const t = allTeachers[i];
-        if (teacherBusy[d][startSlot].has(t) || teacherBusy[d][startSlot + 1].has(t)) return false;
-    }
-
-    return true;
-};
-
-const placeDoublePeriod = (day, startSlot, subjectCode, classId, row, teacherBusy, subjectBusy) => {
-    const d = String(day || '').toUpperCase();
-    const code = String(subjectCode || '').trim().toUpperCase();
-    const teacher1 = pickTeacherInitialForSlot(classId, code, d, startSlot);
-    const teacher2 = pickTeacherInitialForSlot(classId, code, d, startSlot + 1);
-
-    row.slots[startSlot] = {
-        subject: code,
-        teacher: teacher1,
-        teacher_initials: teacher1,
-        teacher_name: '',
+const defaultSubjectPeriodsByFormGroup = (formNumber) => {
+    const form12 = {
+        'B/MAT': 5,  // double 2 + single 1
+        'BIO': 3,    // double 1 + single 1
+        'BUS': 3,    // double 1 + single 1
+        'CHE': 3,    // double 1 + single 1
+        'CS': 4,     // double 1 + single 2
+        'ENG': 5,    // double 2 + single 1
+        'GEO': 2,    // single 2 or double 1
+        'HIS': 3,    // double 1 + single 1
+        'HTM': 3,    // double 1 + single 1
+        'KIS': 4,    // double 1 + single 2
+        'PHY': 3,    // double 1 + single 1
     };
 
-    row.slots[startSlot + 1] = {
-        subject: code,
-        teacher: teacher2,
-        teacher_initials: teacher2,
-        teacher_name: '',
+    const form34 = {
+        'B/MAT': 5,  // double 2 + single 1
+        'BIO': 4,    // double 1 + single 2
+        'BUS': 3,    // double 1 + single 1
+        'CHE': 4,    // double 1 + single 2
+        'CIV': 3,    // double 1 + single 1
+        'CS': 4,     // double 1 + single 2
+        'ENG': 5,    // double 2 + single 1
+        'FK': 2,     // single 2 or double 1
+        'GEO': 3,    // double 1 + single 1
+        'HIS': 4,    // double 1 + single 2
+        'HTM': 3,    // double 1 + single 1
+        'KIS': 4,    // double 1 + single 2
+        'LIT': 2,    // single 2 or double 1
+        'PHY': 4,    // double 1 + single 2
     };
 
-    const teachers1 = teacher1.split('/').map((t) => t.trim()).filter(Boolean);
-    const teachers2 = teacher2.split('/').map((t) => t.trim()).filter(Boolean);
-    teachers1.forEach((t) => teacherBusy[d][startSlot].add(t));
-    teachers2.forEach((t) => teacherBusy[d][startSlot + 1].add(t));
-
-    subjectBusy[d][startSlot].add(code);
-    subjectBusy[d][startSlot + 1].add(code);
+    if (formNumber === 1 || formNumber === 2) return form12;
+    if (formNumber === 3 || formNumber === 4) return form34;
+    return {};
 };
 
-const canPlaceSingle = (day, slot, subjectCode, classId, row, teacherBusy, subjectBusy) => {
-    const d = String(day || '').toUpperCase();
-    const code = String(subjectCode || '').trim().toUpperCase();
-    if (!code) return false;
-    if (!isTeachableLessonSlot(d, slot)) return false;
-    if (row.slots[slot] !== null) return false;
+const limitKey = (teacherId, subjectId) => `${teacherId}:${subjectId}`;
 
-    // Rule: no subject repeats same day (except double)
-    if (code !== 'PS' && rowHasSubjectForDay(row, code)) return false;
+const subjectLimitKey = (subjectId) => `${subjectId}`;
 
-    // Streams not same subject same slot
-    if (subjectBusy?.[d]?.[slot]?.has(code)) return false;
-
-    if (!isSubjectAllowedInSlot(classId, code, slot)) return false;
-
-    const teacher = pickTeacherInitialForSlot(classId, code, d, slot);
-    if (!teacher && code !== 'PS') return false;
-
-    const teachers = teacher.split('/').map((t) => t.trim()).filter(Boolean);
-    for (let i = 0; i < teachers.length; i += 1) {
-        const t = teachers[i];
-        if (teacherBusy[d][slot].has(t)) return false;
+const loadSubjectLimits = async () => {
+    if (!selectedLimitClassId.value) {
+        subjectLimitsById.value = {};
+        subjectDoubleById.value = {};
+        subjectMorningSingleById.value = {};
+        subjectMorningDoubleById.value = {};
+        subjectAfternoonSingleById.value = {};
+        subjectAfternoonDoubleById.value = {};
+        return;
     }
 
-    return true;
-};
-
-const placeSinglePeriod = (day, slot, subjectCode, classId, row, teacherBusy, subjectBusy) => {
-    const d = String(day || '').toUpperCase();
-    const code = String(subjectCode || '').trim().toUpperCase();
-    const teacher = pickTeacherInitialForSlot(classId, code, d, slot);
-
-    row.slots[slot] = {
-        subject: code,
-        teacher,
-        teacher_initials: teacher,
-        teacher_name: '',
-    };
-
-    const teachers = teacher.split('/').map((t) => t.trim()).filter(Boolean);
-    teachers.forEach((t) => teacherBusy[d][slot].add(t));
-    subjectBusy[d][slot].add(code);
-};
-
-const assignSubjectToCell = (day, rowIndex, slotIndex, subjectCode) => {
-    const d = String(day);
-    const r = Number(rowIndex);
-    const s = Number(slotIndex);
-
-    const code = String(subjectCode || '').trim();
-
-    if (code) {
-        const allowed = new Set((assignedSubjectCodes.value || []).map((c) => String(c).trim().toUpperCase()));
-        if (!allowed.has(code.toUpperCase())) {
-            dropFeedback.value = { type: 'error', message: 'This subject is not assigned. Use Assign to enable it.' };
-            return false;
-        }
-    }
-
-    if (!isDraggableSlot(d, s)) return false;
-    const row = schedule.value?.[d]?.[r];
-    if (!row) return false;
-
-    const normalizeDayCode = (v) => String(v || '').trim().toUpperCase();
-    const codeKey = normalizeDayCode(code);
-    if (codeKey && codeKey !== 'PS') {
-        const indices = (Array.isArray(row?.slots) ? row.slots : [])
-            .map((cell, idx) => ({ idx, subject: normalizeDayCode(cell?.subject) }))
-            .filter(({ subject }) => subject === codeKey)
-            .map(({ idx }) => idx)
-            .filter((idx) => idx !== s);
-
-        if (indices.length >= 2) {
-            dropFeedback.value = { type: 'error', message: 'This subject already appears twice today (max is 2).' };
-            return false;
-        }
-
-
-        if (indices.length === 1) {
-            const existing = indices[0];
-            const adjacent = Math.abs(existing - s) === 1;
-            if (!adjacent) {
-                dropFeedback.value = { type: 'error', message: 'This subject can only appear twice in a day as a double period (place it next to the first one).' };
-                return false;
+    limitsLoading.value = true;
+    suppressAutoLimitSave.value = true;
+    try {
+        const res = await fetch(
+            `${route('timetables.class-subject-limits.index')}?school_class_id=${encodeURIComponent(selectedLimitClassId.value)}`,
+            {
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    Accept: 'application/json',
+                },
+                credentials: 'same-origin',
             }
+        );
+
+        const json = await res.json();
+        const map = {};
+        const doubleMap = {};
+        const morningSingleMap = {};
+        const morningDoubleMap = {};
+        const afternoonSingleMap = {};
+        const afternoonDoubleMap = {};
+        (json?.limits || []).forEach((row) => {
+            map[subjectLimitKey(row.subject_id)] = row.periods_per_week;
+            doubleMap[subjectLimitKey(row.subject_id)] = !!row.is_double;
+            morningSingleMap[subjectLimitKey(row.subject_id)] = Number(row.morning_single || 0);
+            morningDoubleMap[subjectLimitKey(row.subject_id)] = Number(row.morning_double || 0);
+            afternoonSingleMap[subjectLimitKey(row.subject_id)] = Number(row.afternoon_single || 0);
+            afternoonDoubleMap[subjectLimitKey(row.subject_id)] = Number(row.afternoon_double || 0);
+        });
+
+        // Hard-coded defaults (authoritative): override DB values when defaults exist.
+        const cls = classById.value?.[String(selectedLimitClassId.value)] || null;
+        const formNumber = getFormOrder(cls);
+        const defaults = defaultSubjectPeriodsByFormGroup(formNumber);
+
+        Object.keys(defaults).forEach((code) => {
+            const sid = subjectIdByCode.value?.[String(code)] || null;
+            if (!sid) return;
+            const key = subjectLimitKey(sid);
+
+            // Override periods/week to match the default table
+            map[key] = Number(defaults[code]);
+
+            // RULE 1: ENG na B/MAT - double 2, single 1 (periods = 5)
+            // RULE 2: Other subjects - double 1, single 1 (periods = 3)
+            const eff = Number(defaults[code] || 0);
+            const subjectUpper = String(code).toUpperCase();
+
+            if (subjectUpper === 'ENG' || subjectUpper === 'B/MAT') {
+                // ENG na B/MAT: periods = 5, double 2, single 1
+                if (eff >= 5) {
+                    doubleMap[key] = true;
+                }
+            } else {
+                // Other subjects: double 1, single 1 (periods = 3)
+                if (eff >= 3) {
+                    doubleMap[key] = true;
+                }
+            }
+        });
+
+        subjectLimitsById.value = map;
+        subjectDoubleById.value = doubleMap;
+        subjectMorningSingleById.value = morningSingleMap;
+        subjectMorningDoubleById.value = morningDoubleMap;
+        subjectAfternoonSingleById.value = afternoonSingleMap;
+        subjectAfternoonDoubleById.value = afternoonDoubleMap;
+    } catch {
+        subjectLimitsById.value = {};
+        subjectDoubleById.value = {};
+        subjectMorningSingleById.value = {};
+        subjectMorningDoubleById.value = {};
+        subjectAfternoonSingleById.value = {};
+        subjectAfternoonDoubleById.value = {};
+    } finally {
+        limitsLoading.value = false;
+
+        window.setTimeout(() => {
+            suppressAutoLimitSave.value = false;
+        }, 0);
+    }
+};
+
+const loadAllSubjectLimits = async () => {
+    limitsLoading.value = true;
+    suppressAutoLimitSave.value = true;
+    try {
+        subjectLimitsByClassId.value = {};
+        const res = await fetch(
+            `${route('timetables.class-subject-limits.index')}`,
+            {
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    Accept: 'application/json',
+                },
+                credentials: 'same-origin',
+            }
+        );
+
+        const json = await res.json();
+        (json?.limits || []).forEach((row) => {
+            const cid = row?.school_class_id ? String(row.school_class_id) : '';
+            if (!cid) return;
+
+            if (!subjectLimitsByClassId.value[cid]) {
+                subjectLimitsByClassId.value[cid] = {
+                    periodsBySubjectId: {},
+                    doubleBySubjectId: {},
+                    morningSingleBySubjectId: {},
+                    morningDoubleBySubjectId: {},
+                    afternoonSingleBySubjectId: {},
+                    afternoonDoubleBySubjectId: {},
+                };
+            }
+            const key = subjectLimitKey(row.subject_id);
+            subjectLimitsByClassId.value[cid].periodsBySubjectId[key] = row.periods_per_week;
+            subjectLimitsByClassId.value[cid].doubleBySubjectId[key] = !!row.is_double;
+            subjectLimitsByClassId.value[cid].morningSingleBySubjectId[key] = Number(row.morning_single || 0);
+            subjectLimitsByClassId.value[cid].morningDoubleBySubjectId[key] = Number(row.morning_double || 0);
+            subjectLimitsByClassId.value[cid].afternoonSingleBySubjectId[key] = Number(row.afternoon_single || 0);
+            subjectLimitsByClassId.value[cid].afternoonDoubleBySubjectId[key] = Number(row.afternoon_double || 0);
+        });
+    } catch {
+        subjectLimitsByClassId.value = {};
+    } finally {
+        limitsLoading.value = false;
+
+        window.setTimeout(() => {
+            suppressAutoLimitSave.value = false;
+        }, 0);
+    }
+};
+
+const loadLimits = async () => {
+    if (!selectedLimitClassId.value) {
+        limitsByKey.value = {};
+        return;
+    }
+
+    limitsLoading.value = true;
+    suppressAutoLimitSave.value = true;
+    try {
+        const res = await fetch(
+            `${route('timetables.weekly-limits.index')}?school_class_id=${encodeURIComponent(selectedLimitClassId.value)}`,
+            {
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    Accept: 'application/json',
+                },
+                credentials: 'same-origin',
+            }
+        );
+
+        const json = await res.json();
+        const map = {};
+        (json?.limits || []).forEach((row) => {
+            map[limitKey(row.teacher_id, row.subject_id)] = row.periods_per_week;
+        });
+        limitsByKey.value = map;
+    } catch {
+        limitsByKey.value = {};
+    } finally {
+        limitsLoading.value = false;
+
+        window.setTimeout(() => {
+            suppressAutoLimitSave.value = false;
+        }, 0);
+    }
+};
+
+const saveLimits = async ({ closeModal = true } = {}) => {
+    if (!selectedLimitClassId.value) return;
+
+    limitsSaving.value = true;
+    try {
+        const limits = teacherSubjectRows.value
+            .map((row) => {
+                const key = limitKey(row.teacher_id, row.subject_id);
+                const val = limitsByKey.value[key];
+                return {
+                    school_class_id: Number(selectedLimitClassId.value),
+                    subject_id: row.subject_id,
+                    teacher_id: row.teacher_id,
+                    periods_per_week: val === '' || val === null || val === undefined ? 0 : Number(val),
+                };
+            })
+            .filter((r) => Number.isFinite(r.periods_per_week) && r.periods_per_week >= 0);
+
+        await fetch(route('timetables.weekly-limits.save'), {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': csrfToken(),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ limits }),
+        });
+
+        if (closeModal) {
+            showLimitationsModal.value = false;
         }
+    } finally {
+        limitsSaving.value = false;
+    }
+};
+
+const saveSubjectLimits = async ({ closeModal = true } = {}) => {
+    if (!selectedLimitClassId.value) return;
+
+    limitsSaving.value = true;
+    try {
+        const selectedRows = classSubjectRows.value
+            .map((row) => {
+                const key = subjectLimitKey(row.subject_id);
+                const val = subjectLimitsById.value[key];
+                const isDouble = !!subjectDoubleById.value?.[key];
+
+                const ms = Number(subjectMorningSingleById.value?.[key] ?? 0) || 0;
+                const md = Number(subjectMorningDoubleById.value?.[key] ?? 0) || 0;
+                const as = Number(subjectAfternoonSingleById.value?.[key] ?? 0) || 0;
+                const ad = Number(subjectAfternoonDoubleById.value?.[key] ?? 0) || 0;
+
+                // If any session quota is provided, let backend derive periods_per_week from quotas.
+                const hasSessionQuotas = ms > 0 || md > 0 || as > 0 || ad > 0;
+                return {
+                    subject_id: row.subject_id,
+                    periods_per_week: hasSessionQuotas
+                        ? null
+                        : (val === '' || val === null || val === undefined ? 0 : Number(val)),
+                    is_double: isDouble,
+                    morning_single: ms,
+                    morning_double: md,
+                    afternoon_single: as,
+                    afternoon_double: ad,
+                };
+            })
+            .filter((r) => r.periods_per_week === null || (Number.isFinite(r.periods_per_week) && r.periods_per_week >= 0));
+
+        const targetClassIds = applyLimitsToAllClasses.value
+            ? (timetableClasses.value || []).map((c) => Number(c?.id)).filter((v) => Number.isFinite(v) && v > 0)
+            : [Number(selectedLimitClassId.value)];
+
+        const limits = [];
+        targetClassIds.forEach((cid) => {
+            selectedRows.forEach((row) => {
+                limits.push({
+                    school_class_id: cid,
+                    ...row,
+                });
+            });
+        });
+
+        await fetch(route('timetables.class-subject-limits.save'), {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': csrfToken(),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ limits }),
+        });
+
+        if (closeModal) {
+            showLimitationsModal.value = false;
+        }
+    } finally {
+        limitsSaving.value = false;
+    }
+};
+
+watch(showLimitationsModal, (open) => {
+    if (!open) return;
+    if (!selectedLimitClassId.value && limitationClassOptions.value.length) {
+        selectedLimitClassId.value = limitationClassOptions.value[0].id;
+    }
+    if (limitationsMode.value === 'subject_only') {
+        loadSubjectLimits();
+    } else {
+        loadLimits();
+    }
+});
+
+watch(selectedLimitClassId, () => {
+    if (!showLimitationsModal.value) return;
+    if (limitationsMode.value === 'subject_only') {
+        loadSubjectLimits();
+    } else {
+        loadLimits();
+    }
+});
+
+watch(limitationsMode, () => {
+    if (!showLimitationsModal.value) return;
+    if (limitationsMode.value === 'subject_only') {
+        loadSubjectLimits();
+    } else {
+        loadLimits();
+    }
+});
+
+watch(limitsByKey, () => {
+    if (!showLimitationsModal.value) return;
+    if (limitationsMode.value !== 'teacher_subject') return;
+    syncSubjectPeriodsFromTeacherLimits();
+}, { deep: true });
+
+watch([
+    limitsByKey,
+    subjectLimitsById,
+    subjectDoubleById,
+    subjectMorningSingleById,
+    subjectMorningDoubleById,
+    subjectAfternoonSingleById,
+    subjectAfternoonDoubleById,
+], () => {
+    scheduleAutoLimitSave();
+}, { deep: true });
+
+const draggedCell = ref(null);
+const draggedSubjectCode = ref('');
+
+const showSubjectMenu = ref(false);
+const subjectMenuSearch = ref('');
+const subjectMenuPos = ref({ x: 0, y: 0 });
+const subjectMenuTarget = ref({ day: '', rowIndex: -1, slotIndex: -1 });
+
+const paletteSubjectCodes = computed(() => {
+    const codes = (props.subjects || [])
+        .map((s) => String(s?.subject_code || '').trim())
+        .filter(Boolean);
+    return Array.from(new Set(codes)).sort((a, b) => a.localeCompare(b));
+});
+
+const filteredPaletteCodes = computed(() => {
+    const q = String(subjectMenuSearch.value || '').trim().toUpperCase();
+    if (!q) return paletteSubjectCodes.value;
+    return paletteSubjectCodes.value.filter((c) => String(c).toUpperCase().includes(q));
+});
+
+const isDraggableSlot = (day, slotIndex) => {
+    // Morning lessons (08:00-10:00) always draggable
+    if (slotIndex >= 0 && slotIndex <= 3) {
+        return true;
     }
 
+    // Mid-day lessons between breaks (11:05-13:05)
+    // Keep Friday MEWAKA slot (index 6) fixed
+    if (slotIndex >= 4 && slotIndex <= 6) {
+        if (day === 'FRIDAY' && slotIndex === 6) {
+            return false;
+        }
 
-    const classId = Number(row?.school_class_id || row?.id || row?.class_id || 0) || null;
-    if (code && !isSubjectAllowedInSlot(classId, code, s)) {
-        dropFeedback.value = { type: 'error', message: 'This subject is not allowed in this period.' };
-        return false;
+        return true;
     }
-    if (code && wouldCauseTeacherClash(d, s, r, code)) {
-        dropFeedback.value = { type: 'error', message: 'Teacher clash detected for this period.' };
-        return false;
+
+    // Afternoon lessons after second break (13:20-14:40)
+    // Keep special activities (RELIGION, CLUBS, SPORTS) fixed on Wed/Thu/Fri
+    if (slotIndex >= 7 && slotIndex <= 8) {
+        return !['WEDNESDAY', 'THURSDAY', 'FRIDAY'].includes(day);
     }
 
-
-    dropFeedback.value = { type: '', message: '' };
-
-
-    const t = code ? pickTeacherInitialForSlot(classId, code, d, s) : '';
-    row.slots[s] = code ? { subject: code, teacher: t, teacher_initials: t, teacher_name: '' } : null;
-    saveScheduleToStorage();
-    return true;
+    return false;
 };
 
 const onDragStart = (day, rowIndex, slotIndex) => {
@@ -1700,7 +1922,7 @@ const wouldCauseTeacherClash = (targetDay, targetSlotIndex, targetRowIndex, subj
     if (!code) return false;
 
     const targetRow = schedule.value?.[day]?.[Number(targetRowIndex)];
-    const targetClassId = Number(targetRow?.school_class_id || targetRow?.id || targetRow?.class_id || targetRow?.classId || targetRow?.schoolClassId || 0) || null;
+    const targetClassId = Number(targetRow?.school_class_id || targetRow?.id || targetRow?.class_id || 0) || null;
     const picked = pickTeacherInitialForSlot(targetClassId, code, day, slotIndex);
     const parts = String(picked || '').split('/').map((s) => s.trim()).filter(Boolean);
     if (!parts.length) return false;
@@ -1713,7 +1935,7 @@ const wouldCauseTeacherClash = (targetDay, targetSlotIndex, targetRowIndex, subj
         const otherCode = cell?.subject ? String(cell.subject) : '';
         if (!otherCode) continue;
 
-        const otherClassId = Number(row?.school_class_id || row?.id || row?.class_id || row?.classId || row?.schoolClassId || 0) || null;
+        const otherClassId = Number(row?.school_class_id || row?.id || row?.class_id || 0) || null;
         const otherPicked = pickTeacherInitialForSlot(otherClassId, otherCode, day, slotIndex);
         const otherParts = String(otherPicked || '').split('/').map((s) => s.trim()).filter(Boolean);
         if (!otherParts.length) continue;
@@ -1724,6 +1946,25 @@ const wouldCauseTeacherClash = (targetDay, targetSlotIndex, targetRowIndex, subj
     }
 
     return false;
+};
+
+const assignSubjectToCell = (day, rowIndex, slotIndex, subjectCode) => {
+    const d = String(day);
+    const r = Number(rowIndex);
+    const s = Number(slotIndex);
+    const code = String(subjectCode || '').trim();
+
+    if (!isDraggableSlot(d, s)) return false;
+    const row = schedule.value?.[d]?.[r];
+    if (!row) return false;
+
+    const classId = Number(row?.school_class_id || row?.id || row?.class_id || 0) || null;
+    if (code && !isSubjectAllowedInSlot(classId, code, s)) return false;
+    if (code && wouldCauseTeacherClash(d, s, r, code)) return false;
+
+    row.slots[s] = code ? { subject: code, teacher: pickTeacherInitialForSlot(classId, code, d, s) } : null;
+    saveScheduleToStorage();
+    return true;
 };
 
 const onDrop = (day, rowIndex, slotIndex) => {
@@ -1843,7 +2084,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                     </div>
                     <button
                         type="button"
-                        class="rounded-md bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-emerald-500 focus:ring-offset-1"
+                        class="rounded-md bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
                         @click="downloadTeacherInitials"
                     >
                         Download (CSV)
@@ -1887,144 +2128,6 @@ const onDrop = (day, rowIndex, slotIndex) => {
             </div>
         </div>
 
-        <!-- Assign subjects modal -->
-        <div
-            v-if="showAssignSubjectsModal"
-            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 py-6 sm:px-0"
-            @click.self="showAssignSubjectsModal = false"
-        >
-            <div class="max-h-full w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 text-xs text-gray-700 shadow-2xl ring-1 ring-gray-200">
-                <div class="mb-3 flex items-center justify-between">
-                    <div>
-                        <div class="text-sm font-semibold text-gray-800">Assign Subjects</div>
-                        <div class="text-[11px] text-gray-500">Chagua masomo yatakayopatikana kwenye ratiba (palette).</div>
-                    </div>
-                    <button
-                        type="button"
-                        class="text-[11px] text-gray-500 hover:text-gray-700"
-                        @click="showAssignSubjectsModal = false"
-                    >
-                        Close
-                    </button>
-                </div>
-
-                <div class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <input
-                        v-model="assignSubjectsSearch"
-                        type="text"
-                        placeholder="Search subject..."
-                        class="w-full rounded-md border border-gray-300 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                    />
-                    <div class="flex items-center justify-end gap-2">
-                        <button
-                            type="button"
-                            class="rounded-md bg-white px-3 py-2 text-[11px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
-                            @click="assignedSubjectCodes = allSubjectCodes.slice()"
-                        >
-                            Select all
-                        </button>
-                        <button
-                            type="button"
-                            class="rounded-md bg-white px-3 py-2 text-[11px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
-                            @click="assignedSubjectCodes = []"
-                        >
-                            Clear
-                        </button>
-                    </div>
-                </div>
-
-                <div class="max-h-[55vh] overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-3">
-                    <div v-if="!filteredAssignSubjectCodes.length" class="py-6 text-center text-[11px] text-gray-500">
-                        No subjects found.
-                    </div>
-                    <div v-else class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                        <label
-                            v-for="code in filteredAssignSubjectCodes"
-                            :key="code"
-                            class="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] ring-1 ring-gray-200"
-                        >
-                            <input
-                                type="checkbox"
-                                class="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
-                                :checked="assignedSubjectCodes.includes(code)"
-                                @change="(e) => {
-                                    if (e.target.checked) {
-                                        if (!assignedSubjectCodes.includes(code)) assignedSubjectCodes = assignedSubjectCodes.concat([code]);
-                                    } else {
-                                        assignedSubjectCodes = assignedSubjectCodes.filter((c) => c !== code);
-                                    }
-                                }"
-                            />
-                            <span class="font-semibold text-gray-800">{{ code }}</span>
-                        </label>
-                    </div>
-                </div>
-
-                <div class="mt-4 flex items-center justify-end gap-2">
-                    <button
-                        type="button"
-                        class="rounded-md bg-gray-100 px-3 py-2 text-[11px] font-medium text-gray-700 hover:bg-gray-200"
-                        @click="showAssignSubjectsModal = false"
-                    >
-                        Done
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <div
-            v-if="showSubjectPalette"
-            class="fixed inset-0 z-50 pointer-events-none"
-        >
-            <div class="absolute inset-y-0 right-0 flex w-[340px] max-w-[90vw] pointer-events-auto">
-                <div class="flex h-full w-full flex-col overflow-hidden rounded-l-2xl bg-white shadow-2xl ring-1 ring-gray-200">
-                    <div class="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-                        <div>
-                            <h3 class="text-sm font-semibold text-gray-800">Subjects</h3>
-                            <p class="text-[11px] text-gray-500">Drag and drop into the timetable.</p>
-                        </div>
-                        <button
-                            type="button"
-                            class="text-[11px] text-gray-500 hover:text-gray-700"
-                            @click="closeSubjectsPopup"
-                        >
-                            Close
-                        </button>
-                    </div>
-
-                    <div class="p-4">
-                        <input
-                            v-model="subjectPaletteSearch"
-                            type="text"
-                            placeholder="Search subject..."
-                            class="mb-2 w-full rounded-md border border-gray-300 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                        />
-                        <div class="mb-3 text-[11px] text-gray-500">
-                            Filter: <span class="font-semibold">{{ selectedClass }}</span>
-                            <span v-if="selectedStream !== 'ALL'"> · Stream <span class="font-semibold">{{ selectedStream }}</span></span>
-                        </div>
-
-                        <div class="flex-1 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-2">
-                            <div v-if="!filteredSubjectPaletteCodes.length" class="px-2 py-6 text-center text-xs text-gray-500">
-                                No subjects found for this class/stream.
-                            </div>
-                            <div v-else class="flex flex-wrap gap-2">
-                                <div
-                                    v-for="code in filteredSubjectPaletteCodes"
-                                    :key="code"
-                                    draggable="true"
-                                    class="cursor-grab select-none rounded-md bg-white px-3 py-2 text-xs font-semibold text-gray-800 shadow-sm ring-1 ring-gray-200 hover:bg-gray-50 active:cursor-grabbing"
-                                    @dragstart="onSubjectDragStart(code)"
-                                >
-                                    {{ code }}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
         <div class="space-y-4">
             <!-- Preview: full-width card -->
             <div class="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
@@ -2056,7 +2159,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                     <div class="flex flex-wrap items-center gap-2">
                         <button
                             type="button"
-                            class="rounded-md bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-800 ring-1 ring-amber-100 hover:bg-amber-100"
+                            class="rounded-md bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-100 hover:bg-amber-100"
                             :disabled="!generationWarnings.length"
                             @click="showResolveModal = true"
                         >
@@ -2064,31 +2167,10 @@ const onDrop = (day, rowIndex, slotIndex) => {
                         </button>
                         <button
                             type="button"
-                            class="rounded-md bg-blue-600 px-2 py-1 text-[10px] font-semibold text-white shadow-sm hover:bg-blue-700"
-                            @click="generateNewTimetable"
-                        >
-                            Generate with New Rules
-                        </button>
-                        <button
-                            type="button"
                             class="rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100"
                             @click="regenerateSampleTimetable"
                         >
                             Regenerate Sample Timetable
-                        </button>
-                        <button
-                            type="button"
-                            class="rounded-md bg-white px-2 py-1 text-[10px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
-                            @click="openSubjectsPopup"
-                        >
-                            Subjects
-                        </button>
-                        <button
-                            type="button"
-                            class="rounded-md bg-white px-2 py-1 text-[10px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
-                            @click="showAssignSubjectsModal = true"
-                        >
-                            Assign
                         </button>
                         <button
                             type="button"
@@ -2115,26 +2197,54 @@ const onDrop = (day, rowIndex, slotIndex) => {
                     </div>
                 </div>
 
-                <div v-if="dropFeedback.message" class="mb-3 rounded-md border px-3 py-2 text-[11px]"
-                    :class="dropFeedback.type === 'error' ? 'border-red-200 bg-red-50 text-red-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'"
-                >
-                    {{ dropFeedback.message }}
-                </div>
-
-                <div v-if="generationWarnings.length" class="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] text-amber-900">
-                    <div class="font-semibold">Limitations check:</div>
-                    <div class="mt-1 max-h-24 overflow-y-auto">
-                        <div v-for="(w, idx) in generationWarnings" :key="idx">{{ w }}</div>
+                <div v-if="showResolveModal" class="mb-3 overflow-hidden rounded-lg border border-amber-200 bg-amber-50">
+                    <div class="flex items-center justify-between gap-2 border-b border-amber-200 px-3 py-2">
+                        <div class="text-[11px] font-semibold text-amber-900">
+                            Limitations ({{ generationWarnings.length }})
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button
+                                type="button"
+                                class="rounded-md bg-amber-600 px-2 py-1 text-[10px] font-semibold text-white shadow-sm hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1"
+                                :disabled="resolveRunning || !generationWarnings.length"
+                                @click="resolveAllLimitations"
+                            >
+                                {{ resolveAllStatus.status === 'running' ? 'Resolving...' : 'Resolve All' }}
+                            </button>
+                            <button
+                                type="button"
+                                class="text-[11px] font-medium text-amber-900 hover:text-amber-950"
+                                @click="showResolveModal = false"
+                            >
+                                Close
+                            </button>
+                        </div>
                     </div>
-                </div>
-
-                <div v-if="false" class="mt-3 rounded-md border border-gray-200 bg-gray-50 p-3 text-[11px]">
-                    <div class="font-semibold">Subject Requirements:</div>
-                    <div class="mt-1 grid grid-cols-2 gap-2">
-                        <div>ENG &amp; B/MAT: 2 doubles + 3 singles (5 periods)</div>
-                        <div>Other subjects: 1 double + 1 single (3 periods)</div>
-                        <div>Total periods per week: 40 max</div>
-                        <div>No subject repeats same day (except doubles)</div>
+                    <div class="max-h-56 overflow-y-auto px-3 py-2">
+                        <div v-if="!generationWarnings.length" class="text-[11px] text-amber-900">
+                            No limitations.
+                        </div>
+                        <div v-if="generationWarnings.length && resolveAllStatus.message" class="mb-2 text-[10px] font-semibold text-amber-900">
+                            {{ resolveAllStatus.message }}
+                        </div>
+                        <div v-for="(w, idx) in generationWarnings" :key="`${idx}-${w}`" class="mb-2 rounded-md bg-white/70 px-2 py-2 text-[11px] text-amber-950 ring-1 ring-amber-200">
+                            <div class="flex items-start justify-between gap-2">
+                                <div class="flex-1 break-words">
+                                    {{ w }}
+                                </div>
+                                <button
+                                    type="button"
+                                    class="shrink-0 rounded-md bg-amber-600 px-2 py-1 text-[10px] font-semibold text-white shadow-sm hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1"
+                                    :disabled="resolveRunning || resolveStatusByWarning[String(w)]?.status === 'running'"
+                                    @click="resolveOneLimitation(w)"
+                                >
+                                    {{ resolveStatusByWarning[String(w)]?.status === 'running' ? 'Resolving...' : 'Resolve' }}
+                                </button>
+                            </div>
+                            <div v-if="resolveStatusByWarning[String(w)]" class="mt-1 text-[10px] text-amber-900">
+                                {{ resolveStatusByWarning[String(w)]?.message }}
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -2142,7 +2252,6 @@ const onDrop = (day, rowIndex, slotIndex) => {
                     id="class-timetable-preview"
                     :key="generationNonce"
                     class="overflow-hidden rounded-lg border border-gray-300 bg-white text-[11px] text-gray-800"
-                    @contextmenu.prevent
                 >
                     <!-- Top header styled like reports (emblem + titles) -->
                     <div class="border-b border-gray-300 bg-white px-4 py-3 text-center">
@@ -2389,7 +2498,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                                     <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">{{ slot.teacher }}</div>
                                                 </template>
                                                 <template v-else>
-                                                    <div class="font-semibold text-gray-400">&nbsp;</div>
+                                                    <div class="font-semibold text-gray-400">PS</div>
                                                 </template>
                                             </template>
                                         </td>
@@ -2568,7 +2677,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
 
             <!-- Limitations modal -->
             <div
-                v-if="false && showLimitationsModal"
+                v-if="showLimitationsModal"
                 class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 py-6 sm:px-0"
                 @click.self="showLimitationsModal = false"
             >

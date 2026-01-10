@@ -39,7 +39,7 @@ const userSidebarSections = [
     {
         key: 'teachers',
         title: 'Teachers',
-        items: ['Add Teacher', 'View Teachers', 'Credentials', 'Roles & Permissions'],
+        items: ['Teacher Assignments', 'Add Teacher', 'View Teachers', 'Credentials', 'Roles & Permissions'],
     },
     {
         key: 'exams',
@@ -264,6 +264,7 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
     if (sectionKey === 'dashboard' && itemName === 'Overview') return route('dashboard');
     if (sectionKey === 'dashboard' && itemName === 'Statistics') return route('statistics');
     if (sectionKey === 'dashboard' && itemName === 'Recent Activities') return route('recent-activities');
+    if (sectionKey === 'teachers' && itemName === 'Teacher Assignments') return route('teachers.assignments');
     if (sectionKey === 'teachers' && itemName === 'View Teachers') return route('teachers.index');
     if (sectionKey === 'teachers' && itemName === 'Add Teacher') return route('teachers.create');
     if (sectionKey === 'teachers' && itemName === 'Credentials') return route('teachers.credentials');

@@ -6842,13 +6842,6 @@ Route::middleware('auth')->group(function () {
             'term' => ['nullable', 'string', 'max:50'],
             'type' => ['nullable', 'string', 'max:50'],
             'schedule_json' => ['nullable'],
-            'entries' => ['nullable', 'array'],
-            'entries.*.school_class_id' => ['required_with:entries', 'integer', 'exists:school_classes,id'],
-            'entries.*.day' => ['required_with:entries', 'string', 'max:20'],
-            'entries.*.period_index' => ['required_with:entries', 'integer', 'min:0', 'max:50'],
-            'entries.*.subject_id' => ['nullable', 'integer', 'exists:subjects,id'],
-            'entries.*.teacher_id' => ['nullable', 'integer', 'exists:users,id'],
-            'entries.*.teacher_initials' => ['nullable', 'string', 'max:50'],
         ]);
 
         $timetable = Timetable::create([
@@ -6860,34 +6853,6 @@ Route::middleware('auth')->group(function () {
             'name' => $request->input('name') ?? ($data['type'] ?? null),
             'schedule_json' => $request->input('schedule_json'),
         ]);
-
-        if (! empty($data['entries']) && is_array($data['entries'])) {
-            $rows = collect($data['entries'])
-                ->map(function (array $row) use ($schoolId, $timetable) {
-                    return [
-                        'timetable_id' => (int) $timetable->id,
-                        'school_id' => $schoolId,
-                        'school_class_id' => (int) $row['school_class_id'],
-                        'day' => strtoupper(trim((string) $row['day'])),
-                        'period_index' => (int) $row['period_index'],
-                        'subject_id' => isset($row['subject_id']) ? (int) $row['subject_id'] : null,
-                        'teacher_id' => isset($row['teacher_id']) ? (int) $row['teacher_id'] : null,
-                        'teacher_initials' => isset($row['teacher_initials']) ? trim((string) $row['teacher_initials']) : null,
-                        'updated_at' => now(),
-                        'created_at' => now(),
-                    ];
-                })
-                ->values()
-                ->all();
-
-            if (! empty($rows)) {
-                \App\Models\TimetableEntry::upsert(
-                    $rows,
-                    ['timetable_id', 'school_class_id', 'day', 'period_index'],
-                    ['subject_id', 'teacher_id', 'teacher_initials', 'updated_at']
-                );
-            }
-        }
 
         // Generate a simple PDF version of the timetable header for archiving
         try {
@@ -7624,6 +7589,92 @@ Route::middleware('auth')->group(function () {
             'conflicts' => $conflicts,
         ]);
     })->name('teachers.assignment-conflicts');
+
+    Route::get('/teachers/assignments', function (\Illuminate\Http\Request $request) {
+        $schoolId = $request->user()?->school_id;
+
+        $rows = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
+            ->join('users as u', 'u.id', '=', 'tcs.teacher_id')
+            ->join('subjects as s', 's.id', '=', 'tcs.subject_id')
+            ->join('school_classes as sc', 'sc.id', '=', 'tcs.school_class_id')
+            ->when($schoolId, fn ($q) => $q->where('tcs.school_id', $schoolId))
+            ->where('u.role', 'teacher')
+            ->orderBy('u.name')
+            ->orderBy('s.subject_code')
+            ->orderByRaw('COALESCE(sc.parent_class_id, sc.id) asc')
+            ->orderByRaw("COALESCE(sc.stream, '') asc")
+            ->get([
+                'u.id as teacher_id',
+                'u.name as teacher_name',
+                'u.email as teacher_email',
+                'u.phone as teacher_phone',
+                'u.check_number as teacher_check_number',
+                's.id as subject_id',
+                's.subject_code as subject_code',
+                's.name as subject_name',
+                'sc.id as class_id',
+                'sc.name as class_name',
+                'sc.level as class_level',
+                'sc.stream as class_stream',
+                'sc.parent_class_id as parent_class_id',
+            ]);
+
+        $teachers = collect($rows)
+            ->groupBy(fn ($r) => (int) $r->teacher_id)
+            ->map(function ($grp) {
+                $first = collect($grp)->first();
+
+                $subjects = collect($grp)
+                    ->groupBy(fn ($r) => (int) $r->subject_id)
+                    ->map(function ($sg) {
+                        $sf = collect($sg)->first();
+
+                        $classes = collect($sg)
+                            ->map(function ($r) {
+                                $name = $r->class_name ? trim((string) $r->class_name) : '';
+                                $level = $r->class_level ? trim((string) $r->class_level) : '';
+                                $stream = $r->class_stream ? trim((string) $r->class_stream) : '';
+                                $label = $name !== '' ? $name : trim($level . ' ' . $stream);
+
+                                return [
+                                    'id' => (int) $r->class_id,
+                                    'parent_class_id' => (int) ($r->parent_class_id ?? 0),
+                                    'name' => $name,
+                                    'level' => $level,
+                                    'stream' => $stream,
+                                    'label' => $label,
+                                ];
+                            })
+                            ->unique('id')
+                            ->values()
+                            ->all();
+
+                        return [
+                            'id' => (int) $sf->subject_id,
+                            'subject_code' => (string) ($sf->subject_code ?? ''),
+                            'subject_name' => (string) ($sf->subject_name ?? ''),
+                            'classes' => $classes,
+                        ];
+                    })
+                    ->values()
+                    ->all();
+
+                return [
+                    'id' => (int) $first->teacher_id,
+                    'name' => (string) ($first->teacher_name ?? ''),
+                    'email' => (string) ($first->teacher_email ?? ''),
+                    'phone' => (string) ($first->teacher_phone ?? ''),
+                    'check_number' => (string) ($first->teacher_check_number ?? ''),
+                    'subjects' => $subjects,
+                ];
+            })
+            ->values()
+            ->all();
+
+        return Inertia::render('TeacherAssignments', [
+            'teachers' => $teachers,
+        ]);
+    })->name('teachers.assignments');
 
     Route::get('/teachers/class-assignment-check', function (\Illuminate\Http\Request $request) {
         $schoolId = $request->user()?->school_id;
