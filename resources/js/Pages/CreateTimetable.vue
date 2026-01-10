@@ -2069,6 +2069,26 @@ const canUsePaletteCodeForTarget = (code) => {
     return isSubjectAllowedInSlot(classId, code, target.slotIndex);
 };
 
+const subjectPaletteContextLabel = computed(() => {
+    const target = subjectMenuTarget.value;
+    if (target?.day && target.rowIndex >= 0) {
+        const row = schedule.value?.[String(target.day)]?.[Number(target.rowIndex)] || null;
+        const label = String(row?.class_label || row?.form || '').trim();
+        const stream = String(row?.stream || '').trim();
+        if (label && stream) return `${label} ${stream}`;
+        if (label) return label;
+        return 'Selected cell';
+    }
+
+    if (selectedClass.value !== 'ALL' && selectedStream.value !== 'ALL') {
+        return `${selectedClass.value} ${selectedStream.value}`;
+    }
+    if (selectedClass.value !== 'ALL') {
+        return `${selectedClass.value}`;
+    }
+    return 'All Classes';
+});
+
 const wouldCauseTeacherClash = (targetDay, targetSlotIndex, targetRowIndex, subjectCode) => {
     const day = String(targetDay);
     const slotIndex = Number(targetSlotIndex);
@@ -2339,7 +2359,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                             :disabled="form.processing"
                             @click="saveTimetable"
                         >
-                            {{ form.processing ? 'Saving...' : 'Save' }}
+                            {{ form.processing ? 'Exporting...' : 'Export (Save to DB)' }}
                         </button>
                         <button
                             type="button"
@@ -2832,7 +2852,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                 :disabled="form.processing"
                                 @click="saveTimetable"
                             >
-                                {{ form.processing ? 'Saving...' : 'Generate & Save Timetable' }}
+                                {{ form.processing ? 'Exporting...' : 'Export (Save to DB)' }}
                             </button>
                         </div>
                     </div>
@@ -3153,6 +3173,30 @@ Form I &amp; II	Form III &amp; IV
                     </div>
 
                     <div class="border-t border-gray-100 px-3 py-2">
+                        <div class="mb-2">
+                            <div class="mb-1 text-[10px] font-semibold text-gray-600">Filter</div>
+                            <div v-if="subjectMenuTarget.day" class="rounded-md bg-gray-50 px-2 py-1 text-[11px] text-gray-700 ring-1 ring-gray-200">
+                                {{ subjectPaletteContextLabel }}
+                            </div>
+                            <div v-else class="grid grid-cols-2 gap-2">
+                                <select
+                                    v-model="selectedClass"
+                                    class="w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                >
+                                    <option value="ALL">All Classes</option>
+                                    <option v-for="c in classLabels" :key="c" :value="c">{{ c }}</option>
+                                </select>
+                                <select
+                                    v-model="selectedStream"
+                                    class="w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                >
+                                    <option value="ALL">All Streams</option>
+                                    <option v-if="!streams.length" value="" disabled>No streams</option>
+                                    <option v-for="s in streams" :key="s" :value="s">{{ s }}</option>
+                                </select>
+                            </div>
+                        </div>
+
                         <input
                             v-model="subjectMenuSearch"
                             type="text"
