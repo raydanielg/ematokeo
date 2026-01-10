@@ -2305,6 +2305,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                     id="class-timetable-preview"
                     :key="generationNonce"
                     class="overflow-hidden rounded-lg border border-gray-300 bg-white text-[11px] text-gray-800"
+                    @contextmenu.prevent
                 >
                     <!-- Top header styled like reports (emblem + titles) -->
                     <div class="border-b border-gray-300 bg-white px-4 py-3 text-center">
