@@ -22,6 +22,14 @@ const props = defineProps({
     },
 });
 
+const schoolLogoUrl = computed(() => {
+    const raw = String(props.school?.logo_path || '').trim();
+    if (!raw) return '';
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    if (raw.startsWith('/')) return raw;
+    return `/storage/${raw}`;
+});
+
 const days = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'];
 
 const normalizeSchedule = (rawSchedule) => {
@@ -141,6 +149,20 @@ const baseClassOptions = computed(() => {
     return Array.from(map.values()).sort((a, b) => Number(a.id) - Number(b.id));
 });
 
+const selectedBaseClassLabel = computed(() => {
+    const id = Number(selectedBaseClassId.value || 0) || null;
+    if (!id) return '';
+    return baseClassOptions.value.find((c) => Number(c.id) === id)?.label || '';
+});
+
+const previewScopeTitle = computed(() => {
+    const cls = String(selectedBaseClassLabel.value || '').trim();
+    const stream = String(selectedStream.value || '').trim();
+    if (!cls) return 'CLASS TIME TABLE';
+    if (!stream || stream === 'ALL') return `${cls} TIME TABLE`;
+    return `${cls} - ${stream} TIME TABLE`;
+});
+
 const streamsForBase = computed(() => {
     const baseId = Number(selectedBaseClassId.value || 0) || null;
     if (!baseId) return [];
@@ -202,6 +224,12 @@ const filteredRowsByDay = computed(() => {
     return out;
 });
 
+const dayRowCount = (day) => {
+    const d = String(day || '');
+    const rows = filteredRowsByDay.value?.[d] || [];
+    return Array.isArray(rows) && rows.length ? rows.length : 1;
+};
+
 const primaryRowByDay = computed(() => {
     const ids = (selectedClassIds.value || []).map((v) => Number(v));
     const firstId = ids.length ? ids[0] : null;
@@ -228,7 +256,7 @@ const printTimetable = () => {
 
     <AuthenticatedLayout>
         <template #header>
-            <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center justify-between gap-3 no-print">
                 <div>
                     <h2 class="text-2xl font-semibold leading-tight text-gray-800">
                         Class Timetable
@@ -274,25 +302,58 @@ const printTimetable = () => {
                     >
                         Print
                     </button>
+
+                    <button
+                        type="button"
+                        class="rounded-md bg-emerald-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
+                        :disabled="!activeTimetable?.id"
+                        @click="activeTimetable?.id && router.get(route('timetables.show', activeTimetable.id))"
+                    >
+                        Edit
+                    </button>
+
+                    <button
+                        type="button"
+                        class="rounded-md bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 ring-1 ring-blue-100 hover:bg-blue-100"
+                        :disabled="!activeTimetable?.file_path"
+                        @click="activeTimetable?.file_path && window.open(route('timetables.download', activeTimetable.id), '_blank')"
+                    >
+                        PDF
+                    </button>
                 </div>
             </div>
         </template>
-
         <div class="py-6">
             <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-                <div class="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
-                    <div class="flex items-start justify-between gap-3">
-                        <div>
-                            <div class="text-sm font-semibold text-gray-800">Preview</div>
-                            <div class="mt-0.5 text-xs text-gray-500">
-                                {{ activeTimetable?.title || 'Published timetable' }}
-                                <span v-if="activeTimetable?.academic_year"> · {{ activeTimetable.academic_year }}</span>
-                                <span v-if="activeTimetable?.term"> · {{ activeTimetable.term }}</span>
-                            </div>
+                <div class="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100 print-area">
+                    <div class="mb-4 border-b border-gray-200 pb-3 text-center">
+                        <div class="mb-1 text-[11px] font-semibold text-gray-700">Emblem</div>
+
+                        <div v-if="schoolLogoUrl" class="mx-auto mb-1 h-14 w-14 overflow-hidden rounded-full border border-gray-200 bg-white">
+                            <img
+                                :src="schoolLogoUrl"
+                                alt="School logo"
+                                class="h-full w-full object-contain"
+                            />
                         </div>
-                        <div v-if="!hasAnySchedule" class="rounded-md bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 ring-1 ring-amber-200">
-                            No timetable schedule found yet.
+
+                        <div class="text-[12px] font-extrabold uppercase tracking-wide text-gray-900">
+                            {{ props.school?.name || 'ANGELINA MABULA SECONDARY SCHOOL' }}
                         </div>
+                        <div class="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-700">
+                            {{ props.school?.address || 'P . O . BOX 523 · MWANZA' }}
+                        </div>
+
+                        <div class="mt-2 text-[11px] font-extrabold uppercase tracking-wide text-emerald-800">
+                            {{ previewScopeTitle }}
+                        </div>
+                        <div class="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-800">
+                            MWAKA: {{ activeTimetable?.academic_year || new Date().getFullYear() }}
+                        </div>
+                    </div>
+
+                    <div v-if="!hasAnySchedule" class="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 ring-1 ring-amber-200">
+                        No timetable schedule found yet.
                     </div>
 
                     <div class="mt-4 overflow-x-auto">
@@ -315,37 +376,37 @@ const printTimetable = () => {
                                         07:30 - 07:50 AM
                                     </th>
                                     <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
-                                        08:00
+                                        08:00 - 08:40
                                     </th>
                                     <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
-                                        08:40
+                                        08:40 - 09:20
                                     </th>
                                     <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
-                                        09:20
+                                        09:20 - 10:00
                                     </th>
                                     <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
-                                        10:00
+                                        10:00 - 10:40
                                     </th>
                                     <th class="w-16 border border-slate-300 bg-sky-200 px-1 py-1 text-center align-middle">
-                                        BREAK
+                                        10:40 - 11:05
                                     </th>
                                     <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
-                                        11:05
+                                        11:05 - 11:45
                                     </th>
                                     <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
-                                        11:45
+                                        11:45 - 12:25
                                     </th>
                                     <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
-                                        12:25
+                                        12:25 - 01:05
                                     </th>
                                     <th class="w-16 border border-slate-300 bg-sky-200 px-1 py-1 text-center align-middle">
-                                        BREAK
+                                        01:05 - 01:20
                                     </th>
                                     <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
-                                        13:20
+                                        01:20 - 02:00
                                     </th>
                                     <th class="border border-slate-300 bg-slate-100 px-1 py-1 text-center align-middle">
-                                        14:00
+                                        02:00 - 02:40
                                     </th>
                                     <th class="w-20 border border-slate-300 bg-emerald-100 px-1 py-1 text-center align-middle">
                                         03:30 - 05:30 PM
@@ -353,80 +414,91 @@ const printTimetable = () => {
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="day in days" :key="day">
-                                    <td class="border border-slate-300 bg-sky-100 px-1 py-3 text-center text-[10px] font-semibold uppercase text-sky-900">
-                                        {{ day }}
-                                    </td>
+                                <template v-for="day in days" :key="day">
+                                    <template v-if="(filteredRowsByDay[day] || []).length">
+                                        <tr v-for="(row, idx) in filteredRowsByDay[day]" :key="`${day}-${row?.school_class_id || idx}`">
+                                            <td
+                                                v-if="idx === 0"
+                                                class="border border-slate-300 bg-sky-100 px-1 py-3 text-center text-[10px] font-semibold uppercase text-sky-900"
+                                                :rowspan="dayRowCount(day)"
+                                            >
+                                                {{ day }}
+                                            </td>
 
-                                    <template v-if="primaryRowByDay[day]">
-                                        <td class="border border-slate-300 bg-slate-50 px-1 py-1 text-center font-semibold">
-                                            {{ primaryRowByDay[day].class_label || primaryRowByDay[day].form || primaryRowByDay[day].class_name || '-' }}
-                                        </td>
-                                        <td class="border border-slate-300 bg-slate-50 px-1 py-1 text-center">
-                                            {{ primaryRowByDay[day].stream || '-' }}
-                                        </td>
-                                        <td class="border border-slate-300 bg-sky-50 px-1 py-1 text-center">
-                                            <div class="font-semibold">ARRIVAL &amp; CLEANING</div>
-                                        </td>
-                                        <td class="border border-slate-300 bg-fuchsia-100 px-1 py-1 text-center font-semibold text-fuchsia-900">
-                                            PREP
-                                        </td>
+                                            <td class="border border-slate-300 bg-slate-50 px-1 py-1 text-center font-semibold">
+                                                {{ row?.class_label || row?.form || row?.class_name || '-' }}
+                                            </td>
+                                            <td class="border border-slate-300 bg-slate-50 px-1 py-1 text-center">
+                                                {{ row?.stream || '-' }}
+                                            </td>
+                                            <td class="border border-slate-300 bg-sky-50 px-1 py-1 text-center">
+                                                <div class="font-semibold">ARRIVAL &amp; CLEANING</div>
+                                            </td>
+                                            <td class="border border-slate-300 bg-fuchsia-100 px-1 py-1 text-center font-semibold text-fuchsia-900">
+                                                PREP
+                                            </td>
 
-                                        <td v-for="i in 4" :key="`am-${day}-${i}`" class="border border-slate-300 bg-emerald-50 px-1 py-1 text-center">
-                                            <template v-if="primaryRowByDay[day].slots[i - 1]?.subject">
-                                                <div class="font-semibold">{{ primaryRowByDay[day].slots[i - 1].subject }}</div>
-                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">
-                                                    {{ primaryRowByDay[day].slots[i - 1].teacher_initials || primaryRowByDay[day].slots[i - 1].teacher || '' }}
-                                                </div>
-                                            </template>
-                                            <template v-else>
-                                                <div>&nbsp;</div>
-                                            </template>
-                                        </td>
+                                            <td v-for="i in 4" :key="`am-${day}-${idx}-${i}`" class="border border-slate-300 bg-emerald-50 px-1 py-1 text-center">
+                                                <template v-if="row?.slots?.[i - 1]?.subject">
+                                                    <div class="font-semibold">{{ row.slots[i - 1].subject }}</div>
+                                                    <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">
+                                                        {{ row.slots[i - 1].teacher_initials || row.slots[i - 1].teacher || '' }}
+                                                    </div>
+                                                </template>
+                                                <template v-else>
+                                                    <div>&nbsp;</div>
+                                                </template>
+                                            </td>
 
-                                        <td class="border border-slate-300 bg-sky-200 px-1 py-1 text-center font-semibold text-sky-900">
-                                            BREAK
-                                        </td>
+                                            <td class="border border-slate-300 bg-sky-200 px-1 py-1 text-center font-semibold text-sky-900">
+                                                BREAK
+                                            </td>
 
-                                        <td v-for="j in 3" :key="`mid-${day}-${j}`" class="border border-slate-300 bg-indigo-50 px-1 py-1 text-center">
-                                            <template v-if="primaryRowByDay[day].slots[3 + j]?.subject">
-                                                <div class="font-semibold">{{ primaryRowByDay[day].slots[3 + j].subject }}</div>
-                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">
-                                                    {{ primaryRowByDay[day].slots[3 + j].teacher_initials || primaryRowByDay[day].slots[3 + j].teacher || '' }}
-                                                </div>
-                                            </template>
-                                            <template v-else>
-                                                <div>&nbsp;</div>
-                                            </template>
-                                        </td>
+                                            <td v-for="j in 3" :key="`mid-${day}-${idx}-${j}`" class="border border-slate-300 bg-indigo-50 px-1 py-1 text-center">
+                                                <template v-if="row?.slots?.[3 + j]?.subject">
+                                                    <div class="font-semibold">{{ row.slots[3 + j].subject }}</div>
+                                                    <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">
+                                                        {{ row.slots[3 + j].teacher_initials || row.slots[3 + j].teacher || '' }}
+                                                    </div>
+                                                </template>
+                                                <template v-else>
+                                                    <div>&nbsp;</div>
+                                                </template>
+                                            </td>
 
-                                        <td class="border border-slate-300 bg-sky-200 px-1 py-1 text-center font-semibold text-sky-900">
-                                            BREAK
-                                        </td>
+                                            <td class="border border-slate-300 bg-sky-200 px-1 py-1 text-center font-semibold text-sky-900">
+                                                BREAK
+                                            </td>
 
-                                        <td v-for="k in 2" :key="`pm-${day}-${k}`" class="border border-slate-300 bg-indigo-50 px-1 py-1 text-center">
-                                            <template v-if="primaryRowByDay[day].slots[6 + k]?.subject">
-                                                <div class="font-semibold">{{ primaryRowByDay[day].slots[6 + k].subject }}</div>
-                                                <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">
-                                                    {{ primaryRowByDay[day].slots[6 + k].teacher_initials || primaryRowByDay[day].slots[6 + k].teacher || '' }}
-                                                </div>
-                                            </template>
-                                            <template v-else>
-                                                <div class="font-semibold text-gray-400">PS</div>
-                                            </template>
-                                        </td>
+                                            <td v-for="k in 2" :key="`pm-${day}-${idx}-${k}`" class="border border-slate-300 bg-indigo-50 px-1 py-1 text-center">
+                                                <template v-if="row?.slots?.[6 + k]?.subject">
+                                                    <div class="font-semibold">{{ row.slots[6 + k].subject }}</div>
+                                                    <div class="break-words text-[9px] font-semibold leading-tight text-gray-700">
+                                                        {{ row.slots[6 + k].teacher_initials || row.slots[6 + k].teacher || '' }}
+                                                    </div>
+                                                </template>
+                                                <template v-else>
+                                                    <div class="font-semibold text-gray-400">PS</div>
+                                                </template>
+                                            </td>
 
-                                        <td class="border border-slate-300 bg-emerald-200 px-1 py-1 text-center font-semibold text-emerald-900">
-                                            REMEDIAL
-                                        </td>
+                                            <td class="border border-slate-300 bg-emerald-200 px-1 py-1 text-center font-semibold text-emerald-900">
+                                                REMEDIAL
+                                            </td>
+                                        </tr>
                                     </template>
 
                                     <template v-else>
-                                        <td class="border border-slate-300 bg-white px-2 py-2" colspan="15">
-                                            <span class="text-xs text-gray-500">No row found for selected class/stream on this day.</span>
-                                        </td>
+                                        <tr>
+                                            <td class="border border-slate-300 bg-sky-100 px-1 py-3 text-center text-[10px] font-semibold uppercase text-sky-900">
+                                                {{ day }}
+                                            </td>
+                                            <td class="border border-slate-300 bg-white px-2 py-2" colspan="15">
+                                                <span class="text-xs text-gray-500">No row found for selected class/stream on this day.</span>
+                                            </td>
+                                        </tr>
                                     </template>
-                                </tr>
+                                </template>
                             </tbody>
                         </table>
                     </div>
@@ -439,3 +511,22 @@ const printTimetable = () => {
         </div>
     </AuthenticatedLayout>
 </template>
+
+<style>
+@media print {
+    .no-print {
+        display: none !important;
+    }
+
+    /* Print only the preview card */
+    .print-area {
+        box-shadow: none !important;
+        border: none !important;
+        padding: 0 !important;
+    }
+
+    body {
+        background: white !important;
+    }
+}
+</style>

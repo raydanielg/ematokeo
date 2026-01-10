@@ -1036,6 +1036,12 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 ->map(fn ($v) => trim((string) $v))
                 ->values();
 
+            $parts = preg_split('/\s+/', trim((string) ($user?->name ?? '')));
+            $initials = collect($parts)
+                ->filter()
+                ->map(fn ($p) => \Illuminate\Support\Str::upper(mb_substr($p, 0, 1)))
+                ->implode('');
+
             // Teachers should be able to view their own periods from any saved timetable for the school.
             // We filter by school_id (when available) and require schedule_json to exist.
             $timetablesQuery = \App\Models\Timetable::query()
@@ -1063,6 +1069,7 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
             return Inertia::render('Teacher/MyTimetable', [
                 'timetables' => $timetables,
                 'assignedClasses' => $assignedClassNames,
+                'teacherInitials' => $initials,
             ]);
         })->name('timetables.my');
 
