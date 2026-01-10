@@ -1,7 +1,7 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head, router } from '@inertiajs/vue3';
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 const props = defineProps({
     timetables: {
@@ -40,12 +40,31 @@ const filteredTimetables = computed(() => {
     return list.filter((t) => normalizeStr(t?.class_name).includes(cls));
 });
 
+watch([selectedClass, filteredTimetables], () => {
+    const list = filteredTimetables.value || [];
+    const currentId = Number(selectedTimetableId.value || 0) || null;
+    if (!list.length) {
+        selectedTimetableId.value = null;
+        return;
+    }
+    if (!currentId || !list.some((t) => Number(t?.id || 0) === currentId)) {
+        selectedTimetableId.value = list[0].id;
+    }
+}, { immediate: true });
+
+const resetFilters = () => {
+    selectedClass.value = 'ALL';
+    selectedTimetableId.value = null;
+};
+
 const selectedTimetable = computed(() => {
     const id = Number(selectedTimetableId.value || 0) || null;
     const list = filteredTimetables.value;
     if (!id) return list?.[0] || null;
     return list.find((t) => Number(t?.id || 0) === id) || list?.[0] || null;
 });
+
+const days = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'];
 
 const slotTimeLabel = (idx) => {
     const map = {
@@ -117,6 +136,18 @@ const teacherPeriodsPreview = computed(() => {
     });
 });
 
+const teacherPreviewForClass = computed(() => {
+    const cls = normalizeStr(selectedClass.value);
+    if (!cls || cls === 'ALL') return teacherPeriodsPreview.value;
+    return teacherPeriodsPreview.value.filter((p) => normalizeStr(p?.class_label).includes(cls));
+});
+
+const previewCellItems = (day, slotIndex) => {
+    const d = String(day || '').toUpperCase();
+    const idx = Number(slotIndex);
+    return teacherPreviewForClass.value.filter((p) => String(p.day || '').toUpperCase() === d && Number(p.slot_index) === idx);
+};
+
 const preview = (id) => {
     router.get(route('timetables.show', id));
 };
@@ -156,31 +187,47 @@ const myPeriods = (id) => {
                         </div>
                     </div>
 
-                    <div class="flex flex-wrap items-end gap-3">
-                        <div>
-                            <div class="mb-1 text-[11px] font-semibold text-gray-700">Filter class</div>
+                    <div class="w-full sm:w-auto sm:min-w-[560px]">
+                        <div class="mb-2 flex items-center justify-between gap-2">
+                            <div>
+                                <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Filters</div>
+                                <div class="text-[11px] text-gray-500">Chuja ratiba kwa darasa lako na ratiba iliyochapishwa.</div>
+                            </div>
+                            <button
+                                type="button"
+                                class="rounded-md bg-white px-3 py-1.5 text-[11px] font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
+                                @click="resetFilters"
+                            >
+                                Clear
+                            </button>
+                        </div>
+
+                        <div class="grid gap-3 sm:grid-cols-3 sm:items-end">
+                        <div class="sm:col-span-1">
+                            <div class="mb-1 text-[11px] font-semibold text-gray-700">Class</div>
                             <select
                                 v-model="selectedClass"
-                                class="w-56 rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-800 focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                class="w-full rounded-md border border-gray-300 bg-white px-2 py-2 text-[11px] text-gray-800 focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
                             >
                                 <option value="ALL">All my classes</option>
                                 <option v-for="c in classOptions" :key="c" :value="c">{{ c }}</option>
                             </select>
                         </div>
 
-                        <div>
-                            <div class="mb-1 text-[11px] font-semibold text-gray-700">Filter timetable</div>
+                        <div class="sm:col-span-2">
+                            <div class="mb-1 text-[11px] font-semibold text-gray-700">Timetable</div>
                             <select
                                 v-model="selectedTimetableId"
-                                class="w-64 rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-800 focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                                class="w-full rounded-md border border-gray-300 bg-white px-2 py-2 text-[11px] text-gray-800 focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
                             >
                                 <option v-if="!filteredTimetables.length" :value="null">No timetables</option>
                                 <option v-for="t in filteredTimetables" :key="t.id" :value="t.id">{{ t.title }}</option>
                             </select>
                         </div>
 
-                        <div class="text-xs text-gray-500">
+                        <div class="text-xs text-gray-500 sm:col-span-3 sm:text-right">
                             Showing <span class="font-semibold text-gray-800">{{ filteredTimetables.length }}</span> timetable(s)
+                        </div>
                         </div>
                     </div>
                 </div>
@@ -196,7 +243,7 @@ const myPeriods = (id) => {
                         </div>
                     </div>
 
-                    <div class="flex gap-2">
+                    <div class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
                         <button
                             type="button"
                             class="rounded-md bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100"
@@ -216,29 +263,58 @@ const myPeriods = (id) => {
                     </div>
                 </div>
 
-                <div class="mt-4 overflow-x-auto">
-                    <table class="min-w-full divide-y divide-gray-100 text-left text-sm">
-                        <thead class="bg-gray-50">
+                <div class="mt-4 -mx-5 overflow-x-auto px-5">
+                    <table class="min-w-[980px] border-collapse text-[10px] sm:min-w-full sm:text-[11px] text-gray-800">
+                        <thead>
                             <tr>
-                                <th class="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600">Day</th>
-                                <th class="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600">Class</th>
-                                <th class="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600">Stream</th>
-                                <th class="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600">Time</th>
-                                <th class="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600">Subject</th>
+                                <th class="w-20 border border-slate-200 bg-slate-100 px-2 py-2 text-left">Day</th>
+                                <th class="border border-slate-200 bg-slate-100 px-2 py-2 text-center">08:00</th>
+                                <th class="border border-slate-200 bg-slate-100 px-2 py-2 text-center">08:40</th>
+                                <th class="border border-slate-200 bg-slate-100 px-2 py-2 text-center">09:20</th>
+                                <th class="border border-slate-200 bg-slate-100 px-2 py-2 text-center">10:00</th>
+                                <th class="border border-slate-200 bg-sky-100 px-2 py-2 text-center">BREAK</th>
+                                <th class="border border-slate-200 bg-slate-100 px-2 py-2 text-center">11:05</th>
+                                <th class="border border-slate-200 bg-slate-100 px-2 py-2 text-center">11:45</th>
+                                <th class="border border-slate-200 bg-slate-100 px-2 py-2 text-center">12:25</th>
+                                <th class="border border-slate-200 bg-sky-100 px-2 py-2 text-center">BREAK</th>
+                                <th class="border border-slate-200 bg-slate-100 px-2 py-2 text-center">01:20</th>
+                                <th class="border border-slate-200 bg-slate-100 px-2 py-2 text-center">02:00</th>
                             </tr>
                         </thead>
-                        <tbody class="divide-y divide-gray-100">
-                            <tr v-if="!teacherPeriodsPreview.length">
-                                <td colspan="5" class="px-4 py-5 text-center text-sm text-gray-500">
+                        <tbody>
+                            <tr v-if="!teacherPreviewForClass.length">
+                                <td colspan="12" class="border border-slate-200 px-4 py-6 text-center text-sm text-gray-500">
                                     No periods found for your initials in the selected timetable.
                                 </td>
                             </tr>
-                            <tr v-for="(p, idx) in teacherPeriodsPreview" :key="`${p.day}-${p.class_label}-${p.stream}-${p.slot_index}-${idx}`" class="hover:bg-gray-50">
-                                <td class="px-4 py-2 font-semibold text-gray-900">{{ p.day }}</td>
-                                <td class="px-4 py-2 text-gray-700">{{ p.class_label || '—' }}</td>
-                                <td class="px-4 py-2 text-gray-700">{{ p.stream || '—' }}</td>
-                                <td class="px-4 py-2 text-gray-700">{{ slotTimeLabel(p.slot_index) }}</td>
-                                <td class="px-4 py-2 font-semibold text-emerald-800">{{ p.subject || '—' }}</td>
+
+                            <tr v-for="day in days" :key="day" class="hover:bg-gray-50">
+                                <td class="border border-slate-200 bg-sky-50 px-2 py-2 text-left font-semibold">{{ day }}</td>
+
+                                <td v-for="i in 4" :key="`am-${day}-${i}`" class="border border-slate-200 px-2 py-2 align-top">
+                                    <div v-for="(p, idx) in previewCellItems(day, i - 1)" :key="`p-${day}-${i}-${idx}`" class="mb-1 rounded bg-emerald-50 px-2 py-1">
+                                        <div class="font-semibold text-emerald-900">{{ p.subject || '—' }}</div>
+                                        <div class="text-[10px] text-gray-700">{{ p.class_label }} <span v-if="p.stream">· {{ p.stream }}</span></div>
+                                    </div>
+                                </td>
+
+                                <td class="border border-slate-200 bg-sky-100 px-2 py-2 text-center font-semibold text-sky-900">BREAK</td>
+
+                                <td v-for="j in 3" :key="`mid-${day}-${j}`" class="border border-slate-200 px-2 py-2 align-top">
+                                    <div v-for="(p, idx) in previewCellItems(day, 3 + j)" :key="`p-${day}-m-${j}-${idx}`" class="mb-1 rounded bg-indigo-50 px-2 py-1">
+                                        <div class="font-semibold text-indigo-900">{{ p.subject || '—' }}</div>
+                                        <div class="text-[10px] text-gray-700">{{ p.class_label }} <span v-if="p.stream">· {{ p.stream }}</span></div>
+                                    </div>
+                                </td>
+
+                                <td class="border border-slate-200 bg-sky-100 px-2 py-2 text-center font-semibold text-sky-900">BREAK</td>
+
+                                <td v-for="k in 2" :key="`pm-${day}-${k}`" class="border border-slate-200 px-2 py-2 align-top">
+                                    <div v-for="(p, idx) in previewCellItems(day, 6 + k)" :key="`p-${day}-p-${k}-${idx}`" class="mb-1 rounded bg-indigo-50 px-2 py-1">
+                                        <div class="font-semibold text-indigo-900">{{ p.subject || '—' }}</div>
+                                        <div class="text-[10px] text-gray-700">{{ p.class_label }} <span v-if="p.stream">· {{ p.stream }}</span></div>
+                                    </div>
+                                </td>
                             </tr>
                         </tbody>
                     </table>

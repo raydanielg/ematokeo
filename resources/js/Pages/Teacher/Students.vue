@@ -12,13 +12,18 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
+    subjects: {
+        type: Array,
+        default: () => [],
+    },
     filters: {
         type: Object,
-        default: () => ({ class: null, q: '' }),
+        default: () => ({ class: null, subject: null, q: '' }),
     },
 });
 
 const classFilterModel = ref(props.filters?.class || '');
+const subjectFilterModel = ref(props.filters?.subject || '');
 const qModel = ref(props.filters?.q || '');
 
 const filteredCount = computed(() => (Array.isArray(props.students) ? props.students.length : 0));
@@ -28,6 +33,7 @@ const applyFilters = () => {
         route('teacher.students.index'),
         {
             class: classFilterModel.value || null,
+            subject: subjectFilterModel.value || null,
             q: qModel.value || null,
         },
         { preserveState: true, preserveScroll: true, replace: true },
@@ -36,6 +42,7 @@ const applyFilters = () => {
 
 const clearFilters = () => {
     classFilterModel.value = '';
+    subjectFilterModel.value = '';
     qModel.value = '';
     applyFilters();
 };
@@ -57,7 +64,7 @@ const clearFilters = () => {
         <div class="space-y-6">
             <div class="rounded-lg bg-white p-5 shadow-sm ring-1 ring-gray-100">
                 <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                    <div class="grid w-full gap-3 sm:grid-cols-3">
+                    <div class="grid w-full gap-3 sm:grid-cols-4">
                         <div>
                             <label class="block text-xs font-semibold text-gray-700">Search</label>
                             <input
@@ -84,6 +91,18 @@ const clearFilters = () => {
                                 >
                                     {{ c.label }}
                                 </option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700">Subject</label>
+                            <select
+                                v-model="subjectFilterModel"
+                                class="mt-1 block w-full rounded-md border-gray-300 text-sm focus:border-emerald-500 focus:ring-emerald-500"
+                                @change="applyFilters"
+                            >
+                                <option value="">All my subjects</option>
+                                <option v-for="s in subjects" :key="s.id" :value="s.id">{{ s.label }}</option>
                             </select>
                         </div>
 

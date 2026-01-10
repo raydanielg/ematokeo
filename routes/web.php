@@ -598,12 +598,9 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 ->map(function ($group) {
                     $first = $group->first();
                     $classes = $group->map(function ($r) {
-                        $labelBase = trim((string) ($r->class_level ?? ''));
-                        if ($labelBase === '') {
-                            $labelBase = trim((string) ($r->class_name ?? ''));
-                        }
+                        $labelBase = trim((string) ($r->class_name ?? ''));
                         $stream = trim((string) ($r->class_stream ?? ''));
-                        $label = $stream !== '' ? ($stream . ' - ' . $labelBase) : $labelBase;
+                        $label = $stream !== '' ? ($labelBase . ' - ' . $stream) : $labelBase;
 
                         return [
                             'name' => $label,
@@ -842,12 +839,13 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
             ]);
         })->name('exams.marks.save-cell');
 
-        Route::get('/students', function (\Illuminate\Http\Request $request) {
+        Route::get('/teacher/students', function (\Illuminate\Http\Request $request) {
             $user = $request->user();
             $schoolId = $user?->school_id;
             $teacherId = $user?->id;
 
             $classFilter = trim((string) $request->query('class', ''));
+            $subjectFilter = (int) $request->query('subject', 0);
             $q = trim((string) $request->query('q', ''));
 
             $assignedClassesQuery = \App\Models\SchoolClass::query()
@@ -888,15 +886,84 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
 
             $allowedKeys = $classOptions->pluck('key');
 
+            $allowedKeyList = $allowedKeys->all();
+
+            if ($subjectFilter > 0) {
+                $subjectKeys = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
+                    ->join('school_classes as sc', 'sc.id', '=', 'tcs.school_class_id')
+                    ->where('tcs.teacher_id', $teacherId)
+                    ->where('tcs.subject_id', $subjectFilter)
+                    ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
+                    ->select('sc.level', 'sc.name', 'sc.stream')
+                    ->distinct()
+                    ->get()
+                    ->map(function ($r) {
+                        $level = trim((string) ($r->level ?? ''));
+                        if ($level === '') {
+                            $level = trim((string) ($r->name ?? ''));
+                        }
+                        $stream = trim((string) ($r->stream ?? ''));
+                        if ($level === '') return null;
+                        return $level . '|' . $stream;
+                    })
+                    ->filter()
+                    ->unique()
+                    ->values()
+                    ->all();
+
+                $allowedKeyList = array_values(array_intersect($allowedKeyList, $subjectKeys));
+            }
+
+            $subjectOptionsQuery = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
+                ->join('subjects as s', 's.id', '=', 'tcs.subject_id')
+                ->join('school_classes as sc', 'sc.id', '=', 'tcs.school_class_id')
+                ->where('tcs.teacher_id', $teacherId)
+                ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
+                ->select('s.id', 's.subject_code', 's.name', 'sc.level', 'sc.name as class_name', 'sc.stream')
+                ->distinct();
+
+            if ($classFilter !== '') {
+                $parts = explode('|', $classFilter, 2);
+                $filterLevel = isset($parts[0]) ? trim((string) $parts[0]) : '';
+                $filterStream = isset($parts[1]) ? trim((string) $parts[1]) : '';
+
+                if ($filterLevel !== '') {
+                    $subjectOptionsQuery->where(function ($qb) use ($filterLevel) {
+                        $qb->where('sc.level', $filterLevel)
+                            ->orWhere(function ($qb2) use ($filterLevel) {
+                                $qb2->whereNull('sc.level')->where('sc.name', $filterLevel);
+                            });
+                    })->whereRaw('COALESCE(sc.stream, "") = ?', [$filterStream]);
+                }
+            }
+
+            $subjects = $subjectOptionsQuery
+                ->orderBy('s.subject_code')
+                ->get()
+                ->map(function ($r) {
+                    $code = trim((string) ($r->subject_code ?? ''));
+                    $name = trim((string) ($r->name ?? ''));
+                    $label = $code !== '' ? $code : 'SUBJECT';
+                    if ($name !== '') {
+                        $label .= ' - ' . $name;
+                    }
+                    return [
+                        'id' => (int) $r->id,
+                        'label' => $label,
+                    ];
+                })
+                ->unique('id')
+                ->values();
+
             $studentsQuery = \App\Models\Student::query();
             if ($schoolId) {
                 $studentsQuery->where('school_id', $schoolId);
             }
 
-            if ($allowedKeys->count() > 0) {
+            if (count($allowedKeyList) > 0) {
                 $studentsQuery->whereIn(
                     \Illuminate\Support\Facades\DB::raw("CONCAT(class_level, '|', COALESCE(stream, ''))"),
-                    $allowedKeys->all(),
+                    $allowedKeyList,
                 );
             } else {
                 $studentsQuery->whereRaw('1=0');
@@ -929,14 +996,16 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
             return Inertia::render('Teacher/Students', [
                 'students' => $students,
                 'classes' => $classOptions,
+                'subjects' => $subjects,
                 'filters' => [
                     'class' => $classFilter !== '' ? $classFilter : null,
+                    'subject' => $subjectFilter > 0 ? $subjectFilter : null,
                     'q' => $q !== '' ? $q : '',
                 ],
             ]);
-        })->name('students.index');
+        })->name('teacher.students.index');
 
-        Route::get('/students/{student}', function (\Illuminate\Http\Request $request, \App\Models\Student $student) {
+        Route::get('/teacher/students/{student}', function (\Illuminate\Http\Request $request, \App\Models\Student $student) {
             $user = $request->user();
             $schoolId = $user?->school_id;
             $teacherId = $user?->id;
@@ -1019,7 +1088,7 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 'latestResults' => $latestResults,
                 'latestSummary' => $latestSummary,
             ]);
-        })->name('students.show');
+        })->name('teacher.students.show');
 
         Route::get('/timetables/my', function () {
             $user = request()->user();

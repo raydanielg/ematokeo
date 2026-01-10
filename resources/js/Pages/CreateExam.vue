@@ -162,23 +162,20 @@ const startEdit = (exam) => {
                         </div>
                     </div>
 
-                    <div>
-                        <label class="mb-1 block font-medium">Notes (optional)</label>
-                        <textarea
-                            v-model="form.notes"
-                            rows="3"
-                            class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
-                            placeholder="Any special instructions or scope for this exam (e.g. Chapters 1-5 only)"
-                        ></textarea>
-                    </div>
-
                     <div class="mt-4 flex justify-end gap-2">
                         <button
                             type="submit"
-                            class="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700"
+                            class="inline-flex items-center gap-2 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-400"
                             :disabled="form.processing"
+                            :aria-busy="form.processing ? 'true' : 'false'"
                         >
-                            {{ editingExamId ? 'Update Exam' : 'Save Exam' }}
+                            <span
+                                v-if="form.processing"
+                                class="h-3 w-3 animate-spin rounded-full border-2 border-white/70 border-t-white"
+                            ></span>
+                            <span>
+                                {{ form.processing ? 'Saving...' : (editingExamId ? 'Update Exam' : 'Save Exam') }}
+                            </span>
                         </button>
                     </div>
                 </form>
