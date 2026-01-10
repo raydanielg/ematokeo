@@ -2247,51 +2247,50 @@ const onDrop = (day, rowIndex, slotIndex) => {
 
         <div
             v-if="showSubjectPalette"
-            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 py-6 sm:px-0"
-            @click.self="closeSubjectsPopup"
+            class="fixed inset-0 z-50 pointer-events-none"
         >
-            <div class="w-full max-w-xl overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-gray-200">
-                <div class="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-                    <div>
-                        <div class="text-sm font-semibold text-gray-800">Subjects</div>
-                        <div class="text-[11px] text-gray-500">Drag a subject and drop it into the timetable.</div>
+            <div class="absolute inset-y-0 right-0 flex w-[340px] max-w-[90vw] pointer-events-auto">
+                <div class="flex h-full w-full flex-col overflow-hidden rounded-l-2xl bg-white shadow-2xl ring-1 ring-gray-200">
+                    <div class="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+                        <div>
+                            <div class="text-sm font-semibold text-gray-800">Subjects</div>
+                            <div class="text-[11px] text-gray-500">Drag and drop into the timetable.</div>
+                        </div>
+                        <button
+                            type="button"
+                            class="text-[11px] text-gray-500 hover:text-gray-700"
+                            @click="closeSubjectsPopup"
+                        >
+                            Close
+                        </button>
                     </div>
-                    <button
-                        type="button"
-                        class="text-[11px] text-gray-500 hover:text-gray-700"
-                        @click="closeSubjectsPopup"
-                    >
-                        Close
-                    </button>
-                </div>
 
-                <div class="p-4">
-                    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div class="p-4">
                         <input
                             v-model="subjectPaletteSearch"
                             type="text"
                             placeholder="Search subject..."
-                            class="w-full rounded-md border border-gray-300 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                            class="mb-2 w-full rounded-md border border-gray-300 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
                         />
-                        <div class="text-[11px] text-gray-500">
+                        <div class="mb-3 text-[11px] text-gray-500">
                             Filter: <span class="font-semibold">{{ selectedClass }}</span>
                             <span v-if="selectedStream !== 'ALL'"> · Stream <span class="font-semibold">{{ selectedStream }}</span></span>
                         </div>
-                    </div>
 
-                    <div class="max-h-72 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-2">
-                        <div v-if="!filteredSubjectPaletteCodes.length" class="px-2 py-6 text-center text-xs text-gray-500">
-                            No subjects found for this class/stream.
-                        </div>
-                        <div v-else class="flex flex-wrap gap-2">
-                            <div
-                                v-for="code in filteredSubjectPaletteCodes"
-                                :key="code"
-                                draggable="true"
-                                class="cursor-grab select-none rounded-md bg-white px-3 py-2 text-xs font-semibold text-gray-800 shadow-sm ring-1 ring-gray-200 hover:bg-gray-50 active:cursor-grabbing"
-                                @dragstart="onSubjectDragStart(code)"
-                            >
-                                {{ code }}
+                        <div class="flex-1 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-2">
+                            <div v-if="!filteredSubjectPaletteCodes.length" class="px-2 py-6 text-center text-xs text-gray-500">
+                                No subjects found for this class/stream.
+                            </div>
+                            <div v-else class="flex flex-wrap gap-2">
+                                <div
+                                    v-for="code in filteredSubjectPaletteCodes"
+                                    :key="code"
+                                    draggable="true"
+                                    class="cursor-grab select-none rounded-md bg-white px-3 py-2 text-xs font-semibold text-gray-800 shadow-sm ring-1 ring-gray-200 hover:bg-gray-50 active:cursor-grabbing"
+                                    @dragstart="onSubjectDragStart(code)"
+                                >
+                                    {{ code }}
+                                </div>
                             </div>
                         </div>
                     </div>
