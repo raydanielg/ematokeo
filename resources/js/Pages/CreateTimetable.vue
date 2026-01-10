@@ -355,8 +355,12 @@ const timetableClasses = computed(() => {
     });
 
     return unique.sort((a, b) => {
-        const baseClassA = a?.parent_class_id ? (all.find((c) => Number(c?.id) === Number(a.parent_class_id)) || a) : a;
-        const baseClassB = b?.parent_class_id ? (all.find((c) => Number(c?.id) === Number(b.parent_class_id)) || b) : b;
+        const baseClassA = a?.parent_class_id
+            ? (all.find((c) => Number(c?.id) === Number(a.parent_class_id)) || a)
+            : a;
+        const baseClassB = b?.parent_class_id
+            ? (all.find((c) => Number(c?.id) === Number(b.parent_class_id)) || b)
+            : b;
         const formA = getFormOrder(baseClassA);
         const formB = getFormOrder(baseClassB);
         if (formA !== formB) return Number(formA || 0) - Number(formB || 0);
@@ -679,11 +683,18 @@ const generateSampleTimetable = () => {
 
     const allDoubleStarts = (day) => [0, 1, 2, 7].filter((i) => canStartDouble(day, i));
 
+    // Sync doubles across streams of the same base class (parent_class_id). Keyed by base class id.
+    // Structure: syncDoubleRequests[baseId][day][startIndex] = subjectCode
+    const syncDoubleRequests = {};
+
     (timetableClasses.value || []).forEach((c) => {
         const classId = c?.id ? Number(c.id) : null;
         const formLabel = getClassForm(c);
         const classLabel = getClassLabel(c);
         const streamLabel = c?.stream ? String(c.stream).toUpperCase().trim() : '';
+
+        const baseClassId = c?.parent_class_id ? Number(c.parent_class_id) : (classId || null);
+        const syncKey = baseClassId ? String(baseClassId) : '';
 
         const baseClass = c?.parent_class_id
             ? ((Array.isArray(props.classes) ? props.classes : []).find((x) => Number(x?.id) === Number(c.parent_class_id)) || null)
@@ -735,7 +746,7 @@ const generateSampleTimetable = () => {
             .filter((code) => hasTeacherForSubject(code));
         const uniqueCodes = Array.from(new Set(codes));
         const hasCode = (code) => uniqueCodes.includes(normalizeCode(code));
-        const psCode = hasCode('PS') ? 'PS' : '';
+        const psCode = 'PS';
 
         // Build empty rows (one per day) first
         const rowByDay = {};
@@ -788,12 +799,27 @@ const generateSampleTimetable = () => {
             return s?.subject ? normalizeCode(s.subject) : '';
         };
 
+        const subjectIndicesForDay = (day, code) => {
+            const key = normalizeCode(code);
+            const row = rowByDay?.[day];
+            const slots = Array.isArray(row?.slots) ? row.slots : [];
+            const out = [];
+            for (let ii = 0; ii < slots.length; ii += 1) {
+                if (slotSubject(day, ii) === key) out.push(ii);
+            }
+            return out;
+        };
+
         const canPlaceDoubleHere = (day, i, code) => {
             if (!canStartDouble(day, i)) return false;
             const row = rowByDay[day];
             if (!row) return false;
             if (row.slots[i] !== null) return false;
             if (row.slots[i + 1] !== null) return false;
+
+            // Daily max: a subject can appear at most twice per day (as a double)
+            if (normalizeCode(code) !== 'PS' && subjectIndicesForDay(day, code).length > 0) return false;
+
             if (!isSubjectAllowedInSlot(classId, code, i)) return false;
             if (!isSubjectAllowedInSlot(classId, code, i + 1)) return false;
 
@@ -807,11 +833,37 @@ const generateSampleTimetable = () => {
                 if (!t2) return false;
             }
 
-            // Avoid immediate repeats against neighbors within the same day
+            return true;
+        };
+
+        const canPlaceSingleHere = (day, i, code) => {
+            const row = rowByDay[day];
+            if (!row) return false;
+            if (!isTeachableLessonSlot(day, i)) return false;
+            if (row.slots[i] !== null) return false;
+
+            // Daily max: allow a subject twice only when the 2nd one is adjacent (double period)
+            const indices = subjectIndicesForDay(day, code);
+            const subjectKey = normalizeCode(code);
+            const existing = indices.length === 1 ? indices[0] : null;
+            const isMakingDouble = existing !== null && Math.abs(existing - i) === 1;
+            if (subjectKey !== 'PS') {
+                if (indices.length >= 2) return false;
+                if (indices.length === 1 && !isMakingDouble) return false;
+            }
+
+            if (!isSubjectAllowedInSlot(classId, code, i)) return false;
+
+            // Teacher conflict: must have a free teacher (except PS)
+            if (subjectKey !== 'PS') {
+                const t = pickFreeTeacherInitial(day, i, subjectKey);
+                if (!t) return false;
+            }
+
             const prevCode = i > 0 && ![4, 7].includes(i) ? slotSubject(day, i - 1) : '';
-            if (prevCode && prevCode === normalizeCode(code)) return false;
-            const nextCode = (i + 2) < 9 && ![4, 7].includes(i + 2) ? slotSubject(day, i + 2) : '';
-            if (nextCode && nextCode === normalizeCode(code)) return false;
+            if (prevCode && prevCode === normalizeCode(code) && !isMakingDouble) return false;
+            const nextCode = (i + 1) < 9 && ![3, 6].includes(i) ? slotSubject(day, i + 1) : '';
+            if (nextCode && nextCode === normalizeCode(code) && !isMakingDouble) return false;
             return true;
         };
 
@@ -824,26 +876,14 @@ const generateSampleTimetable = () => {
             addBusyTeacher(day, i, t1);
             addBusyTeacher(day, i + 1, t2);
             incWeekly(code, 2);
-        };
 
-        const canPlaceSingleHere = (day, i, code) => {
-            const row = rowByDay[day];
-            if (!row) return false;
-            if (!isTeachableLessonSlot(day, i)) return false;
-            if (row.slots[i] !== null) return false;
-            if (!isSubjectAllowedInSlot(classId, code, i)) return false;
-
-            // Teacher conflict: must have a free teacher (except PS)
-            const subjectKey = normalizeCode(code);
-            if (subjectKey !== 'PS') {
-                const t = pickFreeTeacherInitial(day, i, subjectKey);
-                if (!t) return false;
+            // Record this double so sibling streams can try to follow the same timing.
+            if (syncKey) {
+                if (!syncDoubleRequests[syncKey]) syncDoubleRequests[syncKey] = {};
+                const d = String(day || '').toUpperCase();
+                if (!syncDoubleRequests[syncKey][d]) syncDoubleRequests[syncKey][d] = {};
+                syncDoubleRequests[syncKey][d][String(i)] = normalizeCode(code);
             }
-            const prevCode = i > 0 && ![4, 7].includes(i) ? slotSubject(day, i - 1) : '';
-            if (prevCode && prevCode === normalizeCode(code)) return false;
-            const nextCode = (i + 1) < 9 && ![3, 6].includes(i) ? slotSubject(day, i + 1) : '';
-            if (nextCode && nextCode === normalizeCode(code)) return false;
-            return true;
         };
 
         const placeSingle = (day, i, code) => {
@@ -860,6 +900,23 @@ const generateSampleTimetable = () => {
         days.forEach((day) => {
             allDoubleStarts(day).forEach((i) => allPlacements.push({ day, i }));
         });
+
+        // 1a) Apply already chosen synced doubles (from earlier streams of the same base class)
+        if (syncKey && syncDoubleRequests[syncKey]) {
+            days.forEach((day) => {
+                const d = String(day || '').toUpperCase();
+                const starts = syncDoubleRequests[syncKey]?.[d] || {};
+                Object.keys(starts).forEach((startIdx) => {
+                    const i = Number(startIdx);
+                    const code = starts[startIdx];
+                    if (!code) return;
+                    if ((remainingDoubles[code] || 0) <= 0) return;
+                    if (!canPlaceDoubleHere(day, i, code)) return;
+                    placeDouble(day, i, code);
+                    remainingDoubles[code] -= 1;
+                });
+            });
+        }
 
         Object.keys(remainingDoubles).forEach((code) => {
             const need = remainingDoubles[code] || 0;
@@ -900,7 +957,7 @@ const generateSampleTimetable = () => {
                 const i = preferred[p];
                 if (!canPlaceSingleHere(day, i, core)) continue;
                 placeSingle(day, i, core);
-                remainingSingles[core] = (remainingSingles[core] || 0) - 1;
+                remainingSingles[core] -= 1;
                 return true;
             }
             return false;
@@ -912,7 +969,7 @@ const generateSampleTimetable = () => {
                 const i = starts[s];
                 if (!canPlaceDoubleHere(day, i, core)) continue;
                 placeDouble(day, i, core);
-                remainingDoubles[core] = (remainingDoubles[core] || 0) - 1;
+                remainingDoubles[core] -= 1;
                 return true;
             }
             return false;
@@ -930,7 +987,7 @@ const generateSampleTimetable = () => {
                     const code = codesByNeed[cidx];
                     if (!canPlaceDoubleHere(day, i, code)) continue;
                     placeDouble(day, i, code);
-                    remainingDoubles[code] = (remainingDoubles[code] || 0) - 1;
+                    remainingDoubles[code] -= 1;
                     return true;
                 }
             }
@@ -1066,931 +1123,6 @@ const generateSampleTimetable = () => {
     saveScheduleToStorage();
 };
 
-const regenerateSampleTimetable = () => {
-    try {
-        // Force UI update even if generation fails
-        schedule.value = {};
-        generationNonce.value += 1;
-        clearStoredSchedule();
-        generateSampleTimetable();
-    } catch (e) {
-        // Make failures visible instead of silently doing nothing
-        // eslint-disable-next-line no-console
-        console.error(e);
-        const msg = e && e.message ? String(e.message) : 'Failed to regenerate timetable.';
-        generationWarnings.value = [msg];
-    }
-};
-
-const resolveOneLimitation = async (warningText) => {
-    const key = String(warningText || '').trim();
-    if (!key) return false;
-    if (resolveRunning.value) return false;
-
-    resolveRunning.value = true;
-    resolveStatusByWarning.value = {
-        ...(resolveStatusByWarning.value || {}),
-        [key]: {
-            status: 'running',
-            attempts: 0,
-            message: 'Resolving...',
-        },
-    };
-
-    const wasPresent = () => (generationWarnings.value || []).some((w) => String(w) === key);
-    const startPresent = wasPresent();
-
-    let ok = false;
-    for (let attempt = 1; attempt <= resolveMaxAttempts; attempt += 1) {
-        resolveStatusByWarning.value = {
-            ...(resolveStatusByWarning.value || {}),
-            [key]: {
-                status: 'running',
-                attempts: attempt,
-                message: `Attempt ${attempt}/${resolveMaxAttempts}...`,
-            },
-        };
-
-        await new Promise((r) => setTimeout(r, 0));
-        regenerateSampleTimetable();
-        await new Promise((r) => setTimeout(r, 0));
-
-        if (startPresent && !wasPresent()) {
-            ok = true;
-            break;
-        }
-        if (!startPresent) {
-            ok = true;
-            break;
-        }
-    }
-
-    resolveStatusByWarning.value = {
-        ...(resolveStatusByWarning.value || {}),
-        [key]: {
-            status: ok ? 'success' : 'failed',
-            attempts: (resolveStatusByWarning.value?.[key]?.attempts || 0),
-            message: ok ? 'Resolved.' : `Failed after ${resolveMaxAttempts} attempts.`,
-        },
-    };
-
-    resolveRunning.value = false;
-    return ok;
-};
-
-const resolveAllLimitations = async () => {
-    if (resolveRunning.value) return false;
-
-    const initial = (generationWarnings.value || []).map((w) => String(w));
-    if (!initial.length) {
-        resolveAllStatus.value = { status: 'success', attempts: 0, message: 'No limitations.' };
-        return true;
-    }
-
-    resolveRunning.value = true;
-    resolveAllStatus.value = { status: 'running', attempts: 0, message: 'Resolving all...' };
-
-    // Mark all initial warnings as running
-    const statusMap = { ...(resolveStatusByWarning.value || {}) };
-    initial.forEach((w) => {
-        statusMap[w] = { status: 'running', attempts: 0, message: 'Queued...' };
-    });
-    resolveStatusByWarning.value = statusMap;
-
-    const stillHas = (w) => (generationWarnings.value || []).some((x) => String(x) === String(w));
-
-    let ok = false;
-    for (let attempt = 1; attempt <= resolveMaxAttempts; attempt += 1) {
-        resolveAllStatus.value = { status: 'running', attempts: attempt, message: `Attempt ${attempt}/${resolveMaxAttempts}...` };
-        initial.forEach((w) => {
-            const cur = resolveStatusByWarning.value?.[w];
-            if (cur?.status === 'success') return;
-            resolveStatusByWarning.value = {
-                ...(resolveStatusByWarning.value || {}),
-                [w]: { status: 'running', attempts: attempt, message: `Attempt ${attempt}/${resolveMaxAttempts}...` },
-            };
-        });
-
-        await new Promise((r) => setTimeout(r, 0));
-        regenerateSampleTimetable();
-        await new Promise((r) => setTimeout(r, 0));
-
-        // Update per-warning statuses
-        initial.forEach((w) => {
-            if (!stillHas(w)) {
-                resolveStatusByWarning.value = {
-                    ...(resolveStatusByWarning.value || {}),
-                    [w]: { status: 'success', attempts: attempt, message: 'Resolved.' },
-                };
-            }
-        });
-
-        if (!(generationWarnings.value || []).length) {
-            ok = true;
-            break;
-        }
-    }
-
-    if (!ok) {
-        // Mark any remaining initial warnings as failed
-        initial.forEach((w) => {
-            if (!stillHas(w)) return;
-            resolveStatusByWarning.value = {
-                ...(resolveStatusByWarning.value || {}),
-                [w]: { status: 'failed', attempts: resolveMaxAttempts, message: `Failed after ${resolveMaxAttempts} attempts.` },
-            };
-        });
-    }
-
-    resolveAllStatus.value = ok
-        ? { status: 'success', attempts: resolveAllStatus.value?.attempts || resolveMaxAttempts, message: 'All limitations resolved.' }
-        : { status: 'failed', attempts: resolveMaxAttempts, message: 'Could not resolve all limitations.' };
-
-    resolveRunning.value = false;
-    return ok;
-};
-
-const getFilteredRows = (day) => {
-    const rows = schedule.value?.[String(day)] || [];
-    const classFilter = String(selectedClass.value || 'ALL').toUpperCase().trim();
-    const streamFilter = String(selectedStream.value || 'ALL').toUpperCase().trim();
-    const classFilterId = classFilter !== 'ALL' && /^\d+$/.test(classFilter) ? Number(classFilter) : null;
-
-    const baseIdByClassId = new Map();
-    const baseClassById = new Map();
-    (Array.isArray(props.classes) ? props.classes : []).forEach((c) => {
-        if (!c?.id) return;
-        const id = Number(c.id);
-        const baseId = c?.parent_class_id ? Number(c.parent_class_id) : id;
-        baseIdByClassId.set(id, baseId);
-        if (!c?.parent_class_id) {
-            baseClassById.set(id, c);
-        }
-    });
-
-    const filtered = (rows || []).filter((row) => {
-        if (!row) return false;
-
-        if (classFilter !== 'ALL') {
-            if (classFilterId !== null) {
-                const rid = row?.school_class_id ? Number(row.school_class_id) : null;
-                const baseId = rid ? (baseIdByClassId.get(rid) ?? rid) : null;
-                if (baseId !== classFilterId) return false;
-            } else {
-                const rid = row?.school_class_id ? Number(row.school_class_id) : null;
-                const baseId = rid ? (baseIdByClassId.get(rid) ?? rid) : null;
-                const baseClass = baseId ? (baseClassById.get(baseId) || null) : null;
-                const baseLabel = baseClass ? String(getClassLabel(baseClass) || '').toUpperCase().trim() : '';
-                const rowLabel = String(row.class_label || row.form || row.class_name || '').toUpperCase().trim();
-                const label = baseLabel || rowLabel;
-
-                if (!label) return false;
-                if (label !== classFilter) return false;
-            }
-        }
-
-        if (streamFilter !== 'ALL') {
-            const stream = String(row.stream || '').toUpperCase().trim();
-            if (stream !== streamFilter) return false;
-        }
-
-        return true;
-    });
-
-    return filtered.map((row, originalIndex) => ({ row, originalIndex }));
-};
-
-const getGroupedRows = (day) => {
-    const rows = getFilteredRows(day);
-    const groups = new Map();
-
-    const classInfoById = new Map();
-    const baseIdByClassId = new Map();
-    const baseClassById = new Map();
-    (Array.isArray(props.classes) ? props.classes : []).forEach((c) => {
-        if (!c?.id) return;
-        const id = Number(c.id);
-        const baseId = c?.parent_class_id ? Number(c.parent_class_id) : id;
-        baseIdByClassId.set(id, baseId);
-        if (!c?.parent_class_id) {
-            baseClassById.set(id, c);
-        }
-    });
-
-    (timetableClasses.value || []).forEach((c) => {
-        const id = c?.id ? Number(c.id) : null;
-        if (!id) return;
-        const baseId = c?.parent_class_id ? Number(c.parent_class_id) : id;
-        const baseClass = baseClassById.get(baseId) || c;
-        const label = String(getClassLabel(baseClass) || '').trim();
-        // If your base class IDs are already in the desired order (e.g. 1..4), prefer that.
-        const inferred = Number(baseId);
-        const order = Number.isFinite(inferred) ? inferred : getFormOrder(baseClass);
-        if (!classInfoById.has(baseId)) {
-            classInfoById.set(baseId, {
-                id: baseId,
-                label,
-                order: Number.isFinite(order) ? order : Number.POSITIVE_INFINITY,
-            });
-        }
-    });
-
-    (rows || []).forEach((item) => {
-        const row = item?.row || {};
-        const classId = row?.school_class_id ? Number(row.school_class_id) : null;
-        const baseId = classId ? (baseIdByClassId.get(classId) ?? classId) : null;
-        const label = String(row.class_label || row.form || row.class_name || '').trim() || 'CLASS';
-        const key = baseId ? String(baseId) : label;
-        const info = baseId ? classInfoById.get(baseId) : null;
-        if (!groups.has(key)) {
-            groups.set(key, {
-                key,
-                label: info?.label || label,
-                order: info?.order ?? Number.POSITIVE_INFINITY,
-                rows: [],
-            });
-        }
-        groups.get(key).rows.push(item);
-    });
-
-    const out = Array.from(groups.values());
-
-    out.forEach((g) => {
-        g.rows.sort((a, b) => {
-            const sa = String(a?.row?.stream || '').toUpperCase();
-            const sb = String(b?.row?.stream || '').toUpperCase();
-            return sa.localeCompare(sb);
-        });
-    });
-
-    // Keep stable order by form (I->IV) then label
-    out.sort((a, b) => {
-        const ao = Number.isFinite(a.order) ? a.order : Number.POSITIVE_INFINITY;
-        const bo = Number.isFinite(b.order) ? b.order : Number.POSITIVE_INFINITY;
-        if (ao !== bo) return ao - bo;
-        return String(a.label || '').localeCompare(String(b.label || ''));
-    });
-    return out;
-};
-
-const getGroupedRowCount = (day) => {
-    const groups = getGroupedRows(day);
-    return (groups || []).reduce((sum, g) => sum + (g?.rows?.length || 0), 0);
-};
-
-onMounted(() => {
-    sessionRulesByClassId.value = loadSessionRulesFromStorage();
-
-    if (props.timetable?.schedule_json) {
-        schedule.value = normalizeSchedule(props.timetable.schedule_json);
-        saveScheduleToStorage();
-        return;
-    }
-
-    const stored = loadScheduleFromStorage();
-    if (stored) {
-        schedule.value = stored;
-    } else {
-        generateSampleTimetable();
-    }
-});
-
-const buildEntriesFromSchedule = (scheduleData) => {
-    const out = [];
-    const data = scheduleData && typeof scheduleData === 'object' ? scheduleData : {};
-
-    Object.entries(data).forEach(([day, rows]) => {
-        const dayKey = String(day || '').trim().toUpperCase();
-        (rows || []).forEach((row) => {
-            const classId = row?.school_class_id ? Number(row.school_class_id) : null;
-            if (!Number.isFinite(classId) || !classId) return;
-
-            const slots = Array.isArray(row?.slots) ? row.slots : [];
-            slots.forEach((slot, idx) => {
-                const subjectCode = String(slot?.subject || '').trim();
-                const teacherInitials = String(slot?.teacher_initials || slot?.teacher || '').trim();
-
-                if (!subjectCode && !teacherInitials) return;
-
-                const subjectId = subjectCode ? (subjectIdByCode.value?.[subjectCode] ?? null) : null;
-                const primaryInitial = teacherInitials.split('/').map((s) => s.trim()).filter(Boolean)[0] || '';
-                const teacherId = primaryInitial ? (teacherIdByInitials.value?.[primaryInitial] ?? null) : null;
-
-                out.push({
-                    school_class_id: classId,
-                    day: dayKey,
-                    period_index: Number(idx),
-                    subject_id: subjectId,
-                    teacher_id: teacherId,
-                    teacher_initials: teacherInitials || null,
-                });
-            });
-        });
-    });
-
-    return out;
-};
-
-const saveTimetable = () => {
-    form.schedule_json = schedule.value || {};
-    form.entries = buildEntriesFromSchedule(form.schedule_json);
-    form.post(route('timetables.store'), {
-        preserveScroll: true,
-        onSuccess: () => {
-            showDetailsModal.value = false;
-            clearStoredSchedule();
-        },
-    });
-};
-
-const printTimetable = () => {
-    window.print();
-};
-
-const showTeacherInitialsModal = ref(false);
-
-const simpleTeacherName = (name) => {
-    const s = String(name || '').trim();
-    if (!s) return '';
-    const parts = s.split(/\s+/).filter(Boolean);
-    if (parts.length === 1) return parts[0];
-    return `${parts[0]} ${parts[parts.length - 1]}`;
-};
-
-const usedTeacherInitials = computed(() => {
-    const set = new Set();
-    const data = schedule.value || {};
-    Object.values(data).forEach((rows) => {
-        (rows || []).forEach((row) => {
-            (row?.slots || []).forEach((slot) => {
-                const raw = (slot?.teacher_initials || slot?.teacher || '').toString().trim();
-                if (!raw) return;
-                raw
-                    .split('/')
-                    .map((s) => s.trim())
-                    .filter(Boolean)
-                    .forEach((i) => set.add(i));
-            });
-        });
-    });
-    return set;
-});
-
-const teacherInitialsList = computed(() => {
-    const allSubjects = Array.isArray(props.subjects) ? props.subjects : [];
-    const map = new Map();
-
-    allSubjects.forEach((s) => {
-        const teachers = Array.isArray(s.teachers) ? s.teachers : [];
-        teachers.forEach((t) => {
-            if (!t?.id) return;
-            const initials = String(t.initials || '').trim() || String(t.name || '').trim();
-            const name = String(t.name || '').trim();
-            if (!initials && !name) return;
-            if (!map.has(t.id)) {
-                map.set(t.id, {
-                    id: t.id,
-                    initials,
-                    name,
-                    simple_name: simpleTeacherName(name) || name,
-                    used: false,
-                });
-            }
-        });
-    });
-
-    const usedSet = usedTeacherInitials.value;
-    const list = Array.from(map.values()).map((row) => ({
-        ...row,
-        used: usedSet.has(row.initials),
-    }));
-
-    return list.sort((a, b) => {
-        const u = Number(b.used) - Number(a.used);
-        if (u !== 0) return u;
-        const ic = String(a.initials || '').localeCompare(String(b.initials || ''));
-        if (ic !== 0) return ic;
-        return String(a.simple_name || '').localeCompare(String(b.simple_name || ''));
-    });
-});
-
-const downloadTeacherInitials = () => {
-    const rows = teacherInitialsList.value;
-    const lines = ['Initials,Name,UsedInTimetable'];
-    rows.forEach((r) => {
-        const initials = String(r.initials || '').replaceAll('"', '""');
-        const name = String(r.simple_name || r.name || '').replaceAll('"', '""');
-        const used = r.used ? 'YES' : 'NO';
-        lines.push(`"${initials}","${name}","${used}"`);
-    });
-
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `teacher-initials-${form.academic_year || 'timetable'}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-};
-
-const showLimitationsModal = ref(false);
-const selectedLimitClassId = ref('');
-const limitsLoading = ref(false);
-const limitsSaving = ref(false);
-const limitsByKey = ref({});
-
-const applyLimitsToAllClasses = ref(false);
-
-const subjectLimitsByClassId = ref({});
-
-const limitationsMode = ref('subject_only');
-const subjectLimitsById = ref({});
-const subjectDoubleById = ref({});
-const subjectMorningSingleById = ref({});
-const subjectMorningDoubleById = ref({});
-const subjectAfternoonSingleById = ref({});
-const subjectAfternoonDoubleById = ref({});
-
-const suppressAutoLimitSave = ref(false);
-const autoLimitSaveTimer = ref(null);
-
-const defaultSubjectPeriodsByFormGroup = (formNumber) => {
-    const form12 = {
-        'B/MAT': 5,  // double 2 + single 1
-        'BIO': 3,    // double 1 + single 1
-        'BUS': 3,    // double 1 + single 1
-        'CHE': 3,    // double 1 + single 1
-        'CS': 4,     // double 1 + single 2
-        'ENG': 5,    // double 2 + single 1
-        'GEO': 2,    // single 2 or double 1
-        'HIS': 3,    // double 1 + single 1
-        'HTM': 3,    // double 1 + single 1
-        'KIS': 4,    // double 1 + single 2
-        'PHY': 3,    // double 1 + single 1
-    };
-
-    const form34 = {
-        'B/MAT': 5,  // double 2 + single 1
-        'BIO': 4,    // double 1 + single 2
-        'BUS': 3,    // double 1 + single 1
-        'CHE': 4,    // double 1 + single 2
-        'CIV': 3,    // double 1 + single 1
-        'CS': 4,     // double 1 + single 2
-        'ENG': 5,    // double 2 + single 1
-        'FK': 2,     // single 2 or double 1
-        'GEO': 3,    // double 1 + single 1
-        'HIS': 4,    // double 1 + single 2
-        'HTM': 3,    // double 1 + single 1
-        'KIS': 4,    // double 1 + single 2
-        'LIT': 2,    // single 2 or double 1
-        'PHY': 4,    // double 1 + single 2
-    };
-
-    if (formNumber === 1 || formNumber === 2) return form12;
-    if (formNumber === 3 || formNumber === 4) return form34;
-    return {};
-};
-
-const limitKey = (teacherId, subjectId) => `${teacherId}:${subjectId}`;
-
-const subjectLimitKey = (subjectId) => `${subjectId}`;
-
-const loadSubjectLimits = async () => {
-    if (!selectedLimitClassId.value) {
-        subjectLimitsById.value = {};
-        subjectDoubleById.value = {};
-        subjectMorningSingleById.value = {};
-        subjectMorningDoubleById.value = {};
-        subjectAfternoonSingleById.value = {};
-        subjectAfternoonDoubleById.value = {};
-        return;
-    }
-
-    limitsLoading.value = true;
-    suppressAutoLimitSave.value = true;
-    try {
-        const res = await fetch(
-            `${route('timetables.class-subject-limits.index')}?school_class_id=${encodeURIComponent(selectedLimitClassId.value)}`,
-            {
-                headers: {
-                    'X-Requested-With': 'XMLHttpRequest',
-                    Accept: 'application/json',
-                },
-                credentials: 'same-origin',
-            }
-        );
-
-        const json = await res.json();
-        const map = {};
-        const doubleMap = {};
-        const morningSingleMap = {};
-        const morningDoubleMap = {};
-        const afternoonSingleMap = {};
-        const afternoonDoubleMap = {};
-        (json?.limits || []).forEach((row) => {
-            map[subjectLimitKey(row.subject_id)] = row.periods_per_week;
-            doubleMap[subjectLimitKey(row.subject_id)] = !!row.is_double;
-            morningSingleMap[subjectLimitKey(row.subject_id)] = Number(row.morning_single || 0);
-            morningDoubleMap[subjectLimitKey(row.subject_id)] = Number(row.morning_double || 0);
-            afternoonSingleMap[subjectLimitKey(row.subject_id)] = Number(row.afternoon_single || 0);
-            afternoonDoubleMap[subjectLimitKey(row.subject_id)] = Number(row.afternoon_double || 0);
-        });
-
-        // Hard-coded defaults (authoritative): override DB values when defaults exist.
-        const cls = classById.value?.[String(selectedLimitClassId.value)] || null;
-        const formNumber = getFormOrder(cls);
-        const defaults = defaultSubjectPeriodsByFormGroup(formNumber);
-
-        Object.keys(defaults).forEach((code) => {
-            const sid = subjectIdByCode.value?.[String(code)] || null;
-            if (!sid) return;
-            const key = subjectLimitKey(sid);
-
-            // Override periods/week to match the default table
-            map[key] = Number(defaults[code]);
-
-            // RULE 1: ENG na B/MAT - double 2, single 1 (periods = 5)
-            // RULE 2: Other subjects - double 1, single 1 (periods = 3)
-            const eff = Number(defaults[code] || 0);
-            const subjectUpper = String(code).toUpperCase();
-
-            if (subjectUpper === 'ENG' || subjectUpper === 'B/MAT') {
-                // ENG na B/MAT: periods = 5, double 2, single 1
-                if (eff >= 5) {
-                    doubleMap[key] = true;
-                }
-            } else {
-                // Other subjects: double 1, single 1 (periods = 3)
-                if (eff >= 3) {
-                    doubleMap[key] = true;
-                }
-            }
-        });
-
-        subjectLimitsById.value = map;
-        subjectDoubleById.value = doubleMap;
-        subjectMorningSingleById.value = morningSingleMap;
-        subjectMorningDoubleById.value = morningDoubleMap;
-        subjectAfternoonSingleById.value = afternoonSingleMap;
-        subjectAfternoonDoubleById.value = afternoonDoubleMap;
-    } catch {
-        subjectLimitsById.value = {};
-        subjectDoubleById.value = {};
-        subjectMorningSingleById.value = {};
-        subjectMorningDoubleById.value = {};
-        subjectAfternoonSingleById.value = {};
-        subjectAfternoonDoubleById.value = {};
-    } finally {
-        limitsLoading.value = false;
-
-        window.setTimeout(() => {
-            suppressAutoLimitSave.value = false;
-        }, 0);
-    }
-};
-
-const loadAllSubjectLimits = async () => {
-    limitsLoading.value = true;
-    suppressAutoLimitSave.value = true;
-    try {
-        subjectLimitsByClassId.value = {};
-        const res = await fetch(
-            `${route('timetables.class-subject-limits.index')}`,
-            {
-                headers: {
-                    'X-Requested-With': 'XMLHttpRequest',
-                    Accept: 'application/json',
-                },
-                credentials: 'same-origin',
-            }
-        );
-
-        const json = await res.json();
-        (json?.limits || []).forEach((row) => {
-            const cid = row?.school_class_id ? String(row.school_class_id) : '';
-            if (!cid) return;
-
-            if (!subjectLimitsByClassId.value[cid]) {
-                subjectLimitsByClassId.value[cid] = {
-                    periodsBySubjectId: {},
-                    doubleBySubjectId: {},
-                    morningSingleBySubjectId: {},
-                    morningDoubleBySubjectId: {},
-                    afternoonSingleBySubjectId: {},
-                    afternoonDoubleBySubjectId: {},
-                };
-            }
-            const key = subjectLimitKey(row.subject_id);
-            subjectLimitsByClassId.value[cid].periodsBySubjectId[key] = row.periods_per_week;
-            subjectLimitsByClassId.value[cid].doubleBySubjectId[key] = !!row.is_double;
-            subjectLimitsByClassId.value[cid].morningSingleBySubjectId[key] = Number(row.morning_single || 0);
-            subjectLimitsByClassId.value[cid].morningDoubleBySubjectId[key] = Number(row.morning_double || 0);
-            subjectLimitsByClassId.value[cid].afternoonSingleBySubjectId[key] = Number(row.afternoon_single || 0);
-            subjectLimitsByClassId.value[cid].afternoonDoubleBySubjectId[key] = Number(row.afternoon_double || 0);
-        });
-    } catch {
-        subjectLimitsByClassId.value = {};
-    } finally {
-        limitsLoading.value = false;
-
-        window.setTimeout(() => {
-            suppressAutoLimitSave.value = false;
-        }, 0);
-    }
-};
-
-const loadLimits = async () => {
-    if (!selectedLimitClassId.value) {
-        limitsByKey.value = {};
-        return;
-    }
-
-    limitsLoading.value = true;
-    suppressAutoLimitSave.value = true;
-    try {
-        const res = await fetch(
-            `${route('timetables.weekly-limits.index')}?school_class_id=${encodeURIComponent(selectedLimitClassId.value)}`,
-            {
-                headers: {
-                    'X-Requested-With': 'XMLHttpRequest',
-                    Accept: 'application/json',
-                },
-                credentials: 'same-origin',
-            }
-        );
-
-        const json = await res.json();
-        const map = {};
-        (json?.limits || []).forEach((row) => {
-            map[limitKey(row.teacher_id, row.subject_id)] = row.periods_per_week;
-        });
-        limitsByKey.value = map;
-    } catch {
-        limitsByKey.value = {};
-    } finally {
-        limitsLoading.value = false;
-
-        window.setTimeout(() => {
-            suppressAutoLimitSave.value = false;
-        }, 0);
-    }
-};
-
-const saveLimits = async ({ closeModal = true } = {}) => {
-    if (!selectedLimitClassId.value) return;
-
-    limitsSaving.value = true;
-    try {
-        const limits = teacherSubjectRows.value
-            .map((row) => {
-                const key = limitKey(row.teacher_id, row.subject_id);
-                const val = limitsByKey.value[key];
-                return {
-                    school_class_id: Number(selectedLimitClassId.value),
-                    subject_id: row.subject_id,
-                    teacher_id: row.teacher_id,
-                    periods_per_week: val === '' || val === null || val === undefined ? 0 : Number(val),
-                };
-            })
-            .filter((r) => Number.isFinite(r.periods_per_week) && r.periods_per_week >= 0);
-
-        await fetch(route('timetables.weekly-limits.save'), {
-            method: 'POST',
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest',
-                'Content-Type': 'application/json',
-                Accept: 'application/json',
-                'X-CSRF-TOKEN': csrfToken(),
-            },
-            credentials: 'same-origin',
-            body: JSON.stringify({ limits }),
-        });
-
-        if (closeModal) {
-            showLimitationsModal.value = false;
-        }
-    } finally {
-        limitsSaving.value = false;
-    }
-};
-
-const saveSubjectLimits = async ({ closeModal = true } = {}) => {
-    if (!selectedLimitClassId.value) return;
-
-    limitsSaving.value = true;
-    try {
-        const selectedRows = classSubjectRows.value
-            .map((row) => {
-                const key = subjectLimitKey(row.subject_id);
-                const val = subjectLimitsById.value[key];
-                const isDouble = !!subjectDoubleById.value?.[key];
-
-                const ms = Number(subjectMorningSingleById.value?.[key] ?? 0) || 0;
-                const md = Number(subjectMorningDoubleById.value?.[key] ?? 0) || 0;
-                const as = Number(subjectAfternoonSingleById.value?.[key] ?? 0) || 0;
-                const ad = Number(subjectAfternoonDoubleById.value?.[key] ?? 0) || 0;
-
-                // If any session quota is provided, let backend derive periods_per_week from quotas.
-                const hasSessionQuotas = ms > 0 || md > 0 || as > 0 || ad > 0;
-                return {
-                    subject_id: row.subject_id,
-                    periods_per_week: hasSessionQuotas
-                        ? null
-                        : (val === '' || val === null || val === undefined ? 0 : Number(val)),
-                    is_double: isDouble,
-                    morning_single: ms,
-                    morning_double: md,
-                    afternoon_single: as,
-                    afternoon_double: ad,
-                };
-            })
-            .filter((r) => r.periods_per_week === null || (Number.isFinite(r.periods_per_week) && r.periods_per_week >= 0));
-
-        const targetClassIds = applyLimitsToAllClasses.value
-            ? (timetableClasses.value || []).map((c) => Number(c?.id)).filter((v) => Number.isFinite(v) && v > 0)
-            : [Number(selectedLimitClassId.value)];
-
-        const limits = [];
-        targetClassIds.forEach((cid) => {
-            selectedRows.forEach((row) => {
-                limits.push({
-                    school_class_id: cid,
-                    ...row,
-                });
-            });
-        });
-
-        await fetch(route('timetables.class-subject-limits.save'), {
-            method: 'POST',
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest',
-                'Content-Type': 'application/json',
-                Accept: 'application/json',
-                'X-CSRF-TOKEN': csrfToken(),
-            },
-            credentials: 'same-origin',
-            body: JSON.stringify({ limits }),
-        });
-
-        if (closeModal) {
-            showLimitationsModal.value = false;
-        }
-    } finally {
-        limitsSaving.value = false;
-    }
-};
-
-watch(showLimitationsModal, (open) => {
-    if (!open) return;
-    if (!selectedLimitClassId.value && limitationClassOptions.value.length) {
-        selectedLimitClassId.value = limitationClassOptions.value[0].id;
-    }
-    if (limitationsMode.value === 'subject_only') {
-        loadSubjectLimits();
-    } else {
-        loadLimits();
-    }
-});
-
-watch(selectedLimitClassId, () => {
-    if (!showLimitationsModal.value) return;
-    if (limitationsMode.value === 'subject_only') {
-        loadSubjectLimits();
-    } else {
-        loadLimits();
-    }
-});
-
-watch(limitationsMode, () => {
-    if (!showLimitationsModal.value) return;
-    if (limitationsMode.value === 'subject_only') {
-        loadSubjectLimits();
-    } else {
-        loadLimits();
-    }
-});
-
-watch(limitsByKey, () => {
-    if (!showLimitationsModal.value) return;
-    if (limitationsMode.value !== 'teacher_subject') return;
-    syncSubjectPeriodsFromTeacherLimits();
-}, { deep: true });
-
-watch([
-    limitsByKey,
-    subjectLimitsById,
-    subjectDoubleById,
-    subjectMorningSingleById,
-    subjectMorningDoubleById,
-    subjectAfternoonSingleById,
-    subjectAfternoonDoubleById,
-], () => {
-    scheduleAutoLimitSave();
-}, { deep: true });
-
-const draggedCell = ref(null);
-const draggedSubjectCode = ref('');
-
-const showSubjectPalette = ref(false);
-const subjectPaletteSearch = ref('');
-const dropFeedback = ref({ type: '', message: '' });
-
-const showSubjectMenu = ref(false);
-const subjectMenuSearch = ref('');
-const subjectMenuPos = ref({ x: 0, y: 0 });
-const subjectMenuTarget = ref({ day: '', rowIndex: -1, slotIndex: -1 });
-
-const paletteSubjectCodes = computed(() => {
-    const codes = (props.subjects || [])
-        .map((s) => String(s?.subject_code || '').trim())
-        .filter(Boolean);
-    return Array.from(new Set(codes)).sort((a, b) => a.localeCompare(b));
-});
-
-const subjectCodesForSelectedFilter = computed(() => {
-    const classFilter = String(selectedClass.value || 'ALL').toUpperCase().trim();
-    const streamFilter = String(selectedStream.value || 'ALL').toUpperCase().trim();
-
-    const all = Array.isArray(props.classes) ? props.classes : [];
-    const byId = new Map(all.filter((c) => c?.id).map((c) => [Number(c.id), c]));
-
-    const matches = (timetableClasses.value || []).filter((c) => {
-        if (!c?.id) return false;
-        const label = String(getClassLabel(c) || '').toUpperCase().trim();
-        if (classFilter !== 'ALL' && label !== classFilter) return false;
-        const s = String(c?.stream || '').toUpperCase().trim();
-        if (streamFilter !== 'ALL' && s !== streamFilter) return false;
-        return true;
-    });
-
-    const codes = [];
-    matches.forEach((c) => {
-        const base = c?.parent_class_id ? (byId.get(Number(c.parent_class_id)) || null) : null;
-        const raw = Array.isArray(c?.subject_codes) && c.subject_codes.length
-            ? c.subject_codes
-            : (Array.isArray(base?.subject_codes) && base.subject_codes.length ? base.subject_codes : []);
-        raw.forEach((code) => {
-            const s = String(code || '').trim();
-            if (s) codes.push(s);
-        });
-    });
-
-    const unique = Array.from(new Set(codes));
-    return unique.sort((a, b) => String(a).localeCompare(String(b)));
-});
-
-const filteredSubjectPaletteCodes = computed(() => {
-    const q = String(subjectPaletteSearch.value || '').trim().toUpperCase();
-    const base = subjectCodesForSelectedFilter.value.length
-        ? subjectCodesForSelectedFilter.value
-        : (selectedClass.value === 'ALL' ? paletteSubjectCodes.value : []);
-    if (!q) return base;
-    return base.filter((c) => String(c).toUpperCase().includes(q));
-});
-
-const filteredPaletteCodes = computed(() => {
-    const q = String(subjectMenuSearch.value || '').trim().toUpperCase();
-    if (!q) return paletteSubjectCodes.value;
-    return paletteSubjectCodes.value.filter((c) => String(c).toUpperCase().includes(q));
-});
-
-const openSubjectsPopup = () => {
-    showSubjectPalette.value = true;
-    subjectPaletteSearch.value = '';
-};
-
-const closeSubjectsPopup = () => {
-    showSubjectPalette.value = false;
-    subjectPaletteSearch.value = '';
-};
-
-const isDraggableSlot = (day, slotIndex) => {
-    // Morning lessons (08:00-10:00) always draggable
-    if (slotIndex >= 0 && slotIndex <= 3) {
-        return true;
-    }
-
-    // Mid-day lessons between breaks (11:05-13:05)
-    // Keep Friday MEWAKA slot (index 6) fixed
-    if (slotIndex >= 4 && slotIndex <= 6) {
-        if (day === 'FRIDAY' && slotIndex === 6) {
-            return false;
-        }
-
-        return true;
-    }
-
-    // Afternoon lessons after second break (13:20-14:40)
-    // Keep special activities (RELIGION, CLUBS, SPORTS) fixed on Wed/Thu/Fri
-    if (slotIndex >= 7 && slotIndex <= 8) {
-        return !['WEDNESDAY', 'THURSDAY', 'FRIDAY'].includes(day);
-    }
-
-    return false;
-};
-
 const assignSubjectToCell = (day, rowIndex, slotIndex, subjectCode) => {
     const d = String(day);
     const r = Number(rowIndex);
@@ -2000,6 +1132,32 @@ const assignSubjectToCell = (day, rowIndex, slotIndex, subjectCode) => {
     if (!isDraggableSlot(d, s)) return false;
     const row = schedule.value?.[d]?.[r];
     if (!row) return false;
+
+    const normalizeDayCode = (v) => String(v || '').trim().toUpperCase();
+    const codeKey = normalizeDayCode(code);
+    if (codeKey && codeKey !== 'PS') {
+        const indices = (Array.isArray(row?.slots) ? row.slots : [])
+            .map((cell, idx) => ({ idx, subject: normalizeDayCode(cell?.subject) }))
+            .filter(({ subject }) => subject === codeKey)
+            .map(({ idx }) => idx)
+            .filter((idx) => idx !== s);
+
+        if (indices.length >= 2) {
+            dropFeedback.value = { type: 'error', message: 'This subject already appears twice today (max is 2).' };
+            return false;
+        }
+
+
+        if (indices.length === 1) {
+            const existing = indices[0];
+            const adjacent = Math.abs(existing - s) === 1;
+            if (!adjacent) {
+                dropFeedback.value = { type: 'error', message: 'This subject can only appear twice in a day as a double period (place it next to the first one).' };
+                return false;
+            }
+        }
+    }
+
 
     const classId = Number(row?.school_class_id || row?.id || row?.class_id || 0) || null;
     if (code && !isSubjectAllowedInSlot(classId, code, s)) {
@@ -2011,7 +1169,9 @@ const assignSubjectToCell = (day, rowIndex, slotIndex, subjectCode) => {
         return false;
     }
 
+
     dropFeedback.value = { type: '', message: '' };
+
 
     const t = code ? pickTeacherInitialForSlot(classId, code, d, s) : '';
     row.slots[s] = code ? { subject: code, teacher: t, teacher_initials: t, teacher_name: '' } : null;
