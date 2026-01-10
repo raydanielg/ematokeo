@@ -112,6 +112,8 @@ const isSubjectAssignedToClass = (schoolClassId, subjectCode) => {
     const code = String(subjectCode || '').trim().toUpperCase();
     if (!code) return true;
 
+    if (code === 'PS') return true;
+
     const assigned = subjectCodesForClassId(cid);
 
     // If the backend did not provide subject_codes, do not hard-block editing.
@@ -1929,6 +1931,8 @@ const filteredPaletteCodes = computed(() => {
     return paletteCodesForContext.value.filter((c) => String(c).toUpperCase().includes(q));
 });
 
+const filteredPaletteCodesNoPs = computed(() => (filteredPaletteCodes.value || []).filter((c) => String(c || '').toUpperCase() !== 'PS'));
+
 const isDraggableSlot = (day, slotIndex) => {
     // Morning lessons (08:00-10:00) always draggable
     if (slotIndex >= 0 && slotIndex <= 3) {
@@ -3217,7 +3221,7 @@ Form I &amp; II	Form III &amp; IV
                         </div>
 
                         <button
-                            v-for="code in filteredPaletteCodes"
+                            v-for="code in filteredPaletteCodesNoPs"
                             :key="code"
                             type="button"
                             :disabled="!canUsePaletteCodeForTarget(code)"
@@ -3233,6 +3237,23 @@ Form I &amp; II	Form III &amp; IV
                         >
                             <span>{{ code }}</span>
                             <span class="text-[10px] font-medium text-gray-400">Drag</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            :disabled="!canUsePaletteCodeForTarget('PS')"
+                            :draggable="canUsePaletteCodeForTarget('PS')"
+                            :class="[
+                                'mt-2 flex w-full items-center justify-between rounded-md border px-2 py-1 text-left text-[11px] font-semibold',
+                                canUsePaletteCodeForTarget('PS')
+                                    ? 'border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100'
+                                    : 'cursor-not-allowed border-gray-100 bg-gray-50 text-gray-400',
+                            ]"
+                            @dragstart="onSubjectDragStart('PS')"
+                            @click="() => clickAssignFromMenu('PS')"
+                        >
+                            <span>PS</span>
+                            <span class="text-[10px] font-medium">Personal Study</span>
                         </button>
 
                         <button
