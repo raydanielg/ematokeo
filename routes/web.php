@@ -6630,7 +6630,7 @@ Route::middleware('auth')->group(function () {
                 ->where('school_id', $schoolId)
                 ->orderByRaw("COALESCE(parent_class_id, id) ASC")
                 ->orderByRaw("COALESCE(stream, '') ASC")
-                ->get(['id', 'name', 'level', 'stream', 'parent_class_id', 'parent_name'])
+                ->get(['id', 'name', 'level', 'stream', 'parent_class_id'])
             : collect();
 
         $latestTimetable = $schoolId

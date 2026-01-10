@@ -77,6 +77,16 @@ const schedule = computed(() => normalizeSchedule(props.timetable?.schedule_json
 
 const normalizeStr = (v) => String(v || '').trim().toUpperCase();
 
+const classById = computed(() => {
+    const map = new Map();
+    (props.classes || []).forEach((c) => {
+        const id = Number(c?.id || 0);
+        if (!id) return;
+        map.set(id, c);
+    });
+    return map;
+});
+
 const baseIdForClass = (c) => {
     const id = Number(c?.id || 0);
     const base = Number(c?.parent_class_id || 0);
@@ -84,8 +94,6 @@ const baseIdForClass = (c) => {
 };
 
 const classLabelFor = (c) => {
-    const parent = String(c?.parent_name || '').trim();
-    if (parent) return parent;
     const name = String(c?.name || '').trim();
     if (name) return name;
     const level = String(c?.level || '').trim();
@@ -98,9 +106,10 @@ const baseClassOptions = computed(() => {
         const baseId = baseIdForClass(c);
         if (!baseId) return;
         if (!map.has(baseId)) {
+            const baseClass = classById.value.get(baseId) || null;
             map.set(baseId, {
                 id: baseId,
-                label: classLabelFor(c) || `Class ${baseId}`,
+                label: classLabelFor(baseClass || c) || `Class ${baseId}`,
             });
         }
     });
