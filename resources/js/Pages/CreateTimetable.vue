@@ -741,10 +741,10 @@ const generateSampleTimetable = () => {
         const remainingSingles = {};
         const remainingDoubles = {};
 
-        // ENG & B/MAT: 2 doubles + 3 singles (7 periods)
+        // ENG & B/MAT: 2 doubles + 1 single
         ['ENG', 'B/MAT'].forEach((core) => {
             if (!hasCode(core)) return;
-            remainingSingles[core] = (remainingSingles[core] || 0) + 3;
+            remainingSingles[core] = (remainingSingles[core] || 0) + 1;
             remainingDoubles[core] = (remainingDoubles[core] || 0) + 2;
         });
 
@@ -913,8 +913,52 @@ const generateSampleTimetable = () => {
             coreCodes.forEach((core) => {
                 if (day === skipDay && core === skipCore) return;
                 if (dayHasSubject(day, core)) return;
+                if ((remainingSingles[core] || 0) <= 0) return;
                 tryPlaceCoreSingle(day, core);
             });
+        });
+
+        // Fallback: ensure required doubles/singles are placed when feasible.
+        Object.keys(remainingDoubles).forEach((code) => {
+            while ((remainingDoubles[code] || 0) > 0) {
+                let placed = false;
+                for (let d = 0; d < days.length && !placed; d += 1) {
+                    const day = days[d];
+                    const starts = allDoubleStarts(day);
+                    for (let s = 0; s < starts.length; s += 1) {
+                        const i = starts[s];
+                        if (!canPlaceDoubleHere(day, i, code)) continue;
+                        placeDouble(day, i, code);
+                        remainingDoubles[code] -= 1;
+                        placed = true;
+                        break;
+                    }
+                }
+                if (!placed) {
+                    generationWarnings.value.push(`Could not place all required double periods for ${code} in ${classLabel}${streamLabel ? ` ${streamLabel}` : ''}.`);
+                    break;
+                }
+            }
+        });
+
+        Object.keys(remainingSingles).forEach((code) => {
+            while ((remainingSingles[code] || 0) > 0) {
+                let placed = false;
+                for (let d = 0; d < days.length && !placed; d += 1) {
+                    const day = days[d];
+                    for (let i = 0; i < 9; i += 1) {
+                        if (!canPlaceSingleHere(day, i, code)) continue;
+                        placeSingle(day, i, code);
+                        remainingSingles[code] -= 1;
+                        placed = true;
+                        break;
+                    }
+                }
+                if (!placed) {
+                    generationWarnings.value.push(`Could not place all required single periods for ${code} in ${classLabel}${streamLabel ? ` ${streamLabel}` : ''}.`);
+                    break;
+                }
+            }
         });
 
         // 2) Place required singles
