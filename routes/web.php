@@ -8109,7 +8109,7 @@ Route::middleware('auth')->group(function () {
         }
 
         return redirect()->route('teachers.index')->with('success', 'Teacher updated successfully.');
-    })->name('teachers.update');
+    })->whereNumber('teacher')->name('teachers.update');
 
     Route::delete('/teachers/{teacher}', function (User $teacher) {
         abort_unless($teacher->role === 'teacher', 404);
@@ -8117,7 +8117,7 @@ Route::middleware('auth')->group(function () {
         $teacher->delete();
 
         return redirect()->route('teachers.index')->with('success', 'Teacher deleted successfully.');
-    })->name('teachers.destroy');
+    })->whereNumber('teacher')->name('teachers.destroy');
 
     Route::post('/teachers/bulk-delete', function (\Illuminate\Http\Request $request) {
         $schoolId = $request->user()?->school_id;
