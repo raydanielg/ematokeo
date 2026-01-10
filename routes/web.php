@@ -6842,6 +6842,13 @@ Route::middleware('auth')->group(function () {
             'term' => ['nullable', 'string', 'max:50'],
             'type' => ['nullable', 'string', 'max:50'],
             'schedule_json' => ['nullable'],
+            'entries' => ['nullable', 'array'],
+            'entries.*.school_class_id' => ['required_with:entries', 'integer', 'exists:school_classes,id'],
+            'entries.*.day' => ['required_with:entries', 'string', 'max:20'],
+            'entries.*.period_index' => ['required_with:entries', 'integer', 'min:0', 'max:50'],
+            'entries.*.subject_id' => ['nullable', 'integer', 'exists:subjects,id'],
+            'entries.*.teacher_id' => ['nullable', 'integer', 'exists:users,id'],
+            'entries.*.teacher_initials' => ['nullable', 'string', 'max:50'],
         ]);
 
         $timetable = Timetable::create([
@@ -6853,6 +6860,34 @@ Route::middleware('auth')->group(function () {
             'name' => $request->input('name') ?? ($data['type'] ?? null),
             'schedule_json' => $request->input('schedule_json'),
         ]);
+
+        if (! empty($data['entries']) && is_array($data['entries'])) {
+            $rows = collect($data['entries'])
+                ->map(function (array $row) use ($schoolId, $timetable) {
+                    return [
+                        'timetable_id' => (int) $timetable->id,
+                        'school_id' => $schoolId,
+                        'school_class_id' => (int) $row['school_class_id'],
+                        'day' => strtoupper(trim((string) $row['day'])),
+                        'period_index' => (int) $row['period_index'],
+                        'subject_id' => isset($row['subject_id']) ? (int) $row['subject_id'] : null,
+                        'teacher_id' => isset($row['teacher_id']) ? (int) $row['teacher_id'] : null,
+                        'teacher_initials' => isset($row['teacher_initials']) ? trim((string) $row['teacher_initials']) : null,
+                        'updated_at' => now(),
+                        'created_at' => now(),
+                    ];
+                })
+                ->values()
+                ->all();
+
+            if (! empty($rows)) {
+                \App\Models\TimetableEntry::upsert(
+                    $rows,
+                    ['timetable_id', 'school_class_id', 'day', 'period_index'],
+                    ['subject_id', 'teacher_id', 'teacher_initials', 'updated_at']
+                );
+            }
+        }
 
         // Generate a simple PDF version of the timetable header for archiving
         try {

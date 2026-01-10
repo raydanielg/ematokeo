@@ -89,6 +89,22 @@ const subjectIdByCode = computed(() => {
     return map;
 });
 
+const teacherIdByInitials = computed(() => {
+    const map = {};
+    (props.subjects || []).forEach((s) => {
+        const teachers = Array.isArray(s?.teachers) ? s.teachers : [];
+        teachers.forEach((t) => {
+            if (!t?.id) return;
+            const initials = String(t?.initials || '').trim();
+            if (!initials) return;
+            if (!map[initials]) {
+                map[initials] = Number(t.id);
+            }
+        });
+    });
+    return map;
+});
+
 const teacherInitialsForClassSubject = (schoolClassId, subjectCode) => {
     const classId = schoolClassId ? String(schoolClassId) : '';
     const code = String(subjectCode || '').trim();
@@ -1339,8 +1355,45 @@ onMounted(() => {
     }
 });
 
+const buildEntriesFromSchedule = (scheduleData) => {
+    const out = [];
+    const data = scheduleData && typeof scheduleData === 'object' ? scheduleData : {};
+
+    Object.entries(data).forEach(([day, rows]) => {
+        const dayKey = String(day || '').trim().toUpperCase();
+        (rows || []).forEach((row) => {
+            const classId = row?.school_class_id ? Number(row.school_class_id) : null;
+            if (!Number.isFinite(classId) || !classId) return;
+
+            const slots = Array.isArray(row?.slots) ? row.slots : [];
+            slots.forEach((slot, idx) => {
+                const subjectCode = String(slot?.subject || '').trim();
+                const teacherInitials = String(slot?.teacher_initials || slot?.teacher || '').trim();
+
+                if (!subjectCode && !teacherInitials) return;
+
+                const subjectId = subjectCode ? (subjectIdByCode.value?.[subjectCode] ?? null) : null;
+                const primaryInitial = teacherInitials.split('/').map((s) => s.trim()).filter(Boolean)[0] || '';
+                const teacherId = primaryInitial ? (teacherIdByInitials.value?.[primaryInitial] ?? null) : null;
+
+                out.push({
+                    school_class_id: classId,
+                    day: dayKey,
+                    period_index: Number(idx),
+                    subject_id: subjectId,
+                    teacher_id: teacherId,
+                    teacher_initials: teacherInitials || null,
+                });
+            });
+        });
+    });
+
+    return out;
+};
+
 const saveTimetable = () => {
     form.schedule_json = schedule.value || {};
+    form.entries = buildEntriesFromSchedule(form.schedule_json);
     form.post(route('timetables.store'), {
         preserveScroll: true,
         onSuccess: () => {
