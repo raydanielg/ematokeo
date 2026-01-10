@@ -885,8 +885,8 @@ const generateSampleTimetable = () => {
 
         const tryPlaceBalancedDouble = (day) => {
             const placements = allDoubleStarts(day);
-            const codesByNeed = uniqueCodes
-                .slice()
+            const codesByNeed = Object.keys(remainingDoubles)
+                .filter((code) => (remainingDoubles[code] || 0) > 0)
                 .sort((a, b) => (weeklyCount[a] || 0) - (weeklyCount[b] || 0));
 
             for (let p = 0; p < placements.length; p += 1) {
@@ -895,21 +895,35 @@ const generateSampleTimetable = () => {
                     const code = codesByNeed[cidx];
                     if (!canPlaceDoubleHere(day, i, code)) continue;
                     placeDouble(day, i, code);
+                    remainingDoubles[code] = (remainingDoubles[code] || 0) - 1;
                     return true;
                 }
             }
             return false;
         };
 
-        days.forEach((day) => {
-            const target = Math.random() < 0.6 ? 4 : 3;
-            let doubles = countDoublesForDay(day);
-            while (doubles < target) {
-                const ok = tryPlaceBalancedDouble(day);
-                if (!ok) break;
-                doubles = countDoublesForDay(day);
+        const totalRemainingDoubles = () => Object.values(remainingDoubles).reduce((sum, v) => sum + (Number(v) || 0), 0);
+
+        const maxDoublesPerDay = 2;
+        while (totalRemainingDoubles() > 0) {
+            const byFewest = days
+                .slice()
+                .sort((a, b) => countDoublesForDay(a) - countDoublesForDay(b));
+
+            let placed = false;
+            for (let d = 0; d < byFewest.length; d += 1) {
+                const day = byFewest[d];
+                if (countDoublesForDay(day) >= maxDoublesPerDay) continue;
+                if (tryPlaceBalancedDouble(day)) {
+                    placed = true;
+                    break;
+                }
             }
 
+            if (!placed) break;
+        }
+
+        days.forEach((day) => {
             coreCodes.forEach((core) => {
                 if (day === skipDay && core === skipCore) return;
                 if (dayHasSubject(day, core)) return;
