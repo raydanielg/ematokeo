@@ -437,6 +437,7 @@ const showResolveModal = ref(false);
 const resolveRunning = ref(false);
 const resolveStatusByWarning = ref({});
 const resolveMaxAttempts = 12;
+const resolveAllStatus = ref({ status: 'idle', attempts: 0, message: '' });
 
 const sessionRulesStorageKey = computed(() => {
     const schoolId = props.school?.id ?? 'school';
@@ -1121,6 +1122,78 @@ const resolveOneLimitation = async (warningText) => {
     return ok;
 };
 
+const resolveAllLimitations = async () => {
+    if (resolveRunning.value) return false;
+
+    const initial = (generationWarnings.value || []).map((w) => String(w));
+    if (!initial.length) {
+        resolveAllStatus.value = { status: 'success', attempts: 0, message: 'No limitations.' };
+        return true;
+    }
+
+    resolveRunning.value = true;
+    resolveAllStatus.value = { status: 'running', attempts: 0, message: 'Resolving all...' };
+
+    // Mark all initial warnings as running
+    const statusMap = { ...(resolveStatusByWarning.value || {}) };
+    initial.forEach((w) => {
+        statusMap[w] = { status: 'running', attempts: 0, message: 'Queued...' };
+    });
+    resolveStatusByWarning.value = statusMap;
+
+    const stillHas = (w) => (generationWarnings.value || []).some((x) => String(x) === String(w));
+
+    let ok = false;
+    for (let attempt = 1; attempt <= resolveMaxAttempts; attempt += 1) {
+        resolveAllStatus.value = { status: 'running', attempts: attempt, message: `Attempt ${attempt}/${resolveMaxAttempts}...` };
+        initial.forEach((w) => {
+            const cur = resolveStatusByWarning.value?.[w];
+            if (cur?.status === 'success') return;
+            resolveStatusByWarning.value = {
+                ...(resolveStatusByWarning.value || {}),
+                [w]: { status: 'running', attempts: attempt, message: `Attempt ${attempt}/${resolveMaxAttempts}...` },
+            };
+        });
+
+        await new Promise((r) => setTimeout(r, 0));
+        regenerateSampleTimetable();
+        await new Promise((r) => setTimeout(r, 0));
+
+        // Update per-warning statuses
+        initial.forEach((w) => {
+            if (!stillHas(w)) {
+                resolveStatusByWarning.value = {
+                    ...(resolveStatusByWarning.value || {}),
+                    [w]: { status: 'success', attempts: attempt, message: 'Resolved.' },
+                };
+            }
+        });
+
+        if (!(generationWarnings.value || []).length) {
+            ok = true;
+            break;
+        }
+    }
+
+    if (!ok) {
+        // Mark any remaining initial warnings as failed
+        initial.forEach((w) => {
+            if (!stillHas(w)) return;
+            resolveStatusByWarning.value = {
+                ...(resolveStatusByWarning.value || {}),
+                [w]: { status: 'failed', attempts: resolveMaxAttempts, message: `Failed after ${resolveMaxAttempts} attempts.` },
+            };
+        });
+    }
+
+    resolveAllStatus.value = ok
+        ? { status: 'success', attempts: resolveAllStatus.value?.attempts || resolveMaxAttempts, message: 'All limitations resolved.' }
+        : { status: 'failed', attempts: resolveMaxAttempts, message: 'Could not resolve all limitations.' };
+
+    resolveRunning.value = false;
+    return ok;
+};
+
 const getFilteredRows = (day) => {
     const rows = schedule.value?.[String(day)] || [];
     const classFilter = String(selectedClass.value || 'ALL').toUpperCase().trim();
@@ -1518,6 +1591,7 @@ const loadSubjectLimits = async () => {
         subjectAfternoonDoubleById.value = {};
     } finally {
         limitsLoading.value = false;
+
         window.setTimeout(() => {
             suppressAutoLimitSave.value = false;
         }, 0);
@@ -2128,17 +2202,30 @@ const onDrop = (day, rowIndex, slotIndex) => {
                         <div class="text-[11px] font-semibold text-amber-900">
                             Limitations ({{ generationWarnings.length }})
                         </div>
-                        <button
-                            type="button"
-                            class="text-[11px] font-medium text-amber-900 hover:text-amber-950"
-                            @click="showResolveModal = false"
-                        >
-                            Close
-                        </button>
+                        <div class="flex items-center gap-2">
+                            <button
+                                type="button"
+                                class="rounded-md bg-amber-600 px-2 py-1 text-[10px] font-semibold text-white shadow-sm hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1"
+                                :disabled="resolveRunning || !generationWarnings.length"
+                                @click="resolveAllLimitations"
+                            >
+                                {{ resolveAllStatus.status === 'running' ? 'Resolving...' : 'Resolve All' }}
+                            </button>
+                            <button
+                                type="button"
+                                class="text-[11px] font-medium text-amber-900 hover:text-amber-950"
+                                @click="showResolveModal = false"
+                            >
+                                Close
+                            </button>
+                        </div>
                     </div>
                     <div class="max-h-56 overflow-y-auto px-3 py-2">
                         <div v-if="!generationWarnings.length" class="text-[11px] text-amber-900">
                             No limitations.
+                        </div>
+                        <div v-if="generationWarnings.length && resolveAllStatus.message" class="mb-2 text-[10px] font-semibold text-amber-900">
+                            {{ resolveAllStatus.message }}
                         </div>
                         <div v-for="(w, idx) in generationWarnings" :key="`${idx}-${w}`" class="mb-2 rounded-md bg-white/70 px-2 py-2 text-[11px] text-amber-950 ring-1 ring-amber-200">
                             <div class="flex items-start justify-between gap-2">
