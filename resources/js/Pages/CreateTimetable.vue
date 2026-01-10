@@ -32,12 +32,61 @@ const sessionRulesByClassId = ref({});
 
 const showTeacherInitialsModal = ref(false);
 const showSubjectPalette = ref(false);
+const showAssignSubjectsModal = ref(false);
 const dropFeedback = ref({ type: '', message: '' });
+
+const subjectPaletteSearch = ref('');
+const assignSubjectsSearch = ref('');
 
 const selectedLimitClassSessionRules = computed(() => {
     const classId = selectedLimitClassId.value ? Number(selectedLimitClassId.value) : null;
     if (!Number.isFinite(classId) || !classId) return {};
     return sessionRulesByClassId.value?.[String(classId)] || {};
+});
+
+const allSubjectCodes = computed(() => {
+    const unique = new Set();
+    (props.subjects || []).forEach((s) => {
+        const code = String(s?.subject_code || '').trim();
+        if (!code) return;
+        unique.add(code);
+    });
+    return Array.from(unique.values()).sort((a, b) => String(a).localeCompare(String(b)));
+});
+
+const assignedSubjectCodes = ref([]);
+
+watch(
+    allSubjectCodes,
+    (codes) => {
+        if (!Array.isArray(assignedSubjectCodes.value) || assignedSubjectCodes.value.length === 0) {
+            assignedSubjectCodes.value = Array.isArray(codes) ? codes.slice() : [];
+        }
+    },
+    { immediate: true }
+);
+
+const filteredAssignSubjectCodes = computed(() => {
+    const q = String(assignSubjectsSearch.value || '').trim().toUpperCase();
+    if (!q) return allSubjectCodes.value;
+    return (allSubjectCodes.value || []).filter((c) => String(c).toUpperCase().includes(q));
+});
+
+const openSubjectsPopup = () => {
+    showSubjectPalette.value = true;
+};
+
+const closeSubjectsPopup = () => {
+    showSubjectPalette.value = false;
+    subjectPaletteSearch.value = '';
+};
+
+const filteredSubjectPaletteCodes = computed(() => {
+    const allowed = new Set((assignedSubjectCodes.value || []).map((c) => String(c).trim()));
+    const q = String(subjectPaletteSearch.value || '').trim().toUpperCase();
+    return (allSubjectCodes.value || [])
+        .filter((code) => allowed.has(String(code).trim()))
+        .filter((code) => (!q ? true : String(code).toUpperCase().includes(q)));
 });
 
 const setSelectedLimitSubjectSessionRule = (subjectId, rule) => {
@@ -512,6 +561,7 @@ const initEmptySchedule = () => {
                 class_label: getClassLabel(c),
                 stream: c?.stream ? String(c.stream).toUpperCase().trim() : '',
                 school_class_id: c?.id ? Number(c.id) : null,
+                class_name: c?.name || `${getClassLabel(c)} ${c?.stream ? String(c.stream).toUpperCase().trim() : ''}`.trim(),
                 slots: Array.from({ length: 9 }).map(() => null),
             });
         });
@@ -1215,6 +1265,14 @@ const assignSubjectToCell = (day, rowIndex, slotIndex, subjectCode) => {
     const s = Number(slotIndex);
     const code = String(subjectCode || '').trim();
 
+    if (code) {
+        const allowed = new Set((assignedSubjectCodes.value || []).map((c) => String(c).trim().toUpperCase()));
+        if (!allowed.has(code.toUpperCase())) {
+            dropFeedback.value = { type: 'error', message: 'This subject is not assigned. Use Assign to enable it.' };
+            return false;
+        }
+    }
+
     if (!isDraggableSlot(d, s)) return false;
     const row = schedule.value?.[d]?.[r];
     if (!row) return false;
@@ -1491,6 +1549,91 @@ const onDrop = (day, rowIndex, slotIndex) => {
             </div>
         </div>
 
+        <!-- Assign subjects modal -->
+        <div
+            v-if="showAssignSubjectsModal"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 py-6 sm:px-0"
+            @click.self="showAssignSubjectsModal = false"
+        >
+            <div class="max-h-full w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 text-xs text-gray-700 shadow-2xl ring-1 ring-gray-200">
+                <div class="mb-3 flex items-center justify-between">
+                    <div>
+                        <div class="text-sm font-semibold text-gray-800">Assign Subjects</div>
+                        <div class="text-[11px] text-gray-500">Chagua masomo yatakayopatikana kwenye ratiba (palette).</div>
+                    </div>
+                    <button
+                        type="button"
+                        class="text-[11px] text-gray-500 hover:text-gray-700"
+                        @click="showAssignSubjectsModal = false"
+                    >
+                        Close
+                    </button>
+                </div>
+
+                <div class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <input
+                        v-model="assignSubjectsSearch"
+                        type="text"
+                        placeholder="Search subject..."
+                        class="w-full rounded-md border border-gray-300 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none focus:ring-emerald-500"
+                    />
+                    <div class="flex items-center justify-end gap-2">
+                        <button
+                            type="button"
+                            class="rounded-md bg-white px-3 py-2 text-[11px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
+                            @click="assignedSubjectCodes = allSubjectCodes.slice()"
+                        >
+                            Select all
+                        </button>
+                        <button
+                            type="button"
+                            class="rounded-md bg-white px-3 py-2 text-[11px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
+                            @click="assignedSubjectCodes = []"
+                        >
+                            Clear
+                        </button>
+                    </div>
+                </div>
+
+                <div class="max-h-[55vh] overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <div v-if="!filteredAssignSubjectCodes.length" class="py-6 text-center text-[11px] text-gray-500">
+                        No subjects found.
+                    </div>
+                    <div v-else class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <label
+                            v-for="code in filteredAssignSubjectCodes"
+                            :key="code"
+                            class="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] ring-1 ring-gray-200"
+                        >
+                            <input
+                                type="checkbox"
+                                class="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                :checked="assignedSubjectCodes.includes(code)"
+                                @change="(e) => {
+                                    if (e.target.checked) {
+                                        if (!assignedSubjectCodes.includes(code)) assignedSubjectCodes = assignedSubjectCodes.concat([code]);
+                                    } else {
+                                        assignedSubjectCodes = assignedSubjectCodes.filter((c) => c !== code);
+                                    }
+                                }"
+                            />
+                            <span class="font-semibold text-gray-800">{{ code }}</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="mt-4 flex items-center justify-end gap-2">
+                    <button
+                        type="button"
+                        class="rounded-md bg-gray-100 px-3 py-2 text-[11px] font-medium text-gray-700 hover:bg-gray-200"
+                        @click="showAssignSubjectsModal = false"
+                    >
+                        Done
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div
             v-if="showSubjectPalette"
             class="fixed inset-0 z-50 pointer-events-none"
@@ -1499,8 +1642,8 @@ const onDrop = (day, rowIndex, slotIndex) => {
                 <div class="flex h-full w-full flex-col overflow-hidden rounded-l-2xl bg-white shadow-2xl ring-1 ring-gray-200">
                     <div class="flex items-center justify-between border-b border-gray-100 px-4 py-3">
                         <div>
-                            <div class="text-sm font-semibold text-gray-800">Subjects</div>
-                            <div class="text-[11px] text-gray-500">Drag and drop into the timetable.</div>
+                            <h3 class="text-sm font-semibold text-gray-800">Subjects</h3>
+                            <p class="text-[11px] text-gray-500">Drag and drop into the timetable.</p>
                         </div>
                         <button
                             type="button"
@@ -1594,6 +1737,13 @@ const onDrop = (day, rowIndex, slotIndex) => {
                             @click="openSubjectsPopup"
                         >
                             Subjects
+                        </button>
+                        <button
+                            type="button"
+                            class="rounded-md bg-white px-2 py-1 text-[10px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
+                            @click="showAssignSubjectsModal = true"
+                        >
+                            Assign
                         </button>
                         <button
                             type="button"
