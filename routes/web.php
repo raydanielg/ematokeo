@@ -848,33 +848,43 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
             $subjectFilter = (int) $request->query('subject', 0);
             $q = trim((string) $request->query('q', ''));
 
+            $teacherSubjectIds = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
+                ->where('tcs.teacher_id', $teacherId)
+                ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
+                ->distinct()
+                ->pluck('tcs.subject_id')
+                ->filter(fn ($v) => $v !== null)
+                ->map(fn ($v) => (int) $v)
+                ->values();
+
+            if ($subjectFilter <= 0 && $teacherSubjectIds->count() === 1) {
+                $subjectFilter = (int) $teacherSubjectIds->first();
+            }
+
             $assignedClassesQuery = \App\Models\SchoolClass::query()
                 ->join('teacher_class_subject as tcs', 'tcs.school_class_id', '=', 'school_classes.id')
                 ->where('tcs.teacher_id', $teacherId)
                 ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
-                ->select('school_classes.id', 'school_classes.name', 'school_classes.level', 'school_classes.stream', 'school_classes.school_id')
+                ->select('school_classes.id', 'school_classes.name', 'school_classes.stream', 'school_classes.school_id')
                 ->distinct();
 
             $assignedClasses = $assignedClassesQuery->get();
 
             $classOptions = $assignedClasses
                 ->map(function ($c) {
-                    $level = trim((string) ($c->level ?? ''));
-                    if ($level === '') {
-                        $level = trim((string) ($c->name ?? ''));
-                    }
+                    $name = trim((string) ($c->name ?? ''));
                     $stream = trim((string) ($c->stream ?? ''));
 
-                    if ($level === '') {
+                    if ($name === '') {
                         return null;
                     }
 
-                    $key = $level . '|' . $stream;
-                    $label = $stream !== '' ? ($level . ' - ' . $stream) : $level;
+                    $key = $name . '|' . $stream;
+                    $label = $stream !== '' ? ($name . ' - ' . $stream) : $name;
 
                     return [
                         'key' => $key,
-                        'level' => $level,
+                        'level' => $name,
                         'stream' => $stream,
                         'label' => $label,
                     ];
@@ -894,17 +904,14 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                     ->where('tcs.teacher_id', $teacherId)
                     ->where('tcs.subject_id', $subjectFilter)
                     ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
-                    ->select('sc.level', 'sc.name', 'sc.stream')
+                    ->select('sc.name', 'sc.stream')
                     ->distinct()
                     ->get()
                     ->map(function ($r) {
-                        $level = trim((string) ($r->level ?? ''));
-                        if ($level === '') {
-                            $level = trim((string) ($r->name ?? ''));
-                        }
+                        $name = trim((string) ($r->name ?? ''));
                         $stream = trim((string) ($r->stream ?? ''));
-                        if ($level === '') return null;
-                        return $level . '|' . $stream;
+                        if ($name === '') return null;
+                        return $name . '|' . $stream;
                     })
                     ->filter()
                     ->unique()
@@ -912,6 +919,11 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                     ->all();
 
                 $allowedKeyList = array_values(array_intersect($allowedKeyList, $subjectKeys));
+
+                $allowedKeySet = array_flip($allowedKeyList);
+                $classOptions = $classOptions
+                    ->filter(fn ($c) => isset($allowedKeySet[$c['key']]))
+                    ->values();
             }
 
             $subjectOptionsQuery = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
@@ -919,7 +931,7 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 ->join('school_classes as sc', 'sc.id', '=', 'tcs.school_class_id')
                 ->where('tcs.teacher_id', $teacherId)
                 ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
-                ->select('s.id', 's.subject_code', 's.name', 'sc.level', 'sc.name as class_name', 'sc.stream')
+                ->select('s.id', 's.subject_code', 's.name', 'sc.name as class_name', 'sc.stream')
                 ->distinct();
 
             if ($classFilter !== '') {
@@ -928,12 +940,9 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 $filterStream = isset($parts[1]) ? trim((string) $parts[1]) : '';
 
                 if ($filterLevel !== '') {
-                    $subjectOptionsQuery->where(function ($qb) use ($filterLevel) {
-                        $qb->where('sc.level', $filterLevel)
-                            ->orWhere(function ($qb2) use ($filterLevel) {
-                                $qb2->whereNull('sc.level')->where('sc.name', $filterLevel);
-                            });
-                    })->whereRaw('COALESCE(sc.stream, "") = ?', [$filterStream]);
+                    $subjectOptionsQuery
+                        ->where('sc.name', $filterLevel)
+                        ->whereRaw('COALESCE(sc.stream, "") = ?', [$filterStream]);
                 }
             }
 
