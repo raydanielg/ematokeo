@@ -130,13 +130,51 @@ const clearFilters = () => {
                 </div>
             </div>
 
-            <div class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-100">
+            <!-- Mobile cards -->
+            <div class="grid gap-4 sm:hidden">
+                <div v-if="!students || students.length === 0" class="rounded-lg bg-white px-5 py-6 text-center text-sm text-gray-500 shadow-sm ring-1 ring-gray-100">
+                    No students found for your assigned classes.
+                </div>
+
+                <div
+                    v-for="s in students"
+                    :key="`m-${s.id}`"
+                    class="rounded-lg bg-white p-5 shadow-sm ring-1 ring-gray-100"
+                >
+                    <div class="flex items-start justify-between gap-3">
+                        <div class="min-w-0">
+                            <div class="truncate text-sm font-semibold text-gray-900">{{ s.full_name }}</div>
+                            <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-600">
+                                <span class="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 font-semibold text-gray-700">
+                                    {{ s.exam_number || '—' }}
+                                </span>
+                                <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700 ring-1 ring-emerald-100">
+                                    {{ s.class_level }}{{ s.stream ? ` - ${s.stream}` : '' }}
+                                </span>
+                                <span class="text-gray-500">{{ s.gender || '—' }}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 flex justify-end">
+                        <Link
+                            :href="route('teacher.students.show', s.id)"
+                            class="inline-flex items-center rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700"
+                        >
+                            Details
+                        </Link>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Desktop table -->
+            <div class="hidden overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-100 sm:block">
                 <div class="overflow-x-auto">
                     <table class="min-w-full divide-y divide-gray-100 text-left text-sm">
                         <thead class="bg-gray-50">
                             <tr>
                                 <th class="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-600">Exam #</th>
-                                <th class="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-600">Full Name</th>
+                                <th class="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-600">Student</th>
                                 <th class="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-600">Class</th>
                                 <th class="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-600">Stream</th>
                                 <th class="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-600">Gender</th>
@@ -152,7 +190,10 @@ const clearFilters = () => {
 
                             <tr v-for="s in students" :key="s.id" class="hover:bg-gray-50">
                                 <td class="px-5 py-3 font-medium text-gray-900">{{ s.exam_number }}</td>
-                                <td class="px-5 py-3 text-gray-800">{{ s.full_name }}</td>
+                                <td class="px-5 py-3">
+                                    <div class="font-semibold text-gray-900">{{ s.full_name }}</div>
+                                    <div class="mt-0.5 text-xs text-gray-500">{{ s.class_level }}{{ s.stream ? ` - ${s.stream}` : '' }}</div>
+                                </td>
                                 <td class="px-5 py-3 text-gray-700">{{ s.class_level }}</td>
                                 <td class="px-5 py-3 text-gray-700">{{ s.stream || '—' }}</td>
                                 <td class="px-5 py-3 text-gray-700">{{ s.gender || '—' }}</td>
@@ -161,7 +202,7 @@ const clearFilters = () => {
                                         :href="route('teacher.students.show', s.id)"
                                         class="inline-flex items-center rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
                                     >
-                                        View
+                                        Details
                                     </Link>
                                 </td>
                             </tr>

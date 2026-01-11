@@ -1254,10 +1254,12 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 'academic_year',
             ]);
 
-            $publishedCount = \App\Models\Exam::query()
-                ->whereNotNull('is_published')
-                ->where('is_published', true)
-                ->count();
+            $publishedCount = 0;
+            if (\Illuminate\Support\Facades\Schema::hasColumn('exams', 'is_published')) {
+                $publishedCount = \App\Models\Exam::query()
+                    ->where('is_published', true)
+                    ->count();
+            }
 
             return Inertia::render('Teacher/ResultsAll', [
                 'years' => $years,
@@ -1997,17 +1999,38 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
             $schoolId = $user?->school_id;
             $teacherId = $user?->id;
 
-            $assignedClassIds = \Illuminate\Support\Facades\DB::table('teacher_class_subject')
+            $teacherSubjectIds = \Illuminate\Support\Facades\DB::table('teacher_class_subject')
                 ->where('teacher_id', $teacherId)
                 ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+                ->distinct()
+                ->pluck('subject_id')
+                ->filter(fn ($v) => $v !== null)
+                ->map(fn ($v) => (int) $v)
+                ->values();
+
+            $assignedClassIdsQuery = \Illuminate\Support\Facades\DB::table('teacher_class_subject')
+                ->where('teacher_id', $teacherId)
+                ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId));
+
+            if ($teacherSubjectIds->count() === 1) {
+                $assignedClassIdsQuery->where('subject_id', (int) $teacherSubjectIds->first());
+            }
+
+            $assignedClassIds = $assignedClassIdsQuery
                 ->distinct()
                 ->pluck('school_class_id');
 
             $classKeys = \App\Models\SchoolClass::query()
                 ->whereIn('id', $assignedClassIds)
                 ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
-                ->get(['level', 'stream'])
-                ->map(fn ($c) => ($c->level ?? '') . '|' . ($c->stream ?? ''))
+                ->get(['name', 'stream'])
+                ->map(function ($c) {
+                    $name = trim((string) ($c->name ?? ''));
+                    if ($name === '') return null;
+                    $stream = trim((string) ($c->stream ?? ''));
+                    return $name . '|' . $stream;
+                })
+                ->filter()
                 ->unique()
                 ->values();
 
