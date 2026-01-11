@@ -1003,7 +1003,7 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                     'q' => $q !== '' ? $q : '',
                 ],
             ]);
-        })->name('teacher.students.index');
+        })->name('students.index');
 
         Route::get('/teacher/students/{student}', function (\Illuminate\Http\Request $request, \App\Models\Student $student) {
             $user = $request->user();
@@ -1088,7 +1088,7 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 'latestResults' => $latestResults,
                 'latestSummary' => $latestSummary,
             ]);
-        })->name('teacher.students.show');
+        })->name('students.show');
 
         Route::get('/timetables/my', function () {
             $user = request()->user();

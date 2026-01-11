@@ -305,10 +305,10 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
     if (sectionKey === 'reports' && itemName === 'Student Report Card') return route('reports.students.index');
     if (sectionKey === 'reports' && itemName === 'Class Report') return route('reports.classes.index');
     if (sectionKey === 'reports' && itemName === 'School Report') return route('reports.school');
-    if (sectionKey === 'timetables' && itemName === 'My Timetable') return route('timetables.my');
+    if (sectionKey === 'timetables' && itemName === 'My Timetable') return route('teacher.timetables.my');
     if (sectionKey === 'timetables' && itemName === 'Class Timetable') return route('timetables.class');
     if (sectionKey === 'timetables' && (itemName === 'Class Timetables' || itemName === 'All Timetables')) {
-        return isTeacher.value ? route('timetables.my') : route('timetables.index');
+        return isTeacher.value ? route('teacher.timetables.my') : route('timetables.index');
     }
     if (sectionKey === 'timetables' && itemName === 'Create Timetable') return route('timetables.create');
     if (sectionKey === 'timetables' && itemName === 'Invigilation Timetable') return route('timetables.invigilation');

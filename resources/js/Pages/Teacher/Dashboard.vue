@@ -137,7 +137,7 @@ const user = computed(() => page?.props?.auth?.user || null);
                             </Link>
 
                             <Link
-                                :href="route('timetables.my')"
+                                :href="route('teacher.timetables.my')"
                                 class="group flex items-start gap-3 rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-800 ring-1 ring-gray-100 transition hover:bg-white"
                             >
                                 <span class="mt-0.5 inline-flex h-9 w-9 items-center justify-center rounded-md bg-amber-100 text-amber-700">
