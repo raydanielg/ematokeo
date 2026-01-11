@@ -97,20 +97,51 @@ const printPage = () => {
             </div>
         </template>
 
-        <div class="mx-auto max-w-5xl space-y-4">
-            <div class="rounded-xl bg-white p-6 shadow-sm ring-1 ring-gray-100">
-                <div class="text-center">
-                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-800">
-                        {{ schoolName }}
+        <div id="print-area" class="mx-auto max-w-5xl space-y-4">
+            <div class="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-gray-100">
+                <div class="bg-gradient-to-r from-emerald-900 to-emerald-700 px-6 py-5 text-emerald-50">
+                    <div class="flex items-center justify-between gap-4">
+                        <div class="flex items-center gap-3">
+                            <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/20">
+                                <img
+                                    src="/images/emblem.png"
+                                    alt="Emblem"
+                                    class="h-9 w-9 object-contain"
+                                    onerror="this.style.display='none'"
+                                />
+                            </div>
+                            <div class="min-w-0">
+                                <div class="truncate text-xs font-semibold uppercase tracking-wide text-emerald-100/90">
+                                    {{ schoolName }}
+                                </div>
+                                <div class="mt-0.5 text-base font-bold uppercase tracking-wide">
+                                    Orodha ya Initials za Walimu
+                                </div>
+                                <div class="mt-0.5 text-[11px] text-emerald-100/90">
+                                    Mwaka wa masomo:
+                                    <span class="font-semibold text-white">{{ year || selectedYear }}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="hidden text-right text-[11px] text-emerald-100/90 sm:block">
+                            Tumia initials hizi kuandika kwenye ratiba za vipindi.
+                        </div>
                     </div>
-                    <div class="mt-1 text-sm font-semibold uppercase tracking-wide text-emerald-800">
-                        ORODHA YA INITIALS ZA WALIMU
-                    </div>
-                    <div class="mt-1 text-[11px] text-gray-600">
-                        Hizi ni initials za walimu wa shule hii kwa mwaka wa masomo
-                        <span class="font-semibold">{{ year || selectedYear }}</span>.
-                        Tumia orodha hii kuandika initials kwenye ratiba za vipindi.
-                    </div>
+                </div>
+
+                <div class="bg-emerald-50/70 px-6 py-3 text-[11px] text-emerald-900">
+                    Hizi ni initials za walimu wa shule hii kwa mwaka wa masomo
+                    <span class="font-semibold">{{ year || selectedYear }}</span>.
+                    Tafadhali hakikisha initials zinatumika kwa usahihi kwenye ratiba.
+                </div>
+            </div>
+
+            <div class="rounded-xl bg-white p-4 text-[11px] text-gray-600 shadow-sm ring-1 ring-gray-100">
+                <div class="font-semibold text-gray-800">Maelezo</div>
+                <div class="mt-1">
+                    Initials zinatengenezwa kutoka herufi za mwanzo za majina ya mwalimu (mfano: "John Paul" = "JP").
+                    Kama kuna walimu wenye initials zinazofanana, ni vizuri kurekebisha majina yao ili initials zitofautiane.
                 </div>
             </div>
 
@@ -119,15 +150,12 @@ const printPage = () => {
                     <div class="text-sm font-semibold text-gray-800">
                         Walimu ({{ teacherRows.length }})
                     </div>
-                    <div class="text-[11px] text-gray-500 print:hidden">
-                        Tip: Bonyeza Print kupata nakala ya kuchapisha.
-                    </div>
                 </div>
 
                 <div class="overflow-x-auto">
-                    <table class="min-w-full text-left text-xs">
+                    <table class="tt-table min-w-full text-left text-xs">
                         <thead>
-                            <tr class="bg-gray-50 text-[11px] font-semibold uppercase tracking-wide text-gray-600">
+                            <tr class="tt-thead-row bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                                 <th class="px-4 py-2">Initials</th>
                                 <th class="px-4 py-2">Teacher</th>
                                 <th class="px-4 py-2">Subjects</th>
@@ -142,7 +170,7 @@ const printPage = () => {
                             <tr
                                 v-for="t in teacherRows"
                                 :key="t.id"
-                                class="border-t border-gray-100 align-top hover:bg-gray-50"
+                                class="tt-row border-t border-gray-100 align-top"
                             >
                                 <td class="px-4 py-2">
                                     <span class="inline-flex items-center rounded-md bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-800 ring-1 ring-emerald-100">
@@ -169,14 +197,70 @@ const printPage = () => {
                     </table>
                 </div>
             </div>
-
-            <div class="rounded-xl bg-white p-4 text-[11px] text-gray-600 shadow-sm ring-1 ring-gray-100">
-                <div class="font-semibold text-gray-800">Maelezo</div>
-                <div class="mt-1">
-                    Initials zinatengenezwa kutoka herufi za mwanzo za majina ya mwalimu (mfano: "John Paul" = "JP").
-                    Kama kuna walimu wenye initials zinazofanana, ni vizuri kurekebisha majina yao ili initials zitofautiane.
-                </div>
-            </div>
         </div>
     </AuthenticatedLayout>
 </template>
+
+<style scoped>
+@media screen {
+    .tt-table thead th {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+    }
+}
+
+.tt-table th,
+.tt-table td {
+    border-left: 1px solid #eef2f7;
+}
+
+.tt-table th:first-child,
+.tt-table td:first-child {
+    border-left: 0;
+}
+
+.tt-row:nth-child(even) {
+    background: #f8fafc;
+}
+
+.tt-row:hover {
+    background: #f1f5f9;
+}
+
+@media print {
+    @page {
+        size: A4;
+        margin: 12mm;
+    }
+
+    :global(body) {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    :global(body *) {
+        visibility: hidden;
+    }
+
+    #print-area,
+    #print-area * {
+        visibility: visible;
+    }
+
+    #print-area {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+    }
+
+    .tt-table thead th {
+        position: static;
+    }
+
+    .tt-row:nth-child(even) {
+        background: #ffffff;
+    }
+}
+</style>
