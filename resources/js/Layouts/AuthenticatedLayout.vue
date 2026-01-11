@@ -65,7 +65,7 @@ const userSidebarSections = [
     {
         key: 'timetables',
         title: 'Timetables Management',
-        items: ['Class Timetable', 'Class Timetables', 'All Timetables', 'Create Timetable', 'Invigilation Timetable', 'Sitting Plan', 'Resources', 'Topics'],
+        items: ['Class Timetable', 'Class Timetables', 'All Timetables', 'Create Timetable', 'Teacher Initials', 'Invigilation Timetable', 'Sitting Plan', 'Resources', 'Topics'],
     },
     {
         key: 'notifications',
@@ -311,6 +311,7 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
         return isTeacher.value ? route('teacher.timetables.my') : route('timetables.index');
     }
     if (sectionKey === 'timetables' && itemName === 'Create Timetable') return route('timetables.create');
+    if (sectionKey === 'timetables' && itemName === 'Teacher Initials') return route('timetables.initials');
     if (sectionKey === 'timetables' && itemName === 'Invigilation Timetable') return route('timetables.invigilation');
     if (sectionKey === 'timetables' && itemName === 'Sitting Plan') return route('sitting-plans.index');
     if (sectionKey === 'timetables' && itemName === 'Resources') return route('resources.index');

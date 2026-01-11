@@ -46,6 +46,175 @@ const hasSchedule = (t) => {
     if (typeof s === 'object') return Object.keys(s).length > 0;
     return false;
 };
+
+const days = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'];
+const slotLabels = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9'];
+
+const normalizeSchedule = (rawSchedule) => {
+    try {
+        let data = rawSchedule;
+        if (!data) return {};
+
+        if (typeof data === 'string') {
+            const s = String(data).trim();
+            if (!s) return {};
+            data = JSON.parse(s);
+        }
+
+        if (!data || typeof data !== 'object') return {};
+
+        const out = {};
+        Object.keys(data).forEach((day) => {
+            const rows = Array.isArray(data[day]) ? data[day] : [];
+            out[day] = rows.map((row) => {
+                const slots = Array.isArray(row?.slots) ? row.slots : [];
+                const normalizedSlots = Array.from({ length: 9 }).map((_, i) => {
+                    const slot = slots[i];
+                    if (slot === null || slot === undefined) return null;
+
+                    if (typeof slot === 'string') {
+                        const val = String(slot || '').trim();
+                        if (!val) return null;
+                        return { subject: val, teacher_initials: '' };
+                    }
+
+                    if (typeof slot === 'object') {
+                        const subject = String(slot?.subject ?? '').trim();
+                        const teacherInitials = String(slot?.teacher_initials ?? slot?.teacher ?? '').trim();
+                        if (!subject && !teacherInitials) return null;
+                        return { subject, teacher_initials: teacherInitials };
+                    }
+
+                    return null;
+                });
+
+                return {
+                    ...(row || {}),
+                    slots: normalizedSlots,
+                };
+            });
+        });
+
+        return out;
+    } catch {
+        return {};
+    }
+};
+
+const escapeHtml = (value) => {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+};
+
+const colourForSubject = (subjectCode) => {
+    const code = String(subjectCode || '').trim().toUpperCase();
+    if (!code) return { bg: '#ffffff', fg: '#111827' };
+    const palette = [
+        { bg: '#ECFDF5', fg: '#065F46' },
+        { bg: '#EFF6FF', fg: '#1D4ED8' },
+        { bg: '#FEF3C7', fg: '#92400E' },
+        { bg: '#FCE7F3', fg: '#9D174D' },
+        { bg: '#EDE9FE', fg: '#5B21B6' },
+        { bg: '#FFE4E6', fg: '#9F1239' },
+        { bg: '#F1F5F9', fg: '#0F172A' },
+        { bg: '#E0F2FE', fg: '#075985' },
+    ];
+    let hash = 0;
+    for (let i = 0; i < code.length; i += 1) {
+        hash = ((hash << 5) - hash) + code.charCodeAt(i);
+        hash |= 0;
+    }
+    const idx = Math.abs(hash) % palette.length;
+    return palette[idx];
+};
+
+const buildTimetableExcelHtml = (timetable) => {
+    const schedule = normalizeSchedule(timetable?.schedule_json);
+    const title = String(timetable?.title || 'Timetable').trim() || 'Timetable';
+    const className = String(timetable?.class_name || '').trim();
+    const academicYear = String(timetable?.academic_year || '').trim();
+    const term = String(timetable?.term || '').trim();
+
+    let html = `<!DOCTYPE html><html><head><meta charset="utf-8" />`;
+    html += `<style>`;
+    html += `table{border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:11px;}`;
+    html += `th,td{border:1px solid #CBD5E1;padding:4px 6px;vertical-align:middle;}`;
+    html += `th{background:#F1F5F9;font-weight:700;text-align:center;}`;
+    html += `.meta{border:0;padding:2px 0;}`;
+    html += `.meta strong{font-weight:700;}`;
+    html += `</style></head><body>`;
+    html += `<div class="meta"><strong>${escapeHtml(title)}</strong></div>`;
+    html += `<div class="meta">${escapeHtml([className, academicYear, term].filter(Boolean).join(' · '))}</div>`;
+    html += `<br/>`;
+    html += `<table>`;
+    html += `<thead><tr>`;
+    html += `<th>DAY</th><th>CLASS</th><th>STREAM</th>`;
+    slotLabels.forEach((l) => {
+        html += `<th>${escapeHtml(l)}</th>`;
+    });
+    html += `</tr></thead><tbody>`;
+
+    days.forEach((d) => {
+        const rows = Array.isArray(schedule?.[d]) ? schedule[d] : [];
+        if (!rows.length) {
+            html += `<tr><td>${escapeHtml(d)}</td><td></td><td></td>`;
+            slotLabels.forEach(() => { html += `<td></td>`; });
+            html += `</tr>`;
+            return;
+        }
+
+        rows.forEach((row) => {
+            const classLabel = String(row?.class_label || row?.form || row?.class_name || '').trim();
+            const stream = String(row?.stream || '').trim();
+            const slots = Array.isArray(row?.slots) ? row.slots : [];
+
+            html += `<tr>`;
+            html += `<td>${escapeHtml(d)}</td>`;
+            html += `<td>${escapeHtml(classLabel)}</td>`;
+            html += `<td>${escapeHtml(stream)}</td>`;
+
+            for (let i = 0; i < 9; i += 1) {
+                const cell = slots[i];
+                const subject = String(cell?.subject || '').trim();
+                const teacher = String(cell?.teacher_initials || '').trim();
+                const label = [subject, teacher].filter(Boolean).join(' ');
+                const c = colourForSubject(subject);
+                html += `<td style="background:${c.bg};color:${c.fg};text-align:center;">${escapeHtml(label)}</td>`;
+            }
+            html += `</tr>`;
+        });
+    });
+
+    html += `</tbody></table></body></html>`;
+    return html;
+};
+
+const downloadPreviewExcel = (timetable) => {
+    const tt = timetable || null;
+    if (!tt) return;
+    if (!tt.schedule_json || !hasSchedule(tt)) return;
+
+    const html = buildTimetableExcelHtml(tt);
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+
+    const base = String(tt?.title || 'timetable').trim() || 'timetable';
+    const safe = base.replace(/[\\/:*?"<>|]+/g, '-');
+    const fileName = `${safe}_${tt?.id || ''}.xls`;
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+};
 </script>
 
 <template>
@@ -194,7 +363,6 @@ const hasSchedule = (t) => {
                     </tbody>
                 </table>
             </div>
-
             <div
                 v-if="showPreviewModal"
                 class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6"
@@ -211,6 +379,19 @@ const hasSchedule = (t) => {
                             </div>
                         </div>
                         <div class="flex items-center gap-2">
+                            <button
+                                type="button"
+                                :disabled="!hasSchedule(previewItem)"
+                                :class="[
+                                    'rounded-md px-2 py-1 text-[11px] font-medium ring-1',
+                                    hasSchedule(previewItem)
+                                        ? 'bg-blue-50 text-blue-700 ring-blue-100 hover:bg-blue-100'
+                                        : 'bg-gray-50 text-gray-400 ring-gray-100 cursor-not-allowed',
+                                ]"
+                                @click="hasSchedule(previewItem) && downloadPreviewExcel(previewItem)"
+                            >
+                                Download Excel
+                            </button>
                             <button
                                 type="button"
                                 class="rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100"

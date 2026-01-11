@@ -676,10 +676,20 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                         ->distinct()
                         ->pluck('sc.id');
 
-                    $classes = $exam->classes
-                        ->filter(fn (\App\Models\SchoolClass $c) => $teacherBaseClassIds->contains($c->id))
-                        ->map(fn (\App\Models\SchoolClass $c) => ['id' => $c->id, 'name' => $c->name])
-                        ->values();
+                    $examHasClasses = $exam->classes && $exam->classes->count() > 0;
+
+                    $classes = $examHasClasses
+                        ? $exam->classes
+                            ->filter(fn (\App\Models\SchoolClass $c) => $teacherBaseClassIds->contains($c->id))
+                            ->map(fn (\App\Models\SchoolClass $c) => ['id' => $c->id, 'name' => $c->name])
+                            ->values()
+                        : \App\Models\SchoolClass::query()
+                            ->whereIn('id', $teacherBaseClassIds)
+                            ->when($schoolId, fn ($q) => $q->where('school_id', $schoolId))
+                            ->orderBy('name')
+                            ->get(['id', 'name'])
+                            ->map(fn (\App\Models\SchoolClass $c) => ['id' => $c->id, 'name' => $c->name])
+                            ->values();
 
                     if (! $classId && $classes->isNotEmpty()) {
                         return redirect()->route('teacher.exams.marks', [
@@ -689,8 +699,13 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                     }
 
                     if ($classId) {
-                        $selectedBase = $exam->classes->firstWhere('id', (int) $classId);
-                        if ($selectedBase && $teacherBaseClassIds->contains($selectedBase->id)) {
+                        $selectedBase = $examHasClasses
+                            ? $exam->classes->firstWhere('id', (int) $classId)
+                            : \App\Models\SchoolClass::find((int) $classId);
+
+                        $selectedBaseAllowed = $selectedBase && $teacherBaseClassIds->contains((int) $selectedBase->id);
+
+                        if ($selectedBaseAllowed) {
                             $allowedSubjectIds = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
                                 ->where('tcs.teacher_id', $teacherId)
                                 ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
@@ -781,8 +796,21 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                 abort(404);
             }
 
-            $selectedBase = $exam->classes->firstWhere('id', (int) $data['class_id']);
-            if (! $selectedBase) {
+            $teacherBaseClassIds = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
+                ->join('school_classes as sc', 'sc.id', '=', 'tcs.school_class_id')
+                ->where('tcs.teacher_id', $teacherId)
+                ->when($schoolId, fn ($qb) => $qb->where('tcs.school_id', $schoolId))
+                ->whereNull('sc.parent_class_id')
+                ->distinct()
+                ->pluck('sc.id');
+
+            $examHasClasses = $exam->classes && $exam->classes->count() > 0;
+
+            $selectedBase = $examHasClasses
+                ? $exam->classes->firstWhere('id', (int) $data['class_id'])
+                : \App\Models\SchoolClass::find((int) $data['class_id']);
+
+            if (! $selectedBase || ! $teacherBaseClassIds->contains((int) $selectedBase->id)) {
                 abort(403);
             }
 
@@ -6165,6 +6193,83 @@ Route::middleware('auth')->group(function () {
             'timetables' => $timetables,
         ]);
     })->name('timetables.index');
+
+    Route::get('/timetables/initials', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+
+        if ($user && $user->role === 'teacher') {
+            abort(403);
+        }
+
+        $requestedYear = trim((string) $request->query('year', ''));
+        $current = \App\Models\AcademicYear::where('is_current', true)->first();
+        $selectedYear = $requestedYear !== '' ? $requestedYear : (string) ($current?->year ?? date('Y'));
+
+        $school = $schoolId ? \App\Models\School::query()->find($schoolId) : null;
+
+        $teacherRows = \Illuminate\Support\Facades\DB::table('teacher_class_subject as tcs')
+            ->join('users as u', 'u.id', '=', 'tcs.teacher_id')
+            ->join('subjects as s', 's.id', '=', 'tcs.subject_id')
+            ->when($schoolId, fn ($q) => $q->where('tcs.school_id', $schoolId))
+            ->where('u.role', 'teacher')
+            ->orderBy('u.name')
+            ->orderBy('s.subject_code')
+            ->get([
+                'u.id as teacher_id',
+                'u.name as teacher_name',
+                's.subject_code as subject_code',
+                's.name as subject_name',
+            ]);
+
+        $teachers = collect($teacherRows)
+            ->groupBy(fn ($r) => (int) $r->teacher_id)
+            ->map(function ($grp) {
+                $first = collect($grp)->first();
+                $name = (string) ($first->teacher_name ?? '');
+                $parts = preg_split('/\s+/', trim($name));
+                $initials = collect($parts)
+                    ->filter()
+                    ->map(fn ($p) => \Illuminate\Support\Str::upper(mb_substr($p, 0, 1)))
+                    ->implode('');
+
+                $subjects = collect($grp)
+                    ->map(fn ($r) => [
+                        'subject_code' => (string) ($r->subject_code ?? ''),
+                        'subject_name' => (string) ($r->subject_name ?? ''),
+                    ])
+                    ->unique(fn ($s) => (string) $s['subject_code'])
+                    ->values()
+                    ->all();
+
+                return [
+                    'id' => (int) ($first->teacher_id ?? 0),
+                    'name' => $name,
+                    'initials' => (string) $initials,
+                    'subjects' => $subjects,
+                ];
+            })
+            ->values()
+            ->all();
+
+        $years = \App\Models\AcademicYear::query()
+            ->orderByDesc('year')
+            ->pluck('year')
+            ->map(fn ($y) => (string) $y)
+            ->values()
+            ->all();
+
+        if (empty($years)) {
+            $years = [(string) date('Y')];
+        }
+
+        return Inertia::render('TimetableInitials', [
+            'schoolName' => (string) ($school?->name ?? 'School'),
+            'selectedYear' => $selectedYear,
+            'years' => $years,
+            'teachers' => $teachers,
+        ]);
+    })->name('timetables.initials');
 
     Route::post('/timetables/{timetable}/publish', function (Timetable $timetable, Illuminate\Http\Request $request) {
         $user = $request->user();
