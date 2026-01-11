@@ -2454,6 +2454,14 @@ const onDrop = (day, rowIndex, slotIndex) => {
                     </div>
 
                     <div class="flex flex-wrap items-center gap-2">
+                        <label class="inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 text-[10px] font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50">
+                            <input
+                                v-model="showDoubles"
+                                type="checkbox"
+                                class="h-3 w-3 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                            />
+                            <span>Show Doubles (D)</span>
+                        </label>
                         <button
                             type="button"
                             class="rounded-md bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-100 hover:bg-amber-100"
@@ -2718,7 +2726,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                                 <div>
                                                     {{ slot.subject }}
                                                     <span
-                                                        v-if="row.slots[index + 1]?.subject && row.slots[index + 1].subject === slot.subject"
+                                                        v-if="showDoubles && row.slots[index + 1]?.subject && row.slots[index + 1].subject === slot.subject"
                                                         class="ml-1 rounded bg-emerald-200 px-1 text-[8px] font-bold text-emerald-900"
                                                     >
                                                         D
@@ -2769,7 +2777,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                                     <div>
                                                         {{ slot.subject }}
                                                         <span
-                                                            v-if="row.slots[4 + index + 1]?.subject && row.slots[4 + index + 1].subject === slot.subject"
+                                                            v-if="showDoubles && row.slots[4 + index + 1]?.subject && row.slots[4 + index + 1].subject === slot.subject"
                                                             class="ml-1 rounded bg-indigo-200 px-1 text-[8px] font-bold text-indigo-900"
                                                         >
                                                             D
@@ -2833,7 +2841,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                                     <div>
                                                         {{ slot.subject }}
                                                         <span
-                                                            v-if="row.slots[7 + index + 1]?.subject && row.slots[7 + index + 1].subject === slot.subject"
+                                                            v-if="showDoubles && row.slots[7 + index + 1]?.subject && row.slots[7 + index + 1].subject === slot.subject"
                                                             class="ml-1 rounded bg-slate-200 px-1 text-[8px] font-bold text-slate-900"
                                                         >
                                                             D
