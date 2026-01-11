@@ -15,6 +15,12 @@ const page = usePage();
 const isAdmin = computed(() => page.props.auth.user?.role === 'super_admin');
 const isTeacher = computed(() => page.props.auth.user?.role === 'teacher');
 
+const homeHref = computed(() => {
+    if (isAdmin.value) return safeRoute('admin.dashboard');
+    if (isTeacher.value) return safeRoute('teacher.dashboard');
+    return safeRoute('dashboard');
+});
+
 const userSidebarSections = [
     {
         key: 'dashboard',
@@ -367,7 +373,7 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
 
                             <!-- Logo -->
                             <div class="flex shrink-0 items-center">
-                                <Link :href="route('dashboard')">
+                                <Link :href="homeHref">
                                     <ApplicationLogo
                                         class="block h-9 w-auto"
                                     />
@@ -531,8 +537,8 @@ const getRouteForMenuItem = (sectionKey, itemName) => {
                 >
                     <div class="space-y-1 pb-3 pt-2">
                         <ResponsiveNavLink
-                            :href="route('dashboard')"
-                            :active="route().current('dashboard')"
+                            :href="homeHref"
+                            :active="route().current(isTeacher ? 'teacher.dashboard' : isAdmin ? 'admin.dashboard' : 'dashboard')"
                         >
                             Dashboard
                         </ResponsiveNavLink>

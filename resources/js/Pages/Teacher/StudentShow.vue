@@ -1,6 +1,7 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head, Link } from '@inertiajs/vue3';
+import { computed } from 'vue';
 
 const props = defineProps({
     student: {
@@ -20,6 +21,11 @@ const props = defineProps({
         default: () => ({ total: null, average: null }),
     },
 });
+
+const student = computed(() => props.student);
+const latestExam = computed(() => props.latestExam);
+const latestResults = computed(() => props.latestResults);
+const latestSummary = computed(() => props.latestSummary);
 </script>
 
 <template>
