@@ -229,6 +229,16 @@ const printPage = () => {
 
 <style>
 @media print {
+    @page {
+        size: A4;
+        margin: 10mm;
+    }
+
+    body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
     body * {
         visibility: hidden;
     }
@@ -243,15 +253,35 @@ const printPage = () => {
         inset: 0;
         width: 100%;
         margin: 0;
-        padding: 0.5cm;
+        padding: 0;
         box-shadow: none;
         border: none;
+        font-size: 9px;
+        line-height: 1.2;
     }
 
     #calendar-preview .year-grid-print {
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 0.5rem;
+        gap: 6px;
+    }
+
+    #calendar-preview .year-grid-print > div {
+        break-inside: avoid;
+        page-break-inside: avoid;
+        padding: 6px;
+    }
+
+    #calendar-preview .year-grid-print .h-6 {
+        height: 16px !important;
+    }
+
+    #calendar-preview .year-grid-print .text-\[12px\] {
+        font-size: 10px !important;
+    }
+
+    #calendar-preview .year-grid-print .text-\[10px\] {
+        font-size: 9px !important;
     }
 }
 </style>

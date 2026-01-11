@@ -7166,6 +7166,58 @@ Route::middleware('auth')->group(function () {
             ->with('success', 'Timetable saved successfully.');
     })->name('timetables.store');
 
+    Route::put('/timetables/{timetable}', function (Illuminate\Http\Request $request, Timetable $timetable) {
+        $user = $request->user();
+        $schoolId = $user?->school_id;
+
+        if ($user && $user->role === 'teacher') {
+            abort(403);
+        }
+
+        if ($schoolId && Schema::hasColumn('timetables', 'school_id') && $timetable->school_id && (int) $timetable->school_id !== (int) $schoolId) {
+            abort(403);
+        }
+
+        $data = $request->validate([
+            'title' => ['required', 'string', 'max:255'],
+            'class_name' => ['nullable', 'string', 'max:255'],
+            'academic_year' => ['nullable', 'string', 'max:50'],
+            'term' => ['nullable', 'string', 'max:50'],
+            'type' => ['nullable', 'string', 'max:50'],
+            'schedule_json' => ['nullable'],
+        ]);
+
+        $timetable->title = $data['title'];
+        $timetable->class_name = $data['class_name'] ?? null;
+        $timetable->academic_year = $data['academic_year'] ?? null;
+        $timetable->term = $data['term'] ?? null;
+        $timetable->name = $request->input('name') ?? ($data['type'] ?? $timetable->name);
+        $timetable->schedule_json = $request->input('schedule_json');
+        $timetable->save();
+
+        // Regenerate PDF to keep preview/download in sync
+        try {
+            $school = School::query()->when($schoolId, fn ($q) => $q->where('id', $schoolId))->first();
+
+            $pdf = Pdf::loadView('timetables.pdf', [
+                'school' => $school,
+                'timetable' => $timetable,
+            ])->setPaper('a4', 'landscape');
+
+            $relativePath = 'timetables/timetable_'.$timetable->id.'.pdf';
+            Storage::disk('public')->put($relativePath, $pdf->output());
+
+            $timetable->file_path = $relativePath;
+            $timetable->save();
+        } catch (\Throwable $e) {
+            // If PDF generation fails, continue without blocking update
+        }
+
+        return redirect()
+            ->route('timetables.index')
+            ->with('success', 'Timetable updated successfully.');
+    })->name('timetables.update');
+
     Route::get('/timetables/{timetable}/download', function (Timetable $timetable) {
         $user = request()->user();
         $schoolId = $user?->school_id;

@@ -1,6 +1,7 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head, useForm } from '@inertiajs/vue3';
+import { computed, ref } from 'vue';
 
 const props = defineProps({
     events: {
@@ -85,6 +86,27 @@ const buildYearMonths = () => {
 
 const months = buildYearMonths();
 
+const viewMode = ref('date'); // 'date' | 'events'
+
+const eventFilterFrom = ref('');
+const eventFilterTo = ref('');
+
+const filteredEvents = computed(() => {
+    const from = String(eventFilterFrom.value || '').trim();
+    const to = String(eventFilterTo.value || '').trim();
+
+    return (props.events || [])
+        .slice()
+        .filter((e) => {
+            const d = String(e?.date || '').trim();
+            if (!d) return false;
+            if (from && d < from) return false;
+            if (to && d > to) return false;
+            return true;
+        })
+        .sort((a, b) => String(a?.date || '').localeCompare(String(b?.date || '')));
+});
+
 const isToday = (monthIndex, day) => {
     if (!day) return false;
     const now = new Date();
@@ -121,6 +143,24 @@ const submitEvent = () => {
                     </p>
                 </div>
                 <div class="flex items-center gap-2">
+                    <div class="inline-flex overflow-hidden rounded-md bg-white shadow-sm ring-1 ring-gray-200">
+                        <button
+                            type="button"
+                            class="px-3 py-1.5 text-[11px] font-semibold"
+                            :class="viewMode === 'date' ? 'bg-emerald-600 text-white' : 'text-gray-700 hover:bg-gray-50'"
+                            @click="viewMode = 'date'"
+                        >
+                            By Date
+                        </button>
+                        <button
+                            type="button"
+                            class="px-3 py-1.5 text-[11px] font-semibold"
+                            :class="viewMode === 'events' ? 'bg-emerald-600 text-white' : 'text-gray-700 hover:bg-gray-50'"
+                            @click="viewMode = 'events'"
+                        >
+                            By Events
+                        </button>
+                    </div>
                     <a
                         :href="route('calendar.preview')"
                         class="inline-flex items-center rounded-md bg-white/90 px-3 py-1.5 text-[11px] font-semibold text-emerald-700 shadow-sm ring-1 ring-emerald-200 hover:bg-emerald-50"
@@ -159,6 +199,49 @@ const submitEvent = () => {
                                 <span class="h-2 w-2 rounded-full bg-slate-400"></span>
                                 Weekend
                             </span>
+                        </div>
+                    </div>
+
+                    <div v-if="viewMode === 'events'" class="mb-4 rounded-xl bg-white p-3 text-[11px] text-gray-800 shadow-sm ring-1 ring-slate-200/80">
+                        <div class="mb-2 flex flex-wrap items-end justify-between gap-2">
+                            <div>
+                                <div class="text-[12px] font-semibold text-gray-900">Events Preview</div>
+                                <div class="mt-0.5 text-[10px] text-gray-500">Filter by date range and review all school events.</div>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <div>
+                                    <label class="mb-0.5 block text-[10px] font-medium text-gray-600">From</label>
+                                    <input v-model="eventFilterFrom" type="date" class="rounded-md border border-gray-300 px-2 py-1 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500" />
+                                </div>
+                                <div>
+                                    <label class="mb-0.5 block text-[10px] font-medium text-gray-600">To</label>
+                                    <input v-model="eventFilterTo" type="date" class="rounded-md border border-gray-300 px-2 py-1 text-[11px] focus:border-emerald-500 focus:outline-none focus:ring-emerald-500" />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full border-collapse text-left text-[11px]">
+                                <thead>
+                                    <tr class="bg-slate-50 text-[10px] font-semibold uppercase tracking-wide text-slate-600">
+                                        <th class="border border-slate-200 px-3 py-2">Date</th>
+                                        <th class="border border-slate-200 px-3 py-2">Event</th>
+                                        <th class="border border-slate-200 px-3 py-2">Description</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-if="filteredEvents.length === 0">
+                                        <td colspan="3" class="border border-slate-200 px-3 py-4 text-center text-[11px] text-gray-500">
+                                            No events found for the selected range.
+                                        </td>
+                                    </tr>
+                                    <tr v-for="e in filteredEvents" :key="e.id" class="odd:bg-white even:bg-slate-50">
+                                        <td class="border border-slate-200 px-3 py-2 font-semibold text-emerald-700">{{ e.date }}</td>
+                                        <td class="border border-slate-200 px-3 py-2 font-semibold text-gray-900">{{ e.title }}</td>
+                                        <td class="border border-slate-200 px-3 py-2 text-gray-700">{{ e.description || '—' }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
 
@@ -211,7 +294,7 @@ const submitEvent = () => {
                         </form>
                     </div>
 
-                    <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                    <div v-if="viewMode === 'date'" class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                         <div
                             v-for="month in months"
                             :key="month.index"
@@ -253,7 +336,7 @@ const submitEvent = () => {
                         </div>
                     </div>
 
-                    <div class="mt-4 grid gap-4 lg:grid-cols-2">
+                    <div v-if="viewMode === 'date'" class="mt-4 grid gap-4 lg:grid-cols-2">
                         <div class="rounded-xl bg-slate-900/95 p-3 text-[11px] text-slate-100 shadow-inner ring-1 ring-slate-700/80">
                             <h3 class="mb-1 text-[12px] font-semibold text-emerald-100">
                                 Tanzania Public Holidays (Fixed Dates)

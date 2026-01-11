@@ -1404,6 +1404,11 @@ onMounted(() => {
     }
 });
 
+const isEditing = computed(() => !!props.timetable?.id);
+
+const showExportModal = ref(false);
+const exportTitle = ref('');
+
 const saveTimetable = () => {
     const title = String(form.title || '').trim();
     if (!title) {
@@ -1413,24 +1418,32 @@ const saveTimetable = () => {
     form.schedule_json = buildExportSchedule();
     form.class_name = headerClassName.value || form.class_name || null;
     form.redirect_to_show = true;
-    form.post(route('timetables.store'), {
-        preserveScroll: true,
-        onSuccess: () => {
-            showDetailsModal.value = false;
-            clearStoredSchedule();
-        },
-    });
+
+    const request = isEditing.value
+        ? form.put(route('timetables.update', props.timetable.id), {
+            preserveScroll: true,
+            onSuccess: () => {
+                showDetailsModal.value = false;
+            },
+        })
+        : form.post(route('timetables.store'), {
+            preserveScroll: true,
+            onSuccess: () => {
+                showDetailsModal.value = false;
+            },
+        });
+
+    return request;
 };
 
-const showExportModal = ref(false);
-const exportTitle = ref('');
+const showExportModalTitle = computed(() => (isEditing.value ? 'Update Timetable' : 'Export Timetable'));
 
 const openExportModal = () => {
     exportTitle.value = String(form.title || '').trim();
     showExportModal.value = true;
 };
 
-const confirmExport = () => {
+const doExport = () => {
     const title = String(exportTitle.value || '').trim();
     if (!title) return;
     form.title = title;
@@ -2064,13 +2077,23 @@ const isDraggableSlot = (day, slotIndex) => {
 
 };
 
-const onDragStart = (day, rowIndex, slotIndex) => {
+const resetDragState = () => {
+    draggedSubjectCode.value = '';
+    draggedCell.value = null;
+    dragHoverCell.value = { day: '', rowIndex: -1, slotIndex: -1 };
+};
+
+const onDragStart = (evt, day, rowIndex, slotIndex) => {
+    evt?.dataTransfer?.setData?.('text/plain', 'cell');
+    evt?.dataTransfer && (evt.dataTransfer.effectAllowed = 'move');
     draggedCell.value = { day, rowIndex, slotIndex };
     draggedSubjectCode.value = '';
     dragHoverCell.value = { day: '', rowIndex: -1, slotIndex: -1 };
 };
 
-const onSubjectDragStart = (code) => {
+const onSubjectDragStart = (evt, code) => {
+    evt?.dataTransfer?.setData?.('text/plain', String(code || ''));
+    evt?.dataTransfer && (evt.dataTransfer.effectAllowed = 'copy');
     const c = String(code || '').trim();
     if (!c) {
         draggedSubjectCode.value = '';
@@ -2083,6 +2106,10 @@ const onSubjectDragStart = (code) => {
     draggedSubjectCode.value = c;
     draggedCell.value = null;
     dragHoverCell.value = { day: '', rowIndex: -1, slotIndex: -1 };
+};
+
+const onDragEnd = () => {
+    resetDragState();
 };
 
 const subjectMenuDragging = ref(false);
@@ -2260,9 +2287,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
         if (!ok) {
             flashDropHint('Sio sehemu sahihi');
         }
-        draggedSubjectCode.value = '';
-        draggedCell.value = null;
-        dragHoverCell.value = { day: '', rowIndex: -1, slotIndex: -1 };
+        resetDragState();
         return;
     }
 
@@ -2271,7 +2296,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
     const from = draggedCell.value;
 
     if (from.day === day && from.rowIndex === rowIndex && from.slotIndex === slotIndex) {
-        draggedCell.value = null;
+        resetDragState();
         return;
     }
 
@@ -2279,7 +2304,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
     const toRow = schedule.value[day]?.[rowIndex];
 
     if (!fromRow || !toRow) {
-        draggedCell.value = null;
+        resetDragState();
         return;
     }
 
@@ -2298,8 +2323,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
 
     if (!canPlaceA || !canPlaceB || clashOnTarget || clashOnSource) {
         flashDropHint('Sio sehemu sahihi');
-        draggedCell.value = null;
-        dragHoverCell.value = { day: '', rowIndex: -1, slotIndex: -1 };
+        resetDragState();
         return;
     }
 
@@ -2308,8 +2332,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
 
     saveScheduleToStorage();
 
-    draggedCell.value = null;
-    dragHoverCell.value = { day: '', rowIndex: -1, slotIndex: -1 };
+    resetDragState();
 };
 
 </script>
@@ -2490,7 +2513,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
                             :disabled="form.processing"
                             @click="openExportModal"
                         >
-                            {{ form.processing ? 'Exporting...' : 'Export (Save to DB)' }}
+                            {{ form.processing ? (isEditing ? 'Updating...' : 'Exporting...') : (isEditing ? 'Update (Save Changes)' : 'Export (Save to DB)') }}
                         </button>
                         <button
                             type="button"
@@ -2716,11 +2739,12 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                                     : '',
                                             ]"
                                             :draggable="isDraggableSlot(day, index)"
-                                            @dragstart="isDraggableSlot(day, index) && onDragStart(day, originalIndex, index)"
+                                            @dragstart="isDraggableSlot(day, index) && onDragStart($event, day, originalIndex, index)"
+                                            @dragend="onDragEnd"
                                             @dragenter.prevent="onCellDragEnter(day, originalIndex, index)"
                                             @contextmenu="(e) => openSubjectMenu(e, day, originalIndex, index)"
                                             @dragover.prevent
-                                            @drop="isDraggableSlot(day, index) && onDrop(day, originalIndex, index)"
+                                            @drop.prevent="isDraggableSlot(day, index) && onDrop(day, originalIndex, index)"
                                         >
                                             <template v-if="slot && slot.subject">
                                                 <div>
@@ -2763,11 +2787,12 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                                     : '',
                                             ]"
                                             :draggable="isDraggableSlot(day, 4 + index)"
-                                            @dragstart="isDraggableSlot(day, 4 + index) && onDragStart(day, originalIndex, 4 + index)"
+                                            @dragstart="isDraggableSlot(day, 4 + index) && onDragStart($event, day, originalIndex, 4 + index)"
+                                            @dragend="onDragEnd"
                                             @dragenter.prevent="onCellDragEnter(day, originalIndex, 4 + index)"
                                             @contextmenu="(e) => openSubjectMenu(e, day, originalIndex, 4 + index)"
                                             @dragover.prevent
-                                            @drop="isDraggableSlot(day, 4 + index) && onDrop(day, originalIndex, 4 + index)"
+                                            @drop.prevent="isDraggableSlot(day, 4 + index) && onDrop(day, originalIndex, 4 + index)"
                                         >
                                             <template v-if="day === 'FRIDAY' && index === 2">
                                                 <div class="font-semibold text-orange-700">MEWAKA</div>
@@ -2821,11 +2846,12 @@ const onDrop = (day, rowIndex, slotIndex) => {
                                                             : 'bg-indigo-50',
                                             ]"
                                             :draggable="isDraggableSlot(day, 7 + index)"
-                                            @dragstart="isDraggableSlot(day, 7 + index) && onDragStart(day, originalIndex, 7 + index)"
+                                            @dragstart="isDraggableSlot(day, 7 + index) && onDragStart($event, day, originalIndex, 7 + index)"
+                                            @dragend="onDragEnd"
                                             @dragenter.prevent="onCellDragEnter(day, originalIndex, 7 + index)"
                                             @contextmenu="(e) => openSubjectMenu(e, day, originalIndex, 7 + index)"
                                             @dragover.prevent
-                                            @drop="isDraggableSlot(day, 7 + index) && onDrop(day, originalIndex, 7 + index)"
+                                            @drop.prevent="isDraggableSlot(day, 7 + index) && onDrop(day, originalIndex, 7 + index)"
                                         >
                                             <template v-if="day === 'WEDNESDAY'">
                                                 <div>RELIGION</div>
@@ -3040,7 +3066,7 @@ const onDrop = (day, rowIndex, slotIndex) => {
             >
                 <div class="w-full max-w-md rounded-lg bg-white shadow-xl">
                     <div class="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-                        <div class="text-sm font-semibold text-gray-800">Export Timetable</div>
+                        <div class="text-sm font-semibold text-gray-800">{{ showExportModalTitle }}</div>
                         <button type="button" class="text-[11px] text-gray-500 hover:text-gray-700" @click="showExportModal = false">
                             Close
                         </button>
@@ -3451,7 +3477,8 @@ Form I &amp; II	Form III &amp; IV
                                     ? 'border-gray-200 bg-white text-gray-800 hover:bg-gray-50'
                                     : 'cursor-not-allowed border-gray-100 bg-gray-50 text-gray-400',
                             ]"
-                            @dragstart="onSubjectDragStart(code)"
+                            @dragstart="onSubjectDragStart($event, code)"
+                            @dragend="onDragEnd"
                             @click="() => clickAssignFromMenu(code)"
                         >
                             <span>{{ code }}</span>
@@ -3468,7 +3495,8 @@ Form I &amp; II	Form III &amp; IV
                                     ? 'border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100'
                                     : 'cursor-not-allowed border-gray-100 bg-gray-50 text-gray-400',
                             ]"
-                            @dragstart="onSubjectDragStart('PS')"
+                            @dragstart="onSubjectDragStart($event, 'PS')"
+                            @dragend="onDragEnd"
                             @click="() => clickAssignFromMenu('PS')"
                         >
                             <span>PS</span>
