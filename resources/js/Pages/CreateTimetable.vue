@@ -826,6 +826,15 @@ const generateSampleTimetable = () => {
                 if (!t2) return false;
             }
 
+            // Disallow another separate occurrence of the same subject in this day
+            if (row.slots.some((s, idx) => {
+                if (s === null) return false;
+                if (idx === i || idx === i + 1) return false; // these are the prospective double slots
+                return normalizeCode(s.subject) === subjectKey;
+            })) {
+                return false;
+            }
+
             // Avoid immediate repeats against neighbors within the same day
             const prevCode = i > 0 && ![4, 7].includes(i) ? slotSubject(day, i - 1) : '';
             if (prevCode && prevCode === normalizeCode(code)) return false;
@@ -857,6 +866,11 @@ const generateSampleTimetable = () => {
             if (subjectKey !== 'PS') {
                 const t = pickFreeTeacherInitial(day, i, subjectKey);
                 if (!t) return false;
+            }
+
+            // Disallow second appearance of this subject on the same day (singles)
+            if (row.slots.some((s) => s && normalizeCode(s.subject) === subjectKey)) {
+                return false;
             }
             const prevCode = i > 0 && ![4, 7].includes(i) ? slotSubject(day, i - 1) : '';
             if (prevCode && prevCode === normalizeCode(code)) return false;
