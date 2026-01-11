@@ -681,6 +681,13 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                         ->map(fn (\App\Models\SchoolClass $c) => ['id' => $c->id, 'name' => $c->name])
                         ->values();
 
+                    if (! $classId && $classes->isNotEmpty()) {
+                        return redirect()->route('teacher.exams.marks', [
+                            'exam' => $examId,
+                            'class' => $classes->first()['id'],
+                        ]);
+                    }
+
                     if ($classId) {
                         $selectedBase = $exam->classes->firstWhere('id', (int) $classId);
                         if ($selectedBase && $teacherBaseClassIds->contains($selectedBase->id)) {
@@ -702,6 +709,14 @@ Route::middleware(['auth', 'verified', 'teacher'])->prefix('panel/teachers')->na
                                 ->get(['id', 'subject_code'])
                                 ->map(fn (\App\Models\Subject $s) => ['id' => $s->id, 'code' => $s->subject_code])
                                 ->values();
+
+                            if (! $subjectId && $subjects->count() === 1) {
+                                return redirect()->route('teacher.exams.marks', [
+                                    'exam' => $examId,
+                                    'class' => $classId,
+                                    'subject' => $subjects->first()['id'],
+                                ]);
+                            }
 
                             if ($subjectId && $allowedSubjectIds->contains((int) $subjectId)) {
                                 $studentsQuery = \App\Models\Student::query()
