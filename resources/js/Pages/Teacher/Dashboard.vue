@@ -1,6 +1,6 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head, usePage } from '@inertiajs/vue3';
+import { Head, usePage, Link } from '@inertiajs/vue3';
 import { computed } from 'vue';
 
 defineProps({
@@ -106,25 +106,50 @@ const user = computed(() => page?.props?.auth?.user || null);
                         <h3 class="text-lg font-semibold text-gray-900">Quick Actions</h3>
                         <p class="mt-1 text-xs text-gray-500">Common teacher tasks</p>
                     </div>
-                    <div class="p-6 space-y-3">
-                        <a
-                            href="/exams/marks"
-                            class="block rounded-md bg-gray-50 px-4 py-3 text-sm font-medium text-gray-800 hover:bg-white ring-1 ring-gray-100"
-                        >
-                            Enter Marks
-                        </a>
-                        <a
-                            href="/students"
-                            class="block rounded-md bg-gray-50 px-4 py-3 text-sm font-medium text-gray-800 hover:bg-white ring-1 ring-gray-100"
-                        >
-                            View Students
-                        </a>
-                        <a
-                            href="/timetables"
-                            class="block rounded-md bg-gray-50 px-4 py-3 text-sm font-medium text-gray-800 hover:bg-white ring-1 ring-gray-100"
-                        >
-                            View Timetables
-                        </a>
+                    <div class="p-6">
+                        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                            <Link
+                                :href="route('teacher.exams.marks')"
+                                class="group flex items-start gap-3 rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-800 ring-1 ring-gray-100 transition hover:bg-white"
+                            >
+                                <span class="mt-0.5 inline-flex h-9 w-9 items-center justify-center rounded-md bg-emerald-100 text-emerald-700">
+                                    <span class="material-icons text-[18px] leading-none">edit_note</span>
+                                </span>
+                                <span class="flex-1">
+                                    <span class="block font-semibold">Enter Marks</span>
+                                    <span class="mt-0.5 block text-xs text-gray-500">Only your assigned subjects</span>
+                                </span>
+                                <span class="mt-1 text-gray-400 group-hover:text-emerald-600">→</span>
+                            </Link>
+
+                            <Link
+                                :href="route('teacher.students.index')"
+                                class="group flex items-start gap-3 rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-800 ring-1 ring-gray-100 transition hover:bg-white"
+                            >
+                                <span class="mt-0.5 inline-flex h-9 w-9 items-center justify-center rounded-md bg-blue-100 text-blue-700">
+                                    <span class="material-icons text-[18px] leading-none">groups</span>
+                                </span>
+                                <span class="flex-1">
+                                    <span class="block font-semibold">My Students</span>
+                                    <span class="mt-0.5 block text-xs text-gray-500">Your assigned classes only</span>
+                                </span>
+                                <span class="mt-1 text-gray-400 group-hover:text-emerald-600">→</span>
+                            </Link>
+
+                            <Link
+                                :href="route('timetables.my')"
+                                class="group flex items-start gap-3 rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-800 ring-1 ring-gray-100 transition hover:bg-white"
+                            >
+                                <span class="mt-0.5 inline-flex h-9 w-9 items-center justify-center rounded-md bg-amber-100 text-amber-700">
+                                    <span class="material-icons text-[18px] leading-none">calendar_month</span>
+                                </span>
+                                <span class="flex-1">
+                                    <span class="block font-semibold">My Timetable</span>
+                                    <span class="mt-0.5 block text-xs text-gray-500">Published timetables only</span>
+                                </span>
+                                <span class="mt-1 text-gray-400 group-hover:text-emerald-600">→</span>
+                            </Link>
+                        </div>
                     </div>
                 </div>
 

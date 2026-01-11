@@ -84,41 +84,18 @@ const canEnter = computed(() => !!selectedExam.value && !!selectedClass.value &&
 
 const csrfToken = () => document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 
-const normalize = (v) => String(v || '').trim().toLowerCase();
-
-const resolveExamId = () => {
-    const q = normalize(examQuery.value);
-    if (!q) return null;
-    const found = (props.exams || []).find((e) => normalize(`${e.name}${e.academic_year ? ` (${e.academic_year})` : ''}`) === q);
-    return found ? found.id : null;
-};
-
-const resolveClassId = () => {
-    const q = normalize(classQuery.value);
-    if (!q) return null;
-    const found = (props.classes || []).find((c) => normalize(c.name) === q);
-    return found ? found.id : null;
-};
-
-const resolveSubjectId = () => {
-    const q = normalize(subjectQuery.value);
-    if (!q) return null;
-    const found = (props.subjects || []).find((s) => normalize(s.code) === q);
-    return found ? found.id : null;
-};
-
-const onExamPick = () => {
-    const examId = resolveExamId();
+const onExamChange = (e) => {
+    const examId = e.target.value || null;
     router.get(route('teacher.exams.marks'), { exam: examId }, { preserveState: true, preserveScroll: true, replace: true });
 };
 
-const onClassPick = () => {
-    const classId = resolveClassId();
+const onClassChange = (e) => {
+    const classId = e.target.value || null;
     router.get(route('teacher.exams.marks'), { exam: props.filters.exam, class: classId }, { preserveState: true, preserveScroll: true, replace: true });
 };
 
-const onSubjectPick = () => {
-    const subjectId = resolveSubjectId();
+const onSubjectChange = (e) => {
+    const subjectId = e.target.value || null;
     router.get(route('teacher.exams.marks'), { exam: props.filters.exam, class: props.filters.class, subject: subjectId }, { preserveState: true, preserveScroll: true, replace: true });
 };
 
@@ -211,46 +188,42 @@ const markInputClass = (studentId) => {
                 <div class="mt-4 grid gap-4 sm:grid-cols-3">
                     <div>
                         <label class="block text-xs font-semibold text-gray-700">Exam</label>
-                        <input
-                            v-model="examQuery"
-                            list="teacher-exams"
-                            class="mt-1 block w-full rounded-md border-gray-300 text-sm focus:border-emerald-500 focus:ring-emerald-500"
-                            placeholder="Type exam name..."
-                            @change="onExamPick"
-                        />
-                        <datalist id="teacher-exams">
-                            <option v-for="e in exams" :key="e.id" :value="`${e.name}${e.academic_year ? ` (${e.academic_year})` : ''}`" />
-                        </datalist>
+                        <select
+                            class="mt-1 block w-full rounded-md border-gray-300 bg-white text-sm shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
+                            :value="selectedExam"
+                            @change="onExamChange"
+                        >
+                            <option value="">Select exam</option>
+                            <option v-for="e in exams" :key="e.id" :value="e.id">
+                                {{ e.name }}{{ e.academic_year ? ` (${e.academic_year})` : '' }}
+                            </option>
+                        </select>
                     </div>
 
                     <div>
                         <label class="block text-xs font-semibold text-gray-700">Class</label>
-                        <input
-                            v-model="classQuery"
-                            list="teacher-classes"
-                            class="mt-1 block w-full rounded-md border-gray-300 text-sm focus:border-emerald-500 focus:ring-emerald-500 disabled:bg-gray-50"
-                            placeholder="Type class name..."
+                        <select
+                            class="mt-1 block w-full rounded-md border-gray-300 bg-white text-sm shadow-sm focus:border-emerald-500 focus:ring-emerald-500 disabled:bg-gray-50"
                             :disabled="!selectedExam"
-                            @change="onClassPick"
-                        />
-                        <datalist id="teacher-classes">
-                            <option v-for="c in classes" :key="c.id" :value="c.name" />
-                        </datalist>
+                            :value="selectedClass"
+                            @change="onClassChange"
+                        >
+                            <option value="">Select class</option>
+                            <option v-for="c in classes" :key="c.id" :value="c.id">{{ c.name }}</option>
+                        </select>
                     </div>
 
                     <div>
                         <label class="block text-xs font-semibold text-gray-700">Subject</label>
-                        <input
-                            v-model="subjectQuery"
-                            list="teacher-subjects"
-                            class="mt-1 block w-full rounded-md border-gray-300 text-sm focus:border-emerald-500 focus:ring-emerald-500 disabled:bg-gray-50"
-                            placeholder="Type subject code..."
+                        <select
+                            class="mt-1 block w-full rounded-md border-gray-300 bg-white text-sm shadow-sm focus:border-emerald-500 focus:ring-emerald-500 disabled:bg-gray-50"
                             :disabled="!selectedExam || !selectedClass"
-                            @change="onSubjectPick"
-                        />
-                        <datalist id="teacher-subjects">
-                            <option v-for="s in subjects" :key="s.id" :value="s.code" />
-                        </datalist>
+                            :value="selectedSubject"
+                            @change="onSubjectChange"
+                        >
+                            <option value="">Select subject</option>
+                            <option v-for="s in subjects" :key="s.id" :value="s.id">{{ s.code }}</option>
+                        </select>
                     </div>
                 </div>
 
